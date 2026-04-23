@@ -8,24 +8,50 @@ export interface SuperteamListing {
   requirements?: string
   rewardAmount: number      // USD
   token: string
-  type: string              // 'bounty' | 'project' | etc
+  type: string              // 'bounty' | 'project' | 'hackathon'
   deadline?: string
   skills?: string[]
+  compensationType?: string // 'fixed' | 'range' | 'variable'
+  pocId?: string
+  eligibilityQuestions?: { question: string }[]
 }
 
 function headers(apiKey: string) {
   return { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
 }
 
+// ── Register ───────────────────────────────────────────────────────────────
+
+export interface RegisterResult {
+  apiKey: string
+  claimCode: string
+  agentId: string
+  username: string
+}
+
+export async function registerAgent(name = 'lila-agent'): Promise<RegisterResult> {
+  const res = await fetch(`${BASE}/api/agents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) throw new Error(`Superteam registration failed: ${res.status}`)
+  return res.json()
+}
+
+// ── Listings ───────────────────────────────────────────────────────────────
+
 export async function listOpenBounties(apiKey: string): Promise<SuperteamListing[]> {
-  const res = await fetch(`${BASE}/api/agents/listings/live?take=20`, {
+  const deadline = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10) // 90 days out
+  const res = await fetch(`${BASE}/api/agents/listings/live?take=30&deadline=${deadline}`, {
     headers: headers(apiKey),
     signal: AbortSignal.timeout(12_000),
   })
   if (!res.ok) throw new Error(`Superteam list failed: ${res.status}`)
   const data = await res.json()
-  const listings = data.listings ?? data ?? []
-  return listings.filter((l: SuperteamListing) => l.rewardAmount >= 50)
+  const listings: SuperteamListing[] = data.listings ?? data ?? []
+  return listings.filter(l => l.rewardAmount >= 50)
 }
 
 export async function getListing(apiKey: string, slug: string): Promise<SuperteamListing> {
@@ -33,28 +59,57 @@ export async function getListing(apiKey: string, slug: string): Promise<Supertea
     headers: headers(apiKey),
     signal: AbortSignal.timeout(10_000),
   })
-  if (!res.ok) throw new Error(`Superteam get failed: ${res.status}`)
+  if (!res.ok) throw new Error(`Superteam get listing failed: ${res.status}`)
   return res.json()
 }
 
-export async function submitWork(apiKey: string, listingId: string, content: string): Promise<boolean> {
+// ── Submit ─────────────────────────────────────────────────────────────────
+
+export interface SubmitOptions {
+  listingId: string
+  content: string                                    // goes into otherInfo
+  link?: string
+  telegram?: string                                  // required for project listings
+  eligibilityAnswers?: { question: string; answer: string }[]
+  ask?: number | null
+}
+
+export async function submitWork(apiKey: string, opts: SubmitOptions): Promise<boolean> {
+  const body: Record<string, unknown> = {
+    listingId: opts.listingId,
+    link: opts.link ?? '',
+    tweet: '',
+    otherInfo: opts.content,
+    eligibilityAnswers: opts.eligibilityAnswers ?? [],
+    ask: opts.ask ?? null,
+  }
+  if (opts.telegram) body.telegram = opts.telegram
+
   const res = await fetch(`${BASE}/api/agents/submissions/create`, {
     method: 'POST',
     headers: headers(apiKey),
-    body: JSON.stringify({ listingId, link: '', otherInfo: content }),
-    signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
   })
   return res.ok
 }
 
-export async function registerAgent(walletAddress: string): Promise<string> {
-  const res = await fetch(`${BASE}/api/agents/register`, {
+export async function updateSubmission(apiKey: string, opts: SubmitOptions): Promise<boolean> {
+  const body: Record<string, unknown> = {
+    listingId: opts.listingId,
+    link: opts.link ?? '',
+    tweet: '',
+    otherInfo: opts.content,
+    eligibilityAnswers: opts.eligibilityAnswers ?? [],
+    ask: opts.ask ?? null,
+  }
+  if (opts.telegram) body.telegram = opts.telegram
+
+  const res = await fetch(`${BASE}/api/agents/submissions/update`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ walletAddress, name: 'Lila' }),
-    signal: AbortSignal.timeout(10_000),
+    headers: headers(apiKey),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
   })
-  if (!res.ok) throw new Error(`Superteam registration failed: ${res.status}`)
-  const data = await res.json()
-  return data.apiKey ?? data.api_key ?? data.key
+  return res.ok
 }

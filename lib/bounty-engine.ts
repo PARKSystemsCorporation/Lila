@@ -107,8 +107,7 @@ export class BountyEngine {
     }
 
     if (bounty.platform === 'superteam' && process.env.SUPERTEAM_API_KEY) {
-      // Superteam: submit directly (no separate claim step)
-      return Superteam.submitWork(process.env.SUPERTEAM_API_KEY, rawId, work)
+      return Superteam.submitWork(process.env.SUPERTEAM_API_KEY, { listingId: rawId, content: work })
     }
 
     // Bountycaster: no programmatic claim API — log for operator to submit manually

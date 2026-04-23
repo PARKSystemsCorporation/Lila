@@ -1,42 +1,39 @@
 import { NextResponse } from 'next/server'
 import { registerAgent as registerClaw } from '@/lib/platforms/clawtasks'
-import { registerAgent as registerRose } from '@/lib/platforms/rose'
+import { registerAgent as registerSuperteam } from '@/lib/platforms/superteam'
 
 const WALLET = '0x3a6Dd93f29041aDC2ffB142EdC98434c60110926'
 
-// GET /api/setup
-// Returns current platform registration status and any available API keys.
-// Keys are shown ONCE on registration — store them immediately as Railway env vars.
 export async function GET() {
-  const status: Record<string, unknown> = {
+  return NextResponse.json({
     wallet: WALLET,
-    clawtasks: { configured: !!process.env.CLAWTASKS_API_KEY },
-    rose: { configured: !!process.env.ROSE_API_KEY },
-  }
-  return NextResponse.json(status)
+    clawtasks:  { configured: !!process.env.CLAWTASKS_API_KEY },
+    superteam:  { configured: !!process.env.SUPERTEAM_API_KEY },
+  })
 }
 
-// POST /api/setup  { "platform": "clawtasks" | "rose" | "all" }
-// Registers Lila on the specified platform(s) and returns API keys.
-// Add the returned keys to Railway env vars then redeploy.
+// POST /api/setup  { "platform": "clawtasks" | "superteam" | "all" }
 export async function POST(req: Request) {
   const { platform } = await req.json().catch(() => ({ platform: 'all' }))
-
   const results: Record<string, unknown> = {}
 
-  if ((platform === 'rose' || platform === 'all') && !process.env.ROSE_API_KEY) {
+  if ((platform === 'superteam' || platform === 'all') && !process.env.SUPERTEAM_API_KEY) {
     try {
-      const key = await registerRose(WALLET, 'Lila')
-      results.rose = {
+      const reg = await registerSuperteam('lila-agent')
+      results.superteam = {
         success: true,
-        apiKey: key,
-        instructions: 'Add ROSE_API_KEY=' + key + ' to Railway env vars and redeploy.',
+        apiKey: reg.apiKey,
+        claimCode: reg.claimCode,
+        agentId: reg.agentId,
+        username: reg.username,
+        claimUrl: `https://earn.superteam.fun/earn/claim/${reg.claimCode}`,
+        instructions: `Add SUPERTEAM_API_KEY=${reg.apiKey} to Railway env vars. Visit the claim URL above to link payouts to your account.`,
       }
     } catch (e) {
-      results.rose = { success: false, error: String(e) }
+      results.superteam = { success: false, error: String(e) }
     }
-  } else if (platform === 'rose') {
-    results.rose = { success: false, error: 'ROSE_API_KEY already set.' }
+  } else if (platform === 'superteam') {
+    results.superteam = { success: false, error: 'SUPERTEAM_API_KEY already set.' }
   }
 
   if ((platform === 'clawtasks' || platform === 'all') && !process.env.CLAWTASKS_API_KEY) {
@@ -45,7 +42,7 @@ export async function POST(req: Request) {
       results.clawtasks = {
         success: true,
         apiKey: key,
-        instructions: 'Add CLAWTASKS_API_KEY=' + key + ' to Railway env vars and redeploy.',
+        instructions: `Add CLAWTASKS_API_KEY=${key} to Railway env vars and redeploy.`,
       }
     } catch (e) {
       results.clawtasks = { success: false, error: String(e) }
