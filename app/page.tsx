@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'log' | 'dash' | 'bounties' | 'reports'
+type Tab = 'chat' | 'log' | 'dash' | 'trading' | 'bounties' | 'reports'
 
 interface UnifiedBounty {
   id: string
@@ -98,6 +98,13 @@ const IconDash = () => (
   </svg>
 )
 
+const IconTrading = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    <path d="M3 17l6-6 4 4 8-8" />
+    <polyline points="14 7 21 7 21 14" />
+  </svg>
+)
+
 const IconReports = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
     <path d="M9 2h6l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h3" />
@@ -120,6 +127,7 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'chat',     label: 'Chat',    Icon: IconChat     },
   { key: 'log',      label: 'Log',     Icon: IconLog      },
   { key: 'dash',     label: 'Dash',    Icon: IconDash     },
+  { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
   { key: 'reports',  label: 'Reports', Icon: IconReports  },
 ]
@@ -133,10 +141,10 @@ function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
           <button
             key={key}
             onClick={() => onTab(key)}
-            className={`flex-1 flex flex-col items-center gap-1 py-2.5 transition-colors ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
           >
             <Icon />
-            <span className={`text-[9px] font-mono tracking-widest uppercase ${active ? 'text-emerald-400' : 'text-slate-700'}`}>
+            <span className={`text-[8px] font-mono tracking-wider uppercase ${active ? 'text-emerald-400' : 'text-slate-700'}`}>
               {label}
             </span>
           </button>
@@ -947,6 +955,416 @@ type ReportAction =
   | { kind: 'approve' | 'dismiss' | 'submit' | 'mark_unpaid'; id: number }
   | { kind: 'mark_paid'; id: number; payout: number }
 
+// ─── Trading Tab ──────────────────────────────────────────────────────────────
+
+interface OpenPosition {
+  symbol: string
+  qty: string
+  avg_entry_price: string
+  current_price: string
+  unrealized_pl: string
+  unrealized_plpc: string
+  target_price?: string | null
+  stop_loss?: string | null
+  opened_at?: string | null
+}
+
+interface ClosedTrade {
+  id: number
+  symbol: string
+  direction: string
+  entry_price: string | null
+  target_price: string | null
+  stop_loss: string | null
+  pnl: string | null
+  opened_at: string
+  closed_at: string | null
+}
+
+interface DailyPnlRow { date: string; pnl: number; trades: number }
+
+interface TradingData {
+  account: {
+    equity: string
+    buying_power: string
+    cash: string
+    portfolio_value: string
+    last_equity?: string
+  } | null
+  openPositions: OpenPosition[]
+  closedTrades: ClosedTrade[]
+  portfolioHistory: {
+    timestamp: number[]
+    equity: number[]
+    profit_loss: number[]
+    profit_loss_pct: number[]
+    base_value: number
+    timeframe: string
+  } | null
+  dailyClosedPnl: DailyPnlRow[]
+  period: string
+  hasAlpaca: boolean
+}
+
+const PERIODS: { key: string; label: string }[] = [
+  { key: '1D', label: '1D' },
+  { key: '1W', label: '1W' },
+  { key: '1M', label: '1M' },
+  { key: '3M', label: '3M' },
+  { key: '1A', label: '1Y' },
+  { key: 'all', label: 'ALL' },
+]
+
+// Tiny chart wrapper — we dynamically import lightweight-charts so server
+// rendering doesn't try to touch window/canvas.
+function EquityChart({ timestamps, values, color = '#10b981' }: {
+  timestamps: number[]
+  values: number[]
+  color?: string
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!containerRef.current || timestamps.length === 0) return
+    let chart: { remove: () => void } | null = null
+    let resizeObserver: ResizeObserver | null = null
+    let cancelled = false
+
+    ;(async () => {
+      const lib = await import('lightweight-charts')
+      if (cancelled || !containerRef.current) return
+
+      const c = lib.createChart(containerRef.current, {
+        width: containerRef.current.clientWidth,
+        height: 180,
+        layout: {
+          background: { type: lib.ColorType.Solid, color: 'transparent' },
+          textColor: '#64748b',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: 10,
+        },
+        grid: {
+          vertLines: { color: 'rgba(30, 41, 59, 0.5)' },
+          horzLines: { color: 'rgba(30, 41, 59, 0.5)' },
+        },
+        timeScale: {
+          timeVisible: timestamps.length > 0 && (timestamps[timestamps.length - 1] - timestamps[0]) < 86_400 * 2,
+          borderColor: '#1e293b',
+        },
+        rightPriceScale: { borderColor: '#1e293b' },
+        crosshair: {
+          vertLine: { color: '#334155', width: 1 },
+          horzLine: { color: '#334155', width: 1 },
+        },
+        handleScroll: false,
+        handleScale: false,
+      })
+      chart = c
+
+      const series = c.addSeries(lib.AreaSeries, {
+        lineColor: color,
+        topColor: `${color}40`,
+        bottomColor: `${color}00`,
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+      })
+      const sorted = timestamps
+        .map((t, i) => ({ time: t as unknown as import('lightweight-charts').UTCTimestamp, value: values[i] }))
+        .filter(d => Number.isFinite(d.value))
+        .sort((a, b) => (a.time as number) - (b.time as number))
+      series.setData(sorted)
+      c.timeScale().fitContent()
+
+      resizeObserver = new ResizeObserver(() => {
+        if (!containerRef.current) return
+        c.applyOptions({ width: containerRef.current.clientWidth })
+      })
+      resizeObserver.observe(containerRef.current)
+    })()
+
+    return () => {
+      cancelled = true
+      resizeObserver?.disconnect()
+      chart?.remove()
+    }
+  }, [timestamps, values, color])
+
+  if (timestamps.length === 0) {
+    return (
+      <div className="h-[180px] flex items-center justify-center">
+        <p className="text-[10px] font-mono text-slate-600">No data.</p>
+      </div>
+    )
+  }
+  return <div ref={containerRef} className="w-full h-[180px]" />
+}
+
+function TradingTab({ visible }: { visible: boolean }) {
+  const [data, setData] = useState<TradingData | null>(null)
+  const [period, setPeriod] = useState<string>('1M')
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<'open' | 'closed'>('open')
+
+  useEffect(() => {
+    if (!visible) return
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/trading?period=${period}`)
+        if (!res.ok) return
+        setData(await res.json())
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    load()
+    const id = setInterval(load, 15_000)
+    return () => clearInterval(id)
+  }, [visible, period])
+
+  const equity = data?.account ? parseFloat(data.account.equity) : 0
+  const lastEquity = data?.account?.last_equity ? parseFloat(data.account.last_equity) : equity
+  const dayPl = equity - lastEquity
+  const dayPlPct = lastEquity > 0 ? (dayPl / lastEquity) * 100 : 0
+
+  // Cumulative realized P&L from closed trades
+  const cumulativePnl = useMemo(() => {
+    if (!data?.dailyClosedPnl?.length) return { timestamps: [] as number[], values: [] as number[] }
+    let cum = 0
+    const timestamps: number[] = []
+    const values: number[] = []
+    for (const d of data.dailyClosedPnl) {
+      cum += d.pnl
+      const t = Math.floor(new Date(d.date + 'T00:00:00Z').getTime() / 1000)
+      timestamps.push(t)
+      values.push(+cum.toFixed(2))
+    }
+    return { timestamps, values }
+  }, [data?.dailyClosedPnl])
+
+  const totalRealized = cumulativePnl.values.length ? cumulativePnl.values[cumulativePnl.values.length - 1] : 0
+  const winRate = useMemo(() => {
+    if (!data?.closedTrades.length) return null
+    const wins = data.closedTrades.filter(t => parseFloat(t.pnl ?? '0') > 0).length
+    return (wins / data.closedTrades.length) * 100
+  }, [data?.closedTrades])
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-5 space-y-4">
+        {loading && !data ? (
+          <div className="flex items-center gap-2 py-12 justify-center">
+            <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
+            <p className="text-xs font-mono text-slate-600">Loading trading data...</p>
+          </div>
+        ) : !data?.hasAlpaca ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
+            <p className="text-sm font-mono text-slate-500">No Alpaca key.</p>
+            <p className="text-xs font-mono text-slate-700 mt-1">
+              Add ALPACA_API_KEY + ALPACA_SECRET_KEY on Railway to connect your account.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Equity overview */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+              <div className="flex items-baseline justify-between mb-1">
+                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Equity</p>
+                <span className="text-[9px] font-mono text-slate-600 border border-slate-800 rounded px-1.5 py-0.5">
+                  {process.env.ALPACA_PAPER !== 'false' ? 'PAPER' : 'LIVE'}
+                </span>
+              </div>
+              <p className="text-4xl font-bold font-mono text-white tabular-nums">
+                ${equity.toFixed(2)}
+              </p>
+              <p className={`text-xs font-mono mt-1 tabular-nums ${dayPl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {dayPl >= 0 ? '+' : ''}${dayPl.toFixed(2)} ({dayPl >= 0 ? '+' : ''}{dayPlPct.toFixed(2)}%) today
+              </p>
+
+              {data.account && (
+                <div className="grid grid-cols-2 gap-3 mt-4 pt-3 border-t border-slate-800">
+                  <div>
+                    <p className="text-sm font-mono text-slate-300 tabular-nums">
+                      ${parseFloat(data.account.buying_power).toFixed(2)}
+                    </p>
+                    <p className="text-[10px] font-mono text-slate-600">buying power</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-mono text-slate-300 tabular-nums">
+                      ${parseFloat(data.account.cash).toFixed(2)}
+                    </p>
+                    <p className="text-[10px] font-mono text-slate-600">cash</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Equity curve */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Equity curve</p>
+                <div className="flex gap-1">
+                  {PERIODS.map(p => (
+                    <button
+                      key={p.key}
+                      onClick={() => setPeriod(p.key)}
+                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+                        period === p.key
+                          ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                          : 'text-slate-500 border-slate-800 active:bg-slate-800'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <EquityChart
+                timestamps={data.portfolioHistory?.timestamp ?? []}
+                values={data.portfolioHistory?.equity ?? []}
+                color={dayPl >= 0 ? '#10b981' : '#ef4444'}
+              />
+            </div>
+
+            {/* Realized cumulative P&L */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Realized P&L (closed trades)</p>
+                  <p className={`text-lg font-bold font-mono mt-0.5 tabular-nums ${totalRealized >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {totalRealized >= 0 ? '+' : ''}${totalRealized.toFixed(2)}
+                  </p>
+                </div>
+                {winRate != null && (
+                  <div className="text-right">
+                    <p className="text-sm font-mono text-slate-300 tabular-nums">{winRate.toFixed(0)}%</p>
+                    <p className="text-[10px] font-mono text-slate-600">win rate · {data.closedTrades.length} trades</p>
+                  </div>
+                )}
+              </div>
+              <EquityChart
+                timestamps={cumulativePnl.timestamps}
+                values={cumulativePnl.values}
+                color={totalRealized >= 0 ? '#10b981' : '#ef4444'}
+              />
+            </div>
+
+            {/* Open / Closed tabs */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
+              <div className="flex border-b border-slate-800">
+                <button
+                  onClick={() => setTab('open')}
+                  className={`flex-1 py-2.5 text-[10px] font-mono uppercase tracking-widest ${
+                    tab === 'open' ? 'text-emerald-400 border-b border-emerald-500' : 'text-slate-600 active:bg-slate-800'
+                  }`}
+                >
+                  Open · {data.openPositions.length}
+                </button>
+                <button
+                  onClick={() => setTab('closed')}
+                  className={`flex-1 py-2.5 text-[10px] font-mono uppercase tracking-widest ${
+                    tab === 'closed' ? 'text-emerald-400 border-b border-emerald-500' : 'text-slate-600 active:bg-slate-800'
+                  }`}
+                >
+                  Closed · {data.closedTrades.length}
+                </button>
+              </div>
+
+              {tab === 'open' ? (
+                data.openPositions.length === 0 ? (
+                  <p className="text-xs font-mono text-slate-600 text-center py-8">Flat.</p>
+                ) : (
+                  <div className="divide-y divide-slate-800">
+                    {data.openPositions.map(p => <OpenPositionRow key={p.symbol} p={p} />)}
+                  </div>
+                )
+              ) : (
+                data.closedTrades.length === 0 ? (
+                  <p className="text-xs font-mono text-slate-600 text-center py-8">No closed trades yet.</p>
+                ) : (
+                  <div className="divide-y divide-slate-800">
+                    {data.closedTrades.map(t => <ClosedTradeRow key={t.id} t={t} />)}
+                  </div>
+                )
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function OpenPositionRow({ p }: { p: OpenPosition }) {
+  const qty = parseFloat(p.qty)
+  const entry = parseFloat(p.avg_entry_price)
+  const now = parseFloat(p.current_price)
+  const pl = parseFloat(p.unrealized_pl)
+  const plPct = parseFloat(p.unrealized_plpc) * 100
+  const pos = pl >= 0
+  const target = p.target_price ? parseFloat(String(p.target_price)) : null
+  const stop = p.stop_loss ? parseFloat(String(p.stop_loss)) : null
+
+  // Simple horizontal bar: position of `now` between stop and target.
+  let progress: number | null = null
+  if (target !== null && stop !== null && target > stop) {
+    progress = Math.min(100, Math.max(0, ((now - stop) / (target - stop)) * 100))
+  }
+
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <span className="text-sm font-mono text-slate-100 font-semibold">{p.symbol}</span>
+          <span className="text-[10px] font-mono text-slate-600 ml-2">
+            {qty.toFixed(4).replace(/\.?0+$/, '')} sh @ ${entry.toFixed(2)}
+          </span>
+        </div>
+        <span className={`text-xs font-mono tabular-nums font-semibold ${pos ? 'text-emerald-400' : 'text-red-400'}`}>
+          {pos ? '+' : ''}${pl.toFixed(2)} ({pos ? '+' : ''}{plPct.toFixed(1)}%)
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between mt-1 text-[10px] font-mono">
+        <span className="text-slate-500 tabular-nums">now ${now.toFixed(2)}</span>
+        {stop !== null && <span className="text-red-500 tabular-nums">stop ${stop.toFixed(2)}</span>}
+        {target !== null && <span className="text-emerald-500 tabular-nums">target ${target.toFixed(2)}</span>}
+      </div>
+
+      {progress !== null && (
+        <div className="relative h-1 rounded-full bg-slate-800 mt-1.5 overflow-hidden">
+          <div className="absolute left-0 top-0 h-full bg-slate-700" style={{ width: '100%' }} />
+          <div
+            className={`absolute top-0 h-full ${pos ? 'bg-emerald-500' : 'bg-red-500'}`}
+            style={{ left: `${Math.min(50, progress)}%`, width: `${Math.abs(progress - 50) * 2}%` }}
+          />
+          <div className="absolute top-0 h-full w-0.5 bg-slate-300" style={{ left: `${progress}%` }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ClosedTradeRow({ t }: { t: ClosedTrade }) {
+  const pnl = parseFloat(t.pnl ?? '0')
+  const entry = parseFloat(t.entry_price ?? '0')
+  const pos = pnl >= 0
+  const closedAt = t.closed_at ? new Date(t.closed_at) : null
+  return (
+    <div className="px-4 py-3 flex items-baseline justify-between">
+      <div>
+        <span className="text-sm font-mono text-slate-200 font-semibold">{t.symbol}</span>
+        <span className="text-[10px] font-mono text-slate-600 ml-2">
+          entry ${entry.toFixed(2)}
+          {closedAt && ` · ${closedAt.toISOString().slice(0, 10)}`}
+        </span>
+      </div>
+      <span className={`text-xs font-mono tabular-nums font-semibold ${pos ? 'text-emerald-400' : 'text-red-400'}`}>
+        {pos ? '+' : ''}${pnl.toFixed(2)}
+      </span>
+    </div>
+  )
+}
+
+// ─── Reports Tab ──────────────────────────────────────────────────────────────
+
 function ReportsTab({ reports, loading, visible, onAction }: {
   reports: SecurityReport[]
   loading: boolean
@@ -1469,6 +1887,7 @@ export default function Home() {
         <ChatTab visible={tab === 'chat'} />
         <LogTab log={data?.log ?? []} visible={tab === 'log'} />
         <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} />
+        <TradingTab visible={tab === 'trading'} />
         <BountiesTab
           bounties={bounties}
           assignedBounty={assignedBounty}

@@ -108,6 +108,38 @@ export async function closePosition(symbol: string): Promise<boolean> {
   return res.ok
 }
 
+export interface PortfolioHistory {
+  timestamp: number[]        // unix seconds
+  equity: number[]
+  profit_loss: number[]
+  profit_loss_pct: number[]
+  base_value: number
+  timeframe: string
+}
+
+// period: "1D"|"1W"|"1M"|"3M"|"1A"|"all"   timeframe: "1Min"|"5Min"|"15Min"|"1H"|"1D"
+export async function getPortfolioHistory(
+  period: string = '1M',
+  timeframe: string = '1D',
+): Promise<PortfolioHistory | null> {
+  try {
+    const res = await fetch(
+      `${TRADE_BASE}/v2/account/portfolio/history?period=${period}&timeframe=${timeframe}&extended_hours=false`,
+      { headers: tradeHeaders(), signal: AbortSignal.timeout(10_000) },
+    )
+    if (!res.ok) return null
+    const d = await res.json()
+    return {
+      timestamp: d.timestamp ?? [],
+      equity: (d.equity ?? []).map((v: number | null) => v ?? 0),
+      profit_loss: (d.profit_loss ?? []).map((v: number | null) => v ?? 0),
+      profit_loss_pct: (d.profit_loss_pct ?? []).map((v: number | null) => v ?? 0),
+      base_value: d.base_value ?? 0,
+      timeframe: d.timeframe ?? timeframe,
+    }
+  } catch { return null }
+}
+
 export interface NewsItem {
   id: number
   headline: string
