@@ -1,19 +1,20 @@
 import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
-import { BountyEngine } from './bounty-engine'
+import { BountyEngine, pickSecurityCandidates } from './bounty-engine'
 import { fetchAllBounties, type UnifiedBounty } from './bounties-fetch'
+import { ResearchEngine } from './research-engine'
 
 // ── Tasker autonomy loop ──────────────────────────────────────────────────────
 //
-// Tasker is the executor. It ONLY works bounties. Trading, report review,
-// and operator replies all belong to Lila (ManagementLoop).
-//
-// Bounty cycle (every step, 30s-gated):
+// Tasker is the executor. Bounty cycle only, every step 30s-gated:
 //   BT0 — parse recent chat for operator/Lila-assigned tasks, queue them
-//   BH0 — run the bounty engine against the queue (security-focused filter).
-//         Security reports land in security_reports with status=pending_review
-//         for Lila to vet before the operator sees them.
-//   BZ0 — post an execution status update to the team chat as sender='tasker'
+//   BH0 — on security bounties, run ONE research cycle on a pinned target
+//         (target persists across many ticks; findings file as security_reports
+//         → Lila reviews before the operator sees them). On code bounties,
+//         one-shot execute via BountyEngine.
+//   BZ0 — post an execution status update to the team chat
+//
+// Trading, report review, operator replies all belong to Lila (ManagementLoop).
 
 const STEP_INTERVAL_SEC = 30
 
@@ -123,14 +124,69 @@ export class TaskerLoop {
   // ── BH0 — work the current bounty ──────────────────────────────────────────
 
   private async bh0(): Promise<{ logMessage: string; logType: LogType }> {
+    if (!this.ai) return { logMessage: 'Bounty tick skipped — no LLM key.', logType: 'info' }
+
     let liveBounties: UnifiedBounty[] = []
     try { liveBounties = await fetchAllBounties() } catch { /* platforms slow */ }
 
-    const { rows: [s] } = await this.db.query('SELECT assigned_bounty FROM lila_state WHERE id=1')
-    const assigned: UnifiedBounty | null = s?.assigned_bounty ?? null
+    // ── Security: target-pinned deep research (persistent memory) ────────────
+    // This is where big-money findings come from — weeks on one codebase.
 
-    if (!this.ai) return { logMessage: 'Bounty tick skipped — no LLM key.', logType: 'info' }
+    const research = new ResearchEngine(this.db)
+    const securityCandidates = pickSecurityCandidates(liveBounties)
 
+    // Operator assignment trumps auto-selection: pin whatever they assigned.
+    const { rows: [lilaState] } = await this.db.query(
+      'SELECT assigned_bounty FROM lila_state WHERE id=1'
+    )
+    const assigned: UnifiedBounty | null = lilaState?.assigned_bounty ?? null
+
+    // If operator assigned a security bounty, pin it.
+    const assignedIsSecurity = assigned && securityCandidates.some(b => b.id === assigned.id)
+    const candidates = assignedIsSecurity ? [assigned!, ...securityCandidates] : securityCandidates
+
+    const target = await research.pinOrGetCurrent(candidates)
+
+    if (target) {
+      const cycle = await research.runCycle(target)
+
+      if (cycle.action === 'finding' && cycle.reportContent) {
+        // File the finding as a security report; Lila reviews before operator.
+        await this.db.query(
+          `INSERT INTO security_reports
+             (bounty_id, platform, platform_label, title, reward, chain, url,
+              content, confidence, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_review')
+           ON CONFLICT (bounty_id) DO UPDATE SET
+             content=$8, confidence=$9, status='pending_review', review_notes=NULL, updated_at=NOW()`,
+          [
+            target.bounty_id, target.platform, target.platform_label, target.title,
+            target.reward, target.chain ?? null, target.url ?? null,
+            cycle.reportContent, cycle.confidence ?? 0.7,
+          ]
+        )
+        await this.mergeTasks([`Draft filed (Lila reviewing): ${target.title}`])
+        return {
+          logMessage: `Finding on "${target.title}" after ${target.cycles + 1} cycle${target.cycles ? 's' : ''}. Report filed for Lila's review.`,
+          logType: 'success',
+        }
+      }
+
+      if (cycle.action === 'exhausted') {
+        return {
+          logMessage: `"${target.title}" exhausted after ${target.cycles + 1} cycles. Rotating.`,
+          logType: 'warn',
+        }
+      }
+
+      return {
+        logMessage: `"${target.title}" — cycle ${target.cycles + 1}, ${cycle.phase}.`,
+        logType: cycle.logType,
+      }
+    }
+
+    // ── Code work: one-shot (unchanged) ──────────────────────────────────────
+    // Only runs if there are no security targets to work.
     const engine = new BountyEngine()
     const result = await engine.tick(assigned, liveBounties, this.db)
 
@@ -150,11 +206,6 @@ export class TaskerLoop {
       if (assigned?.title === result.title) {
         await this.db.query('UPDATE lila_state SET assigned_bounty = NULL WHERE id=1')
       }
-    } else if (result.action === 'claimed' && result.title) {
-      await this.mergeTasks([result.title])
-    } else if (result.action === 'drafted' && result.title) {
-      // Report is sitting in Lila's review queue — no operator task yet.
-      await this.mergeTasks([`Draft filed (Lila reviewing): ${result.title}`])
     }
 
     return { logMessage: result.logMessage, logType: result.logType }
@@ -164,19 +215,31 @@ export class TaskerLoop {
 
   private async bz0(): Promise<{ logMessage: string; logType: LogType }> {
     const { rows: [s] } = await this.db.query(
-      'SELECT total_earned, active_tasks, last_bounty FROM lila_state WHERE id=1'
+      'SELECT total_earned, active_tasks, last_bounty, current_target_id FROM lila_state WHERE id=1'
     )
     const earned = parseFloat(s?.total_earned ?? '0').toFixed(2)
     const tasks: string[] = s?.active_tasks ?? []
     const last = s?.last_bounty
 
-    const msg = tasks.length
-      ? `Earned $${earned}. ${tasks.length} task${tasks.length > 1 ? 's' : ''} active. Top: ${tasks[0]}.`
-      : last?.value
-        ? `Earned $${earned}. Last submission: ${last.name} (+$${last.value}). Queue empty.`
-        : `Earned $${earned}. Scanning security bounties.`
+    // Include current research target if any — gives operator a visible pulse
+    // on the deep-research loop.
+    let targetLine = ''
+    if (s?.current_target_id) {
+      const { rows } = await this.db.query(
+        'SELECT title, phase, cycles FROM research_targets WHERE id=$1',
+        [s.current_target_id]
+      )
+      const t = rows[0]
+      if (t) targetLine = ` Researching: ${t.title} — cycle ${t.cycles}, phase ${t.phase}.`
+    }
 
-    await this.chat('tasker', msg)
+    const msg = tasks.length
+      ? `Earned $${earned}. ${tasks.length} task${tasks.length > 1 ? 's' : ''} active.${targetLine}`
+      : last?.value
+        ? `Earned $${earned}. Last: ${last.name} (+$${last.value}).${targetLine}`
+        : `Earned $${earned}.${targetLine || ' Scanning.'}`
+
+    await this.chat('tasker', msg.slice(0, 500))
     return { logMessage: 'Status posted.', logType: 'info' }
   }
 

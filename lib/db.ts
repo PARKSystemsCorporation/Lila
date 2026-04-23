@@ -142,6 +142,39 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS review_notes TEXT;
     UPDATE security_reports SET status='pending_review' WHERE status='draft';
+
+    -- Research targets: Tasker pins one bounty codebase and burns cycles on it.
+    CREATE TABLE IF NOT EXISTS research_targets (
+      id               SERIAL        PRIMARY KEY,
+      bounty_id        TEXT          NOT NULL UNIQUE,
+      platform         TEXT          NOT NULL,
+      platform_label   TEXT          NOT NULL,
+      title            TEXT          NOT NULL,
+      reward           NUMERIC(12,2) NOT NULL DEFAULT 0,
+      chain            TEXT,
+      url              TEXT,
+      scope            TEXT          NOT NULL,
+      phase            TEXT          NOT NULL DEFAULT 'map',
+      cycles           INTEGER       NOT NULL DEFAULT 0,
+      fruitless_cycles INTEGER       NOT NULL DEFAULT 0,
+      status           TEXT          NOT NULL DEFAULT 'active',
+      first_worked_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      last_worked_at   TIMESTAMPTZ,
+      updated_at       TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS research_notes (
+      id         SERIAL      PRIMARY KEY,
+      target_id  INTEGER     NOT NULL REFERENCES research_targets(id) ON DELETE CASCADE,
+      kind       TEXT        NOT NULL,
+      content    TEXT        NOT NULL,
+      ref        TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_notes_target ON research_notes(target_id);
+    CREATE INDEX IF NOT EXISTS idx_research_notes_kind ON research_notes(target_id, kind);
+
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_target_id INTEGER;
   `)
   schemaReady = true
 }

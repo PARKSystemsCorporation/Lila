@@ -521,6 +521,118 @@ function SetupCard() {
 interface AlpacaPosition { symbol: string; qty: string; current_price: string; unrealized_pl: string; unrealized_plpc: string }
 interface AlpacaAccount { equity: string; buying_power: string; cash: string }
 
+interface ResearchTarget {
+  id: number
+  title: string
+  platform_label: string
+  reward: number | string
+  chain?: string
+  phase: 'map' | 'surfaces' | 'invariants' | 'hypothesize' | 'investigate' | 'found' | 'exhausted'
+  cycles: number
+  fruitless_cycles: number
+  status: 'active' | 'exhausted' | 'found' | 'abandoned'
+  open_hyp?: number | string
+  closed_hyp?: number | string
+  finding_cnt?: number | string
+}
+
+const PHASE_LABEL: Record<string, string> = {
+  map: 'MAPPING',
+  surfaces: 'SURFACES',
+  invariants: 'INVARIANTS',
+  hypothesize: 'HYPOTHESIZING',
+  investigate: 'INVESTIGATING',
+  found: 'FINDING FILED',
+  exhausted: 'EXHAUSTED',
+}
+const PHASE_ORDER = ['map', 'surfaces', 'invariants', 'hypothesize', 'investigate']
+
+function TargetCard() {
+  const [current, setCurrent] = useState<ResearchTarget | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/research')
+        if (!res.ok) return
+        const d = await res.json()
+        setCurrent(d.current)
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    load()
+    const id = setInterval(load, 15_000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (loading) return null
+  if (!current) return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-2">
+      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Current Target</p>
+      <p className="text-xs font-mono text-slate-600">No target pinned. Tasker will pin one next cycle.</p>
+    </div>
+  )
+
+  const phaseIdx = PHASE_ORDER.indexOf(current.phase)
+  const open = Number(current.open_hyp ?? 0)
+  const closed = Number(current.closed_hyp ?? 0)
+  const findings = Number(current.finding_cnt ?? 0)
+  const reward = typeof current.reward === 'string' ? parseFloat(current.reward) : current.reward
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Current Target · {current.platform_label}</p>
+        <span className="text-[9px] font-mono text-emerald-400 border border-emerald-900 rounded px-1.5 py-0.5">
+          {PHASE_LABEL[current.phase] ?? current.phase.toUpperCase()}
+        </span>
+      </div>
+
+      <div>
+        <p className="text-sm font-mono text-slate-200 leading-snug">{current.title}</p>
+        <p className="text-xs font-mono text-emerald-400 mt-1 tabular-nums">
+          ${reward.toLocaleString()} <span className="text-[10px] text-slate-600 ml-1">{current.chain ?? ''}</span>
+        </p>
+      </div>
+
+      {/* Phase progress bar */}
+      {phaseIdx >= 0 && (
+        <div className="flex gap-1">
+          {PHASE_ORDER.map((p, i) => (
+            <div key={p} className={`flex-1 h-1 rounded-full ${
+              i < phaseIdx ? 'bg-emerald-600'
+              : i === phaseIdx ? 'bg-emerald-500 animate-pulse'
+              : 'bg-slate-800'
+            }`} />
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-3 gap-3 pt-1">
+        <div>
+          <p className="text-lg font-bold font-mono text-white tabular-nums">{current.cycles}</p>
+          <p className="text-[10px] font-mono text-slate-600">cycles</p>
+        </div>
+        <div>
+          <p className="text-lg font-bold font-mono text-amber-400 tabular-nums">{open}</p>
+          <p className="text-[10px] font-mono text-slate-600">open hyps</p>
+        </div>
+        <div>
+          <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">{findings}</p>
+          <p className="text-[10px] font-mono text-slate-600">findings</p>
+        </div>
+      </div>
+
+      {closed > 0 && (
+        <p className="text-[10px] font-mono text-slate-600">
+          {closed} hypothesis{closed > 1 ? 'es' : ''} tested · fruitless {current.fruitless_cycles}/3
+        </p>
+      )}
+    </div>
+  )
+}
+
 function PortfolioCard() {
   const [account, setAccount] = useState<AlpacaAccount | null>(null)
   const [positions, setPositions] = useState<AlpacaPosition[]>([])
@@ -650,6 +762,8 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
             <p className="text-[10px] text-slate-600 font-mono mt-0.5">Lila is running. You don't need to do anything.</p>
           </div>
         </div>
+
+        <TargetCard />
 
         <PortfolioCard />
 

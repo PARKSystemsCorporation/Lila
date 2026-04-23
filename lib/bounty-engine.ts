@@ -7,13 +7,26 @@ import type { UnifiedBounty } from './bounties-fetch'
 export type { UnifiedBounty }
 
 export interface EngineResult {
-  action: 'claimed' | 'submitted' | 'drafted' | 'idle' | 'error'
+  action: 'claimed' | 'submitted' | 'drafted' | 'researching' | 'idle' | 'error'
   bountyId?: string
   title?: string
   reward?: number
   platform?: string
   logMessage: string
   logType: 'info' | 'success' | 'warn'
+}
+
+// Security bounties are surfaced separately so Tasker can route them into the
+// target-pinned ResearchEngine loop instead of a one-shot LLM pass.
+export function pickSecurityCandidates(bounties: UnifiedBounty[]): UnifiedBounty[] {
+  return bounties
+    .filter(b => b.reward >= 50)
+    .filter(b => {
+      const blob = `${b.title} ${b.description}`.toLowerCase()
+      return SECURITY_KEYWORDS.some(k => blob.includes(k))
+        && !OFF_TOPIC_KEYWORDS.some(k => blob.includes(k))
+    })
+    .sort((a, b) => b.reward - a.reward)
 }
 
 const WALLET = process.env.WALLET_ADDRESS ?? ''
