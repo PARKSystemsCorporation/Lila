@@ -108,6 +108,23 @@ export async function closePosition(symbol: string): Promise<boolean> {
   return res.ok
 }
 
+export interface NewsItem {
+  id: number
+  headline: string
+  summary: string
+  symbols: string[]
+  source: string
+  created_at: string
+}
+
+export async function getNews(symbols: string[], limit = 15): Promise<NewsItem[]> {
+  const url = `${DATA_BASE}/v1beta1/news?symbols=${symbols.join(',')}&limit=${limit}&sort=desc`
+  const res = await fetch(url, { headers: dataHeaders(), signal: AbortSignal.timeout(10_000) })
+  if (!res.ok) throw new Error(`Alpaca news: ${res.status}`)
+  const data = await res.json()
+  return (data.news ?? []) as NewsItem[]
+}
+
 export async function getBars(symbols: string[], limit = 25): Promise<BarData[]> {
   const url = `${DATA_BASE}/v2/stocks/bars?symbols=${symbols.join(',')}&timeframe=1Day&limit=${limit}&feed=iex`
   const res = await fetch(url, { headers: dataHeaders(), signal: AbortSignal.timeout(15_000) })

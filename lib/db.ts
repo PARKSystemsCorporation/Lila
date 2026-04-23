@@ -78,6 +78,31 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       opened_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
       closed_at    TIMESTAMPTZ
     );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id         SERIAL      PRIMARY KEY,
+      sender     TEXT        NOT NULL,
+      content    TEXT        NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS analyst_notes (
+      id         SERIAL      PRIMARY KEY,
+      path       TEXT        NOT NULL UNIQUE,
+      content    TEXT        NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS analyst_state (
+      id           INTEGER     PRIMARY KEY DEFAULT 1,
+      step         TEXT        NOT NULL DEFAULT 'T0',
+      cycle        INTEGER     NOT NULL DEFAULT 0,
+      notes_buffer TEXT,
+      last_step_at TIMESTAMPTZ,
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO analyst_state (id) VALUES (1) ON CONFLICT DO NOTHING;
   `)
   schemaReady = true
 }

@@ -21,8 +21,9 @@ interface UnifiedBounty {
 }
 
 interface Message {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'analyst'
   content: string
+  id?: number
 }
 
 interface LogEntry {
@@ -131,7 +132,7 @@ function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   )
 }
 
-// ─── Chat Tab ─────────────────────────────────────────────────────────────────
+// ─── Chat Tab (group: you + Lila + Analyst) ───────────────────────────────────
 
 function ChatTab({ visible }: { visible: boolean }) {
   const [messages, setMessages] = useState<Message[]>([
@@ -140,11 +141,36 @@ function ChatTab({ visible }: { visible: boolean }) {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const lastAnalystId = useRef(0)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Poll for Analyst messages every 5s
+  useEffect(() => {
+    if (!visible) return
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/chat/messages?after=${lastAnalystId.current}`)
+        if (!res.ok) return
+        const { messages: incoming } = await res.json()
+        if (incoming.length > 0) {
+          setMessages(prev => [
+            ...prev,
+            ...incoming.map((m: { id: number; sender: string; content: string }) => ({
+              role: m.sender === 'analyst' ? 'analyst' as const : 'assistant' as const,
+              content: m.content,
+              id: m.id,
+            })),
+          ])
+          lastAnalystId.current = incoming[incoming.length - 1].id
+        }
+      } catch { /* network hiccup */ }
+    }
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [visible])
 
   const send = useCallback(async () => {
     const text = input.trim()
@@ -159,7 +185,7 @@ function ChatTab({ visible }: { visible: boolean }) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history.map(m => ({ role: m.role, content: m.content })) }),
+        body: JSON.stringify({ messages: history.filter(m => m.role !== 'analyst').map(m => ({ role: m.role === 'analyst' ? 'assistant' : m.role, content: m.content })) }),
       })
 
       if (!res.ok || !res.body) throw new Error()
@@ -191,38 +217,53 @@ function ChatTab({ visible }: { visible: boolean }) {
 
   return (
     <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
+      {/* Group chat header */}
+      <div className="shrink-0 px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-800/60">
+        <div className="flex gap-1">
+          <span className="w-5 h-5 rounded-full bg-emerald-900 border border-emerald-700 flex items-center justify-center text-[9px] font-mono text-emerald-400">L</span>
+          <span className="w-5 h-5 rounded-full bg-blue-900 border border-blue-700 flex items-center justify-center text-[9px] font-mono text-blue-400">A</span>
+          <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[9px] font-mono text-slate-400">U</span>
+        </div>
+        <span className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Group · Lila · Analyst · You</span>
+      </div>
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {m.role === 'assistant' && (
-              <span className="text-emerald-500 font-mono text-xs mr-2 mt-1.5 shrink-0">L</span>
-            )}
-            <div
-              className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed ${
-                m.role === 'user'
-                  ? 'bg-slate-800 text-slate-100 rounded-tr-sm'
-                  : 'bg-slate-900 text-slate-200 rounded-tl-sm border border-slate-800'
-              }`}
-            >
-              {m.content}
-              {streaming && i === messages.length - 1 && m.role === 'assistant' && (
-                <span className="inline-block w-1.5 h-3.5 bg-emerald-500 ml-0.5 animate-pulse align-middle" />
+        {messages.map((m, i) => {
+          const isUser = m.role === 'user'
+          const isAnalyst = m.role === 'analyst'
+          return (
+            <div key={m.id ?? i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+              {!isUser && (
+                <span className={`font-mono text-xs mr-2 mt-1.5 shrink-0 w-4 text-center ${isAnalyst ? 'text-blue-400' : 'text-emerald-500'}`}>
+                  {isAnalyst ? 'A' : 'L'}
+                </span>
               )}
+              <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed ${
+                isUser
+                  ? 'bg-slate-800 text-slate-100 rounded-tr-sm'
+                  : isAnalyst
+                    ? 'bg-blue-950/60 text-blue-200 rounded-tl-sm border border-blue-900/60'
+                    : 'bg-slate-900 text-slate-200 rounded-tl-sm border border-slate-800'
+              }`}>
+                {m.content}
+                {streaming && i === messages.length - 1 && m.role === 'assistant' && (
+                  <span className="inline-block w-1.5 h-3.5 bg-emerald-500 ml-0.5 animate-pulse align-middle" />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
       <div className="shrink-0 px-4 py-3 border-t border-slate-800 bg-slate-950 flex gap-2">
         <input
-          ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && send()}
-          placeholder="Ask Lila anything..."
+          placeholder="Message the group..."
           className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-700 focus:outline-none focus:border-emerald-800"
         />
         <button
