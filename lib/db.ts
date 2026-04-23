@@ -116,11 +116,13 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE TABLE IF NOT EXISTS management_state (
       id             INTEGER       PRIMARY KEY DEFAULT 1,
       last_check_at  TIMESTAMPTZ,
+      last_trade_at  TIMESTAMPTZ,
       last_earned    NUMERIC(12,2) NOT NULL DEFAULT 0,
       last_error_cnt INTEGER       NOT NULL DEFAULT 0,
       updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     INSERT INTO management_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_trade_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS security_reports (
       id             SERIAL        PRIMARY KEY,
@@ -133,10 +135,13 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       url            TEXT,
       content        TEXT          NOT NULL,
       confidence     NUMERIC(3,2)  NOT NULL DEFAULT 0,
-      status         TEXT          NOT NULL DEFAULT 'draft',
+      status         TEXT          NOT NULL DEFAULT 'pending_review',
+      review_notes   TEXT,
       created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
       updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS review_notes TEXT;
+    UPDATE security_reports SET status='pending_review' WHERE status='draft';
   `)
   schemaReady = true
 }

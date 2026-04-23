@@ -208,8 +208,8 @@ export class BountyEngine {
       const { rows } = await db.query(
         `INSERT INTO security_reports
            (bounty_id, platform, platform_label, title, reward, chain, url, content, confidence, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft')
-         ON CONFLICT (bounty_id) DO UPDATE SET content=$8, confidence=$9, updated_at=NOW()
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_review')
+         ON CONFLICT (bounty_id) DO UPDATE SET content=$8, confidence=$9, status='pending_review', review_notes=NULL, updated_at=NOW()
          RETURNING id`,
         [
           bounty.id, bounty.platform, bounty.platformLabel, bounty.title,
@@ -272,30 +272,16 @@ export class BountyEngine {
       if (db) {
         await this.saveDraftReport(db, best, output.content, best.confidence)
       }
-      // Immunefi is read-only; we always stop at draft and notify the operator.
-      if (best.readOnly) {
-        return {
-          action: 'drafted',
-          bountyId: best.id,
-          title: best.title,
-          reward: best.reward,
-          platform: best.platformLabel,
-          logMessage: `Draft report ready: "${best.title}" — $${best.reward} on ${best.platformLabel}. Operator review required.`,
-          logType: 'success',
-        }
-      }
-      // Writable platforms: still draft, and auto-submit only if assigned or very confident.
-      const shouldAutoSubmit = assignedBounty?.id === best.id || best.confidence >= 0.85
-      if (!shouldAutoSubmit) {
-        return {
-          action: 'drafted',
-          bountyId: best.id,
-          title: best.title,
-          reward: best.reward,
-          platform: best.platformLabel,
-          logMessage: `Draft report filed: "${best.title}" on ${best.platformLabel}. Awaiting operator approval.`,
-          logType: 'success',
-        }
+      // All security reports go to Lila's review queue. Immunefi is read-only
+      // anyway, and even on writable platforms Lila vets before auto-submit.
+      return {
+        action: 'drafted',
+        bountyId: best.id,
+        title: best.title,
+        reward: best.reward,
+        platform: best.platformLabel,
+        logMessage: `Draft report filed: "${best.title}" — $${best.reward} on ${best.platformLabel}. Lila reviewing.`,
+        logType: 'success',
       }
     }
 

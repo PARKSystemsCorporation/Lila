@@ -37,7 +37,8 @@ interface SecurityReport {
   url?: string
   content: string
   confidence: number
-  status: 'draft' | 'approved' | 'submitted' | 'dismissed'
+  status: 'pending_review' | 'approved' | 'rejected' | 'submitted' | 'dismissed'
+  review_notes?: string | null
   created_at: string
 }
 
@@ -661,10 +662,18 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
 // ─── Skills Tab ───────────────────────────────────────────────────────────────
 
 const REPORT_STATUS_STYLE: Record<string, string> = {
-  draft:     'bg-amber-950 text-amber-300 border-amber-900',
-  approved:  'bg-emerald-950 text-emerald-300 border-emerald-900',
-  submitted: 'bg-blue-950 text-blue-300 border-blue-900',
-  dismissed: 'bg-slate-800 text-slate-500 border-slate-700',
+  pending_review: 'bg-slate-800 text-slate-400 border-slate-700',
+  approved:       'bg-emerald-950 text-emerald-300 border-emerald-900',
+  rejected:       'bg-red-950 text-red-300 border-red-900',
+  submitted:      'bg-blue-950 text-blue-300 border-blue-900',
+  dismissed:      'bg-slate-800 text-slate-500 border-slate-700',
+}
+const REPORT_STATUS_LABEL: Record<string, string> = {
+  pending_review: 'LILA REVIEWING',
+  approved:       'APPROVED',
+  rejected:       'REJECTED',
+  submitted:      'SUBMITTED',
+  dismissed:      'DISMISSED',
 }
 
 function ReportsTab({ reports, loading, visible, onAction }: {
@@ -673,14 +682,18 @@ function ReportsTab({ reports, loading, visible, onAction }: {
   visible: boolean
   onAction: (id: number, action: 'approve' | 'dismiss' | 'submitted') => void
 }) {
+  const approved = reports.filter(r => r.status === 'approved')
+  const pending  = reports.filter(r => r.status === 'pending_review')
+  const done     = reports.filter(r => ['submitted', 'dismissed', 'rejected'].includes(r.status))
+
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5">
-        <div className="flex items-center gap-2 mb-4">
+      <div className="px-4 py-5 space-y-5">
+        <div className="flex items-center gap-2">
           <span className="text-emerald-500"><IconReports /></span>
           <div>
             <p className="text-xs font-mono text-slate-300 font-semibold">Security Reports</p>
-            <p className="text-[10px] font-mono text-slate-600">Tasker drafts — you submit & collect</p>
+            <p className="text-[10px] font-mono text-slate-600">Tasker drafts → Lila reviews → you submit</p>
           </div>
         </div>
 
@@ -695,9 +708,31 @@ function ReportsTab({ reports, loading, visible, onAction }: {
             <p className="text-xs font-mono text-slate-700 mt-1">Tasker files drafts on security bounties automatically.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {reports.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
-          </div>
+          <>
+            {/* Ready for operator */}
+            {approved.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">Ready · {approved.length}</p>
+                {approved.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+              </section>
+            )}
+
+            {/* Lila's queue */}
+            {pending.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Lila reviewing · {pending.length}</p>
+                {pending.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+              </section>
+            )}
+
+            {/* Done / dismissed / rejected */}
+            {done.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Archive · {done.length}</p>
+                {done.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+              </section>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -723,7 +758,7 @@ function ReportCard({ report, onAction }: {
       <button className="w-full p-4 text-left" onClick={() => setExpanded(e => !e)}>
         <div className="flex items-start gap-2 mb-2">
           <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${statusCls}`}>
-            {report.status.toUpperCase()}
+            {REPORT_STATUS_LABEL[report.status] ?? report.status.toUpperCase()}
           </span>
           <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 bg-slate-800 text-slate-400 border-slate-700">
             {report.platform_label.toUpperCase()}
@@ -731,6 +766,14 @@ function ReportCard({ report, onAction }: {
           <span className="text-[9px] font-mono text-slate-600 ml-auto mt-0.5">conf {Math.round(report.confidence * 100)}%</span>
         </div>
         <p className="text-sm font-mono text-slate-200 leading-snug">{report.title}</p>
+
+        {/* Lila's review note, if any */}
+        {report.review_notes && (
+          <p className="text-[10px] font-mono text-emerald-400 mt-1.5 italic">
+            L: {report.review_notes}
+          </p>
+        )}
+
         <div className="flex items-center justify-between mt-2">
           <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">
             ${Number(report.reward).toLocaleString()}
@@ -765,7 +808,7 @@ function ReportCard({ report, onAction }: {
             )}
           </div>
 
-          {report.status === 'draft' && (
+          {report.status === 'approved' && (
             <div className="flex gap-2">
               <button
                 onClick={() => onAction(report.id, 'submitted')}
@@ -780,6 +823,12 @@ function ReportCard({ report, onAction }: {
                 Dismiss
               </button>
             </div>
+          )}
+
+          {report.status === 'pending_review' && (
+            <p className="text-[10px] font-mono text-slate-600 italic text-center py-1">
+              Waiting for Lila's review.
+            </p>
           )}
         </div>
       )}

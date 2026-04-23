@@ -1,24 +1,25 @@
 import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
+import * as Alpaca from './platforms/alpaca'
 
 // ── Management Lila ──────────────────────────────────────────────────────────
 //
-// Lila sits between the operator and the team (Tasker + Analyst). Her job:
-//   - track team progress (earnings delta, open tasks, error rate)
-//   - reply when operator messages in chat
-//   - check in proactively when something notable happens:
-//       * big win (earnings jumped)
-//       * long silence (no earnings in a while)
-//       * repeated Tasker errors (morale/correction)
-//       * open positions drawing down
-//   - never does the work herself; she directs + keeps morale
+// Lila handles the high-stakes work on top of Tasker's bounty grind:
+//   1. Operator replies    — direct-line responses in chat
+//   2. Report review       — vets Tasker's pending_review reports before the
+//                            operator sees anything (approve / reject with notes)
+//   3. Trade cycle         — her own trading decisions, every ~15 min:
+//                            review Analyst notes, file plan with tight stops,
+//                            close/trim open positions, post update
+//   4. Proactive check-in  — morale / flags / wins, every ~5 min
 //
-// Runs at most once every CHECK_INTERVAL_SEC. Replies are prioritised over
-// proactive notes — she won't ghost the operator.
+// Each run returns after the first priority that fires, keeping token cost
+// bounded. She never ticks unprompted — work must be there.
 
-const CHECK_INTERVAL_SEC = 300  // 5 minutes between proactive checks
-const BIG_WIN_THRESHOLD = 50    // $ delta since last check that triggers a callout
-const ERROR_THRESHOLD   = 3     // Tasker errors in-window that triggers a morale note
+const CHECK_INTERVAL_SEC = 300    // 5 min between proactive check-ins
+const TRADE_INTERVAL_SEC = 900    // 15 min between trade cycles
+const BIG_WIN_THRESHOLD = 50
+const ERROR_THRESHOLD   = 3
 
 type LogType = 'info' | 'success' | 'warn'
 
@@ -28,26 +29,76 @@ export interface ManagementResult {
   posted: boolean
 }
 
-const REPLY_PROMPT = `You are Lila, the manager of a small autonomous team: Tasker (executes bounty & trading work) and Analyst (market intel). You report to the operator.
+const REPLY_PROMPT = `You are Lila, the manager of a small autonomous team: Tasker (bounty executor) and Analyst (market intel). You report to the operator.
 
 Voice: direct, dry, warm-but-not-soft. CEO briefing an investor. Numbers first. No filler, no hedging, no apologies.
 
-Context you know right now:
+Team state right now:
 {CONTEXT}
 
-Recent chat transcript (latest last):
+Recent chat (latest last):
 {TRANSCRIPT}
 
-The most recent operator message is unanswered. Write a single reply (1-3 sentences) addressing it directly. If the operator asked a question, answer with the numbers above. If they're pushing for action, commit to it. Do not repeat the context back at them.`
+The most recent operator message is unanswered. Write a single reply (1-3 sentences) addressing it directly. Use the numbers above. If they're pushing for action, commit to it. Don't repeat the context back at them.`
 
-const PROACTIVE_PROMPT = `You are Lila, managing Tasker and Analyst. You report to the operator.
+const PROACTIVE_PROMPT = `You are Lila, managing Tasker and Analyst. Report to the operator.
 
 State:
 {CONTEXT}
 
-Notable event detected: {EVENT}
+Notable event: {EVENT}
 
-Write ONE short message (1-2 sentences) to the group — either a quick morale note to the team or a heads-up to the operator, whichever fits the event. Direct, dry. No filler.`
+Write ONE short message (1-2 sentences) — morale note to the team or heads-up to the operator, whichever fits. Direct, dry.`
+
+const REVIEW_PROMPT = `You are Lila reviewing a security-bug report Tasker just drafted. Before it reaches the operator it passes through you. Your job is to catch fabrication, overreach, and unjustified severity.
+
+Bounty: {TITLE} · ${'${REWARD}'} on {PLATFORM}
+
+Tasker's report:
+---
+{REPORT}
+---
+
+Evaluate:
+1. Is the finding concrete — does it reference a real component/function and a real failure mode?
+2. Is severity justified? Critical/High needs a direct asset-loss path.
+3. Is the PoC plausible? Obvious hand-waving or "this could potentially allow" language is a red flag.
+4. Any obvious fabrication (invented function names, invented code)?
+
+Respond with ONLY valid JSON:
+{
+  "decision": "approve" | "reject",
+  "confidence": 0.0-1.0,
+  "notes": "one sentence for the operator"
+}
+
+Approve only if you'd be comfortable submitting this yourself. Reject with the actual reason. No "looks good to me" — give a reason either way.`
+
+const TRADE_PLAN_PROMPT = `You are Lila, running the trading desk. Write today's plan based on Analyst output and current positions.
+
+Analyst notes (recent):
+{NOTES}
+
+Analyst pending picks:
+{PICKS}
+
+Open positions:
+{POSITIONS}
+
+Rules:
+- Long only.
+- Sizing is agnostic; small-account trades are fine.
+- Every trade MUST have a TIGHT stop (close to entry, tight enough that a single bad candle takes you out, not a 7% stop).
+- Be aggressive cutting losers. Let winners run only if thesis holds.
+
+Respond with ONLY valid JSON:
+{
+  "stance": "1-2 sentence read on the market and your posture today",
+  "trades": [{"symbol":"XYZ","entry":12.34,"target":13.20,"stop":12.10,"confidence":0.7,"reason":"one sentence"}],
+  "positionActions": [{"symbol":"XYZ","action":"HOLD|CLOSE","reason":"one sentence"}]
+}`
+
+function today() { return new Date().toISOString().slice(0, 10) }
 
 export class ManagementLoop {
   private db: PoolClient
@@ -63,24 +114,26 @@ export class ManagementLoop {
   async run(): Promise<ManagementResult | null> {
     if (!this.ai) return null
 
-    // Priority 1: reply to any unanswered operator message.
+    // Priority 1: reply to unanswered operator message
     const reply = await this.replyToOperator()
     if (reply) return reply
 
-    // Priority 2: proactive check-in, rate-limited.
+    // Priority 2: review any pending_review report (one per run)
+    const review = await this.reviewOne()
+    if (review) return review
+
+    // Priority 3: trade cycle, 15-min gated
+    if (await this.shouldTrade()) {
+      const trade = await this.runTradeCycle()
+      if (trade) return trade
+    }
+
+    // Priority 4: proactive check-in, 5-min gated
     if (!(await this.shouldCheckIn())) return null
     return await this.proactiveCheckIn()
   }
 
-  private async shouldCheckIn(): Promise<boolean> {
-    const { rows: [s] } = await this.db.query(
-      'SELECT last_check_at FROM management_state WHERE id=1'
-    )
-    if (!s?.last_check_at) return true
-    return (Date.now() - new Date(s.last_check_at).getTime()) / 1000 >= CHECK_INTERVAL_SEC
-  }
-
-  // ── Reply to operator ──────────────────────────────────────────────────────
+  // ── Priority 1: operator reply ─────────────────────────────────────────────
 
   private async replyToOperator(): Promise<ManagementResult | null> {
     const { rows } = await this.db.query(
@@ -90,8 +143,6 @@ export class ManagementLoop {
     )
     if (!rows.length) return null
 
-    // Find the latest operator message and check if Lila has already replied
-    // to it (any 'lila' message after it counts as answered).
     let lastUserIdx = -1
     for (let i = rows.length - 1; i >= 0; i--) {
       if (rows[i].sender === 'user') { lastUserIdx = i; break }
@@ -113,14 +164,188 @@ export class ManagementLoop {
     if (!msg) return null
 
     await this.chat('lila', msg.slice(0, 500))
-    return { logMessage: `Lila replied to operator.`, logType: 'info', posted: true }
+    return { logMessage: 'Lila replied to operator.', logType: 'info', posted: true }
   }
 
-  // ── Proactive check-in ─────────────────────────────────────────────────────
+  // ── Priority 2: report review ──────────────────────────────────────────────
+
+  private async reviewOne(): Promise<ManagementResult | null> {
+    const { rows } = await this.db.query(
+      `SELECT id, title, reward, platform_label, content
+       FROM security_reports
+       WHERE status='pending_review'
+       ORDER BY created_at ASC LIMIT 1`
+    )
+    if (!rows.length) return null
+
+    const r = rows[0]
+    const raw = await this.llm(
+      REVIEW_PROMPT
+        .replace('{TITLE}', r.title)
+        .replace('{REWARD}', String(r.reward))
+        .replace('{PLATFORM}', r.platform_label)
+        .replace('{REPORT}', String(r.content).slice(0, 6000)),
+      250
+    )
+    const parsed = this.parse<{ decision: 'approve' | 'reject'; confidence: number; notes: string }>(
+      raw, { decision: 'reject', confidence: 0, notes: 'Review returned no parseable verdict.' }
+    )
+
+    const newStatus = parsed.decision === 'approve' ? 'approved' : 'rejected'
+    const notes = String(parsed.notes ?? '').slice(0, 500)
+
+    await this.db.query(
+      `UPDATE security_reports
+         SET status=$1, review_notes=$2, confidence=$3, updated_at=NOW()
+       WHERE id=$4`,
+      [newStatus, notes, Math.min(Math.max(parsed.confidence ?? 0, 0), 1), r.id]
+    )
+
+    if (newStatus === 'approved') {
+      await this.chat(
+        'lila',
+        `Approved report: "${r.title}" — $${r.reward} on ${r.platform_label}. ${notes} Ready in the Reports tab.`
+      )
+    } else {
+      await this.chat(
+        'lila',
+        `Rejected Tasker's draft on "${r.title}". ${notes}`
+      )
+    }
+
+    return {
+      logMessage: `Lila ${newStatus} "${r.title}" — ${notes.slice(0, 80)}`,
+      logType: newStatus === 'approved' ? 'success' : 'warn',
+      posted: true,
+    }
+  }
+
+  // ── Priority 3: trade cycle ────────────────────────────────────────────────
+
+  private async shouldTrade(): Promise<boolean> {
+    const { rows: [s] } = await this.db.query(
+      'SELECT last_trade_at FROM management_state WHERE id=1'
+    )
+    if (!s?.last_trade_at) return true
+    return (Date.now() - new Date(s.last_trade_at).getTime()) / 1000 >= TRADE_INTERVAL_SEC
+  }
+
+  private async runTradeCycle(): Promise<ManagementResult | null> {
+    const hasAlpaca = !!(process.env.ALPACA_API_KEY || process.env.APCA_API_KEY_ID)
+
+    await this.db.query(
+      'UPDATE management_state SET last_trade_at=NOW(), updated_at=NOW() WHERE id=1'
+    )
+
+    if (!hasAlpaca) {
+      return { logMessage: 'Trade cycle skipped — no Alpaca key.', logType: 'info', posted: false }
+    }
+
+    // Gather context
+    const { rows: notes } = await this.db.query(
+      `SELECT path, content FROM analyst_notes
+       WHERE updated_at > NOW() - INTERVAL '24 hours'
+       ORDER BY updated_at DESC LIMIT 10`
+    )
+    const { rows: picks } = await this.db.query(
+      `SELECT symbol, confidence, reason FROM analyst_picks
+       WHERE status='pending' AND created_at > NOW() - INTERVAL '24 hours'
+       ORDER BY confidence DESC LIMIT 10`
+    )
+    const positions = await Alpaca.getPositions().catch(() => [] as Alpaca.AlpacaPosition[])
+
+    const notesBlob = notes.length
+      ? notes.map((n: { path: string; content: string }) => `=== ${n.path} ===\n${n.content.slice(0, 300)}`).join('\n\n')
+      : '(none)'
+    const picksBlob = picks.length
+      ? picks.map((p: { symbol: string; confidence: string; reason: string }) =>
+          `${p.symbol} conf=${p.confidence} — ${p.reason}`).join('\n')
+      : '(none)'
+    const posBlob = positions.length
+      ? positions.map(p =>
+          `${p.symbol} qty=${p.qty} entry=$${parseFloat(p.avg_entry_price).toFixed(2)} now=$${parseFloat(p.current_price).toFixed(2)} pl=${(parseFloat(p.unrealized_plpc) * 100).toFixed(1)}%`
+        ).join('\n')
+      : '(flat)'
+
+    const raw = await this.llm(
+      TRADE_PLAN_PROMPT
+        .replace('{NOTES}', notesBlob)
+        .replace('{PICKS}', picksBlob)
+        .replace('{POSITIONS}', posBlob),
+      700
+    )
+    const plan = this.parse(raw, {
+      stance: 'No change.',
+      trades: [] as LilaTrade[],
+      positionActions: [] as { symbol: string; action: string; reason: string }[],
+    })
+
+    // File plan
+    await this.note(
+      `lila/plans/${today()}-${Date.now()}.md`,
+      `# Lila Plan ${today()}\n\n## Stance\n${plan.stance}\n\n## Trades\n${JSON.stringify(plan.trades ?? [], null, 2)}\n\n## Position actions\n${JSON.stringify(plan.positionActions ?? [], null, 2)}`
+    )
+
+    // Queue new trades (TradingEngine will execute during market hours)
+    let queued = 0
+    for (const t of plan.trades ?? []) {
+      if (!t.symbol || !t.entry || !t.stop || !t.target) continue
+      if (t.stop >= t.entry) continue
+      await this.db.query(
+        `INSERT INTO analyst_picks
+           (symbol, direction, entry_price, target_price, stop_loss, confidence, risk_level, reason, asset_class, status)
+         VALUES ($1,'long',$2,$3,$4,$5,'tight',$6,'lila-plan','pending')`,
+        [t.symbol.toUpperCase(), t.entry, t.target, t.stop, Math.min(Math.max(t.confidence ?? 0.6, 0), 1), t.reason ?? 'Lila plan']
+      )
+      queued++
+    }
+
+    // Close positions she wants out
+    let closed = 0
+    for (const a of plan.positionActions ?? []) {
+      if (a.action !== 'CLOSE') continue
+      const ok = await Alpaca.closePosition(a.symbol).catch(() => false)
+      if (!ok) continue
+      const pos = positions.find(p => p.symbol === a.symbol)
+      const pnl = pos ? parseFloat(pos.unrealized_pl) : 0
+      await this.db.query(
+        `UPDATE lila_positions SET status='closed', pnl=$1, closed_at=NOW()
+         WHERE symbol=$2 AND status='open'`,
+        [pnl, a.symbol]
+      )
+      if (pnl > 0) {
+        await this.db.query('UPDATE lila_state SET total_earned=total_earned+$1 WHERE id=1', [pnl])
+      }
+      closed++
+    }
+
+    const summary = [
+      plan.stance.slice(0, 140),
+      queued > 0 ? `${queued} new trade${queued === 1 ? '' : 's'} queued.` : null,
+      closed > 0 ? `Cut ${closed} position${closed === 1 ? '' : 's'}.` : null,
+    ].filter(Boolean).join(' ')
+
+    await this.chat('lila', summary.slice(0, 500))
+    return {
+      logMessage: `Lila trade cycle: ${queued} queued, ${closed} closed.`,
+      logType: queued + closed > 0 ? 'success' : 'info',
+      posted: true,
+    }
+  }
+
+  // ── Priority 4: proactive check-in ─────────────────────────────────────────
+
+  private async shouldCheckIn(): Promise<boolean> {
+    const { rows: [s] } = await this.db.query(
+      'SELECT last_check_at FROM management_state WHERE id=1'
+    )
+    if (!s?.last_check_at) return true
+    return (Date.now() - new Date(s.last_check_at).getTime()) / 1000 >= CHECK_INTERVAL_SEC
+  }
 
   private async proactiveCheckIn(): Promise<ManagementResult | null> {
     const { rows: [s] } = await this.db.query(
-      'SELECT last_earned, last_error_cnt FROM management_state WHERE id=1'
+      'SELECT last_earned FROM management_state WHERE id=1'
     )
     const { rows: [state] } = await this.db.query(
       'SELECT total_earned FROM lila_state WHERE id=1'
@@ -135,45 +360,41 @@ export class ManagementLoop {
     )
     const errors = Number(errCount[0]?.n ?? 0)
 
-    const { rows: drafts } = await this.db.query(
-      `SELECT COUNT(*) AS n FROM security_reports WHERE status='draft'`
+    const { rows: approved } = await this.db.query(
+      `SELECT COUNT(*) AS n FROM security_reports WHERE status='approved'`
     )
-    const draftCount = Number(drafts[0]?.n ?? 0)
+    const approvedCount = Number(approved[0]?.n ?? 0)
 
     let event: string | null = null
     if (delta >= BIG_WIN_THRESHOLD) {
-      event = `Earnings up $${delta.toFixed(2)} since last check. Acknowledge the team and log the win.`
+      event = `Earnings up $${delta.toFixed(2)} since last check. Acknowledge the team.`
     } else if (errors >= ERROR_THRESHOLD) {
-      event = `${errors} warnings in the last 30 minutes. Tasker is struggling. Send a morale / re-focus note.`
-    } else if (draftCount > 0) {
-      event = `${draftCount} security report draft${draftCount > 1 ? 's' : ''} awaiting operator review.`
+      event = `${errors} warnings in the last 30 minutes. Tasker may be stuck.`
+    } else if (approvedCount > 0) {
+      event = `${approvedCount} approved report${approvedCount > 1 ? 's' : ''} ready for the operator to submit.`
     } else if (delta === 0 && totalEarned > 0) {
-      // Flat — only comment occasionally (every few hours), otherwise we spam.
       const { rows: [last] } = await this.db.query(
         `SELECT last_check_at FROM management_state WHERE id=1`
       )
-      const sinceLast = last?.last_check_at
+      const hrs = last?.last_check_at
         ? (Date.now() - new Date(last.last_check_at).getTime()) / 3_600_000
         : Infinity
-      if (sinceLast >= 3) {
-        event = `No new earnings in the last session. Check what's blocking the queue.`
-      }
+      if (hrs >= 3) event = 'No new earnings in a while. Probe what is blocking the queue.'
     }
 
-    // Always update the checkpoint so we don't spin.
     await this.db.query(
       `UPDATE management_state SET last_check_at=NOW(), last_earned=$1, last_error_cnt=$2, updated_at=NOW() WHERE id=1`,
       [totalEarned, errors]
     )
 
-    if (!event) return { logMessage: 'Nothing notable. Team steady.', logType: 'info', posted: false }
+    if (!event) return { logMessage: 'Nothing notable.', logType: 'info', posted: false }
 
     const context = await this.context(totalEarned)
     const msg = await this.llm(
       PROACTIVE_PROMPT.replace('{CONTEXT}', context).replace('{EVENT}', event),
       160
     )
-    if (!msg) return { logMessage: `Management check: ${event}`, logType: 'info', posted: false }
+    if (!msg) return { logMessage: `Check-in: ${event}`, logType: 'info', posted: false }
 
     await this.chat('lila', msg.slice(0, 500))
     return { logMessage: `Lila check-in: ${event.slice(0, 80)}`, logType: 'success', posted: true }
@@ -190,22 +411,29 @@ export class ManagementLoop {
     const last = ls?.last_bounty
 
     const { rows: openPos } = await this.db.query(
-      `SELECT symbol, pnl FROM lila_positions WHERE status='open' ORDER BY opened_at DESC LIMIT 5`
+      `SELECT symbol FROM lila_positions WHERE status='open' LIMIT 5`
     )
-    const { rows: drafts } = await this.db.query(
-      `SELECT title, reward FROM security_reports WHERE status='draft' ORDER BY created_at DESC LIMIT 3`
+    const { rows: approvedDrafts } = await this.db.query(
+      `SELECT title, reward FROM security_reports WHERE status='approved' ORDER BY updated_at DESC LIMIT 3`
     )
+    const { rows: reviewQueue } = await this.db.query(
+      `SELECT COUNT(*) AS n FROM security_reports WHERE status='pending_review'`
+    )
+    const pendingCount = Number(reviewQueue[0]?.n ?? 0)
     const { rows: recentLog } = await this.db.query(
-      `SELECT message, type FROM lila_log ORDER BY id DESC LIMIT 6`
+      `SELECT message FROM lila_log ORDER BY id DESC LIMIT 5`
     )
 
     return [
-      `Earned to date: $${totalEarned.toFixed(2)}`,
+      `Earned: $${totalEarned.toFixed(2)}`,
       last?.value ? `Last win: ${last.name} (+$${last.value})` : 'No wins yet.',
-      tasks.length ? `Open tasks: ${tasks.slice(0, 3).join(' | ')}` : 'Task queue empty.',
+      tasks.length ? `Tasks: ${tasks.slice(0, 3).join(' | ')}` : 'No open tasks.',
       openPos.length ? `Positions: ${openPos.map((p: { symbol: string }) => p.symbol).join(', ')}` : 'Flat.',
-      drafts.length ? `Draft reports: ${drafts.map((d: { title: string; reward: string }) => `${d.title} ($${d.reward})`).join(' | ')}` : null,
-      `Recent log: ${recentLog.map((l: { message: string }) => l.message.slice(0, 80)).join(' · ')}`,
+      approvedDrafts.length
+        ? `Approved reports waiting for operator: ${approvedDrafts.map((d: { title: string; reward: string }) => `${d.title} ($${d.reward})`).join(' | ')}`
+        : null,
+      pendingCount ? `My review queue: ${pendingCount}` : null,
+      `Recent: ${recentLog.map((l: { message: string }) => l.message.slice(0, 70)).join(' · ')}`,
     ].filter(Boolean).join('\n')
   }
 
@@ -217,13 +445,35 @@ export class ManagementLoop {
         model: 'deepseek-chat',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: maxTokens,
-        temperature: 0.6,
+        temperature: 0.5,
       })
-      return (res.choices[0]?.message?.content ?? '').trim()
+      return (res.choices[0]?.message?.content ?? '')
+        .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
     } catch { return '' }
+  }
+
+  private parse<T>(raw: string, fallback: T): T {
+    try { return JSON.parse(raw) } catch { return fallback }
+  }
+
+  private async note(path: string, content: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO analyst_notes (path, content, updated_at) VALUES ($1,$2,NOW())
+       ON CONFLICT (path) DO UPDATE SET content=$2, updated_at=NOW()`,
+      [path, content]
+    )
   }
 
   private async chat(sender: string, content: string): Promise<void> {
     await this.db.query('INSERT INTO chat_messages (sender, content) VALUES ($1,$2)', [sender, content])
   }
+}
+
+interface LilaTrade {
+  symbol: string
+  entry: number
+  target: number
+  stop: number
+  confidence?: number
+  reason?: string
 }
