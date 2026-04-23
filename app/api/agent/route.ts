@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
+
+export const dynamic = 'force-dynamic'
+
 import type { PoolClient } from 'pg'
 import { getPool, ensureSchema } from '@/lib/db'
 import { BountyEngine } from '@/lib/bounty-engine'
