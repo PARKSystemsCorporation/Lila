@@ -315,13 +315,18 @@ interface SetupResult {
   apiKey?: string
   claimCode?: string
   claimUrl?: string
+  verified?: boolean | null
+  verifyError?: string | null
+  alreadyConfigured?: boolean
+  status?: { status?: string; username?: string; claimed?: boolean }
   error?: string
 }
 
 function SetupCard() {
   const [st, setSt] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [result, setResult] = useState<SetupResult | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [copiedField, setCopiedField] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
 
   const register = async () => {
     setSt('loading')
@@ -341,12 +346,31 @@ function SetupCard() {
     }
   }
 
-  const copy = (text: string) => {
+  const checkStatus = async () => {
+    setChecking(true)
+    try {
+      const res = await fetch('/api/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: 'superteam', action: 'status' }),
+      })
+      const data = await res.json()
+      const r = data.superteam as SetupResult
+      setResult(prev => ({ ...(prev ?? {}), ...r }))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const copy = (text: string, field: string) => {
     navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setCopiedField(field)
+      setTimeout(() => setCopiedField(null), 2000)
     })
   }
+
+  const claimed = result?.status?.claimed === true
+    || (typeof result?.status?.status === 'string' && result.status.status.toUpperCase() === 'CLAIMED')
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-3">
@@ -371,18 +395,36 @@ function SetupCard() {
       {st === 'done' && result?.success && (
         <div className="space-y-2.5 pt-1">
           {/* API Key */}
-          <div className="bg-slate-950 rounded-xl p-3">
-            <p className="text-[9px] font-mono text-slate-600 uppercase tracking-widest mb-1">API Key — copy to Railway</p>
-            <div className="flex items-center gap-2">
-              <p className="text-[11px] font-mono text-emerald-400 break-all flex-1">{result.apiKey}</p>
-              <button
-                onClick={() => copy(result.apiKey!)}
-                className="shrink-0 text-[9px] font-mono text-slate-400 border border-slate-700 rounded px-2 py-1 active:bg-slate-800"
-              >
-                {copied ? '✓' : 'Copy'}
-              </button>
+          {result.apiKey && (
+            <div className="bg-slate-950 rounded-xl p-3">
+              <p className="text-[9px] font-mono text-slate-600 uppercase tracking-widest mb-1">API Key — copy to Railway</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] font-mono text-emerald-400 break-all flex-1">{result.apiKey}</p>
+                <button
+                  onClick={() => copy(result.apiKey!, 'apiKey')}
+                  className="shrink-0 text-[9px] font-mono text-slate-400 border border-slate-700 rounded px-2 py-1 active:bg-slate-800"
+                >
+                  {copiedField === 'apiKey' ? '✓' : 'Copy'}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Claim code (raw) — so it works even if the URL doesn't */}
+          {result.claimCode && (
+            <div className="bg-slate-950 rounded-xl p-3">
+              <p className="text-[9px] font-mono text-slate-600 uppercase tracking-widest mb-1">Claim code — paste on Superteam if link fails</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] font-mono text-blue-400 break-all flex-1">{result.claimCode}</p>
+                <button
+                  onClick={() => copy(result.claimCode!, 'code')}
+                  className="shrink-0 text-[9px] font-mono text-slate-400 border border-slate-700 rounded px-2 py-1 active:bg-slate-800"
+                >
+                  {copiedField === 'code' ? '✓' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Claim URL */}
           {result.claimUrl && (
@@ -399,10 +441,42 @@ function SetupCard() {
             </div>
           )}
 
+          {/* Verification status */}
+          {result.verified === true && (
+            <p className="text-[10px] font-mono text-emerald-400">✓ Agent verified active.</p>
+          )}
+          {result.verified === false && (
+            <p className="text-[10px] font-mono text-amber-400">
+              ⚠ Registration succeeded but status check failed: {result.verifyError ?? 'unknown'}
+            </p>
+          )}
+
+          {/* Status after check */}
+          {result.status && (
+            <div className={`rounded-xl p-3 border ${claimed ? 'bg-emerald-950/40 border-emerald-900/50' : 'bg-slate-950 border-slate-800'}`}>
+              <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mb-1">Agent status</p>
+              <p className="text-[11px] font-mono text-slate-300">
+                {result.status.status ?? 'unknown'}
+                {result.status.username ? ` · @${result.status.username}` : ''}
+                {claimed ? ' · already claimed — 404 on link is expected' : ''}
+              </p>
+            </div>
+          )}
+
+          {/* Recheck button */}
+          <button
+            onClick={checkStatus}
+            disabled={checking}
+            className="w-full text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-2 active:bg-slate-800 disabled:opacity-40"
+          >
+            {checking ? 'Checking…' : 'Check agent status'}
+          </button>
+
           <div className="bg-amber-950/40 border border-amber-900/50 rounded-xl p-3">
-            <p className="text-[10px] font-mono text-amber-400 leading-relaxed">
-              1. Copy the API key above → add <span className="text-white">SUPERTEAM_API_KEY</span> in Railway → redeploy{'\n'}
-              2. Tap the claim link to connect Lila&apos;s winnings to your Superteam account
+            <p className="text-[10px] font-mono text-amber-400 leading-relaxed whitespace-pre-line">
+              {`1. Copy the API key above → add SUPERTEAM_API_KEY in Railway → redeploy.
+2. Tap the claim link to link Lila's winnings to your Superteam account.
+3. If the link 404s, the agent is likely already claimed (or still active under your account) — tap "Check agent status" to confirm.`}
             </p>
           </div>
         </div>

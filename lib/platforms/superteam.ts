@@ -36,7 +36,38 @@ export async function registerAgent(name = 'lila-agent'): Promise<RegisterResult
     body: JSON.stringify({ name }),
     signal: AbortSignal.timeout(10_000),
   })
-  if (!res.ok) throw new Error(`Superteam registration failed: ${res.status}`)
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`Superteam registration failed: ${res.status} ${body.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  if (!data?.apiKey || !data?.claimCode) {
+    throw new Error(`Superteam returned unexpected response: ${JSON.stringify(data).slice(0, 200)}`)
+  }
+  return data
+}
+
+// ── Status ─────────────────────────────────────────────────────────────────
+// Verify that an agent the caller holds credentials for is still reachable and
+// active. Lets the UI distinguish "link 404's because the agent is broken"
+// from "link 404's because it was already claimed".
+
+export interface AgentStatus {
+  agentId?: string
+  username?: string
+  status?: string
+  claimed?: boolean
+  [key: string]: unknown
+}
+
+export async function getStatus(apiKey: string): Promise<AgentStatus> {
+  const res = await fetch(`${BASE}/api/agents/status`, {
+    headers: headers(apiKey),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) {
+    throw new Error(`Superteam status failed: ${res.status}`)
+  }
   return res.json()
 }
 
