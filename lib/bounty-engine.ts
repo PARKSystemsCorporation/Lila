@@ -134,7 +134,7 @@ export class BountyEngine {
 
     // Score candidates (operator-assigned gets priority boost)
     const scored = await this.scoreBounties(actionable)
-    const best = assignedBounty && scored.find(b => b.id === assignedBounty.id && b.confidence > 0.4)
+    const best = (assignedBounty && scored.find(b => b.id === assignedBounty.id && b.confidence > 0.4))
       ?? scored.find(b => b.confidence > 0.6)
 
     if (!best) {
