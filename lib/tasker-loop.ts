@@ -241,11 +241,10 @@ export class TaskerLoop {
 
   private async bz0(): Promise<{ logMessage: string; logType: LogType }> {
     const { rows: [s] } = await this.db.query(
-      'SELECT total_earned, active_tasks, last_bounty, current_target_id FROM lila_state WHERE id=1'
+      'SELECT total_earned, active_tasks, current_target_id FROM lila_state WHERE id=1'
     )
     const earned = parseFloat(s?.total_earned ?? '0').toFixed(2)
     const tasks: string[] = s?.active_tasks ?? []
-    const last = s?.last_bounty
 
     // Include current research target if any — gives operator a visible pulse
     // on the deep-research loop.
@@ -259,10 +258,15 @@ export class TaskerLoop {
       if (t) targetLine = ` Researching: ${t.title} — cycle ${t.cycles}, phase ${t.phase}.`
     }
 
+    const { rows: [lastPaid] } = await this.db.query(
+      `SELECT title, payout FROM security_reports
+       WHERE status='paid' ORDER BY paid_at DESC LIMIT 1`
+    )
+
     const msg = tasks.length
       ? `Earned $${earned}. ${tasks.length} task${tasks.length > 1 ? 's' : ''} active.${targetLine}`
-      : last?.value
-        ? `Earned $${earned}. Last: ${last.name} (+$${last.value}).${targetLine}`
+      : lastPaid
+        ? `Earned $${earned}. Last paid: ${lastPaid.title} (+$${parseFloat(lastPaid.payout ?? '0').toFixed(2)}).${targetLine}`
         : `Earned $${earned}.${targetLine || ' Scanning.'}`
 
     await this.chat('tasker', msg.slice(0, 500))

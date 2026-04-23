@@ -14,23 +14,25 @@ export function getPool(): Pool {
 
 let schemaReady = false
 
+// Creates every table the app needs, idempotently. Includes the ALTERs we
+// still need for safe upgrades from older deployments (last_bounty drop,
+// security_reports payout columns, etc.).
 export async function ensureSchema(client: PoolClient): Promise<void> {
   if (schemaReady) return
   await client.query(`
     CREATE TABLE IF NOT EXISTS lila_state (
-      id              INTEGER       PRIMARY KEY DEFAULT 1,
-      total_earned    NUMERIC(12,2) NOT NULL DEFAULT 0,
-      active_tasks    JSONB         NOT NULL DEFAULT '[]'::jsonb,
-      last_bounty     JSONB         NOT NULL DEFAULT '{"name":"None yet","value":0,"time":0}'::jsonb,
-      tick_count      INTEGER       NOT NULL DEFAULT 0,
-      assigned_bounty JSONB         DEFAULT NULL,
-      updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+      id                INTEGER       PRIMARY KEY DEFAULT 1,
+      total_earned      NUMERIC(12,2) NOT NULL DEFAULT 0,
+      active_tasks      JSONB         NOT NULL DEFAULT '[]'::jsonb,
+      tick_count        INTEGER       NOT NULL DEFAULT 0,
+      assigned_bounty   JSONB         DEFAULT NULL,
+      current_target_id INTEGER,
+      updated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     INSERT INTO lila_state (id) VALUES (1) ON CONFLICT DO NOTHING;
-    -- Wipe legacy seed value — only touches the exact fake amount, never real earnings
-    UPDATE lila_state SET total_earned = 0 WHERE id = 1 AND total_earned::numeric = 1247.50::numeric;
-    -- Add assigned_bounty column if upgrading from earlier schema
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS assigned_bounty JSONB DEFAULT NULL;
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_target_id INTEGER;
+    ALTER TABLE lila_state DROP COLUMN IF EXISTS last_bounty;
 
     CREATE TABLE IF NOT EXISTS lila_log (
       id         SERIAL      PRIMARY KEY,
@@ -39,29 +41,19 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS lila_skills (
-      id          SERIAL      PRIMARY KEY,
-      name        TEXT        NOT NULL UNIQUE,
-      description TEXT        NOT NULL,
-      trigger     TEXT        NOT NULL,
-      code        TEXT        NOT NULL,
-      use_count   INTEGER     NOT NULL DEFAULT 0,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
     CREATE TABLE IF NOT EXISTS analyst_picks (
-      id          SERIAL        PRIMARY KEY,
-      symbol      TEXT          NOT NULL,
-      direction   TEXT          NOT NULL,
-      entry_price NUMERIC(12,4),
+      id           SERIAL        PRIMARY KEY,
+      symbol       TEXT          NOT NULL,
+      direction    TEXT          NOT NULL,
+      entry_price  NUMERIC(12,4),
       target_price NUMERIC(12,4),
-      stop_loss   NUMERIC(12,4),
-      confidence  NUMERIC(3,2),
-      risk_level  TEXT,
-      reason      TEXT,
-      asset_class TEXT          NOT NULL DEFAULT 'stock',
-      status      TEXT          NOT NULL DEFAULT 'pending',
-      created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+      stop_loss    NUMERIC(12,4),
+      confidence   NUMERIC(3,2),
+      risk_level   TEXT,
+      reason       TEXT,
+      asset_class  TEXT          NOT NULL DEFAULT 'stock',
+      status       TEXT          NOT NULL DEFAULT 'pending',
+      created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS lila_positions (
@@ -180,9 +172,7 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_research_notes_target ON research_notes(target_id);
-    CREATE INDEX IF NOT EXISTS idx_research_notes_kind ON research_notes(target_id, kind);
-
-    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_target_id INTEGER;
+    CREATE INDEX IF NOT EXISTS idx_research_notes_kind   ON research_notes(target_id, kind);
 
     CREATE TABLE IF NOT EXISTS llm_usage (
       id                SERIAL        PRIMARY KEY,
@@ -194,7 +184,7 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_llm_usage_module ON llm_usage(module, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_module     ON llm_usage(module, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS broadcasts (
       id          SERIAL      PRIMARY KEY,
@@ -214,6 +204,9 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO broadcast_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+    -- Legacy tables removed: lila_skills (Hermes synth, unused).
+    DROP TABLE IF EXISTS lila_skills;
   `)
   schemaReady = true
 }

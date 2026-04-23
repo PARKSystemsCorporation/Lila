@@ -2,28 +2,22 @@ import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
-import * as X from './channels/x'
-import * as Farcaster from './channels/farcaster'
 import * as Bluesky from './channels/bluesky'
 
 // ── Broadcast loop ───────────────────────────────────────────────────────────
 //
 // Once per BROADCAST_INTERVAL_MIN (default 60), gather "notable" activity
 // since the last broadcast. If nothing notable happened, skip — silent hours
-// do not post. If something did, compose one short update and publish to all
-// configured channels in parallel.
+// do not post. If something did, compose one short update and publish to
+// Bluesky.
 //
-// "Notable" events (any one triggers a post):
+// "Notable" events:
 //   - A bounty was paid (real money landed)
 //   - A trade closed at meaningful P&L
-//   - A new finding/report hit 'approved'
-//   - total_earned moved (trading close increment)
-// Signal key is a hash of the triggering row ids so we never re-post the
-// same event if the loop fires twice across a restart.
+//   - A new report hit 'approved'
 //
 // Never hammers: one LLM call per post attempt, one post every hour max,
-// skipped when quiet. Each post attempt tries all configured channels in
-// parallel and records success/failure per channel.
+// skipped when quiet. Each post logs success/failure to the broadcasts table.
 
 type LogType = 'info' | 'success' | 'warn'
 
@@ -33,7 +27,7 @@ export interface BroadcastResult {
   posted: boolean
 }
 
-const POST_PROMPT = `You are Lila, running an autonomous trading + bug-bounty operation. Post ONE short status update.
+const POST_PROMPT = `You are Lila, running an autonomous trading + bug-bounty operation. Post ONE short status update on Bluesky.
 
 Style rules (hard):
 - Max 260 characters.
@@ -60,13 +54,9 @@ export class BroadcastLoop {
       : null
   }
 
-  // Channels that have credentials configured right now.
+  // Channels that have credentials configured right now. Bluesky-only for now.
   static enabledChannels(): string[] {
-    const out: string[] = []
-    if (X.isConfigured())         out.push('x')
-    if (Farcaster.isConfigured()) out.push('farcaster')
-    if (Bluesky.isConfigured())   out.push('bluesky')
-    return out
+    return Bluesky.isConfigured() ? ['bluesky'] : []
   }
 
   async run(): Promise<BroadcastResult | null> {
@@ -85,22 +75,18 @@ export class BroadcastLoop {
       return { logMessage: 'Broadcast window: nothing notable. Skipped.', logType: 'info', posted: false }
     }
     if (signal.key === await this.lastSignalKey()) {
-      // Same trigger as last post — don't repeat ourselves across restarts.
       await this.mark(signal.key)
       return { logMessage: 'Broadcast window: same event as last post. Skipped.', logType: 'info', posted: false }
     }
 
-    // Compose the post (one LLM call)
     const text = await this.compose(signal.text)
     if (!text) {
       await this.mark(signal.key)
       return { logMessage: 'Broadcast: LLM returned empty, skipped.', logType: 'warn', posted: false }
     }
 
-    // Publish in parallel
     const results = await this.publishAll(channels, text)
 
-    // Record every attempt so the UI can show successes and failures
     for (const r of results) {
       await this.db.query(
         `INSERT INTO broadcasts (channel, content, status, external_id, error)
@@ -112,7 +98,7 @@ export class BroadcastLoop {
     await this.mark(signal.key)
 
     const successes = results.filter(r => r.ok).map(r => r.channel)
-    const failures = results.filter(r => !r.ok).map(r => r.channel)
+    const failures  = results.filter(r => !r.ok).map(r => r.channel)
     if (successes.length > 0) {
       return {
         logMessage: `Broadcast posted on ${successes.join(', ')}${failures.length ? ` (failed: ${failures.join(', ')})` : ''}.`,
@@ -121,14 +107,12 @@ export class BroadcastLoop {
       }
     }
     return {
-      logMessage: `Broadcast failed on all channels: ${failures.join(', ')}.`,
+      logMessage: `Broadcast failed: ${failures.join(', ')}.`,
       logType: 'warn',
       posted: false,
     }
   }
 
-  // Manually-triggered post (from /api/broadcasts POST). Bypasses the cadence
-  // gate but still respects silent-hour + duplicate signal unless overridden.
   async runManual(override?: string): Promise<BroadcastResult> {
     const channels = BroadcastLoop.enabledChannels()
     if (channels.length === 0) {
@@ -144,9 +128,7 @@ export class BroadcastLoop {
         return { logMessage: 'Nothing notable to post.', logType: 'info', posted: false }
       }
       const composed = await this.compose(signal.text)
-      if (!composed) {
-        return { logMessage: 'Compose failed.', logType: 'warn', posted: false }
-      }
+      if (!composed) return { logMessage: 'Compose failed.', logType: 'warn', posted: false }
       text = composed
     }
 
@@ -163,7 +145,7 @@ export class BroadcastLoop {
     const successes = results.filter(r => r.ok).map(r => r.channel)
     return successes.length
       ? { logMessage: `Manual broadcast on ${successes.join(', ')}.`, logType: 'success', posted: true }
-      : { logMessage: 'Manual broadcast failed on every channel.', logType: 'warn', posted: false }
+      : { logMessage: 'Manual broadcast failed.', logType: 'warn', posted: false }
   }
 
   // ── cadence + signal ───────────────────────────────────────────────────────
@@ -276,14 +258,6 @@ export class BroadcastLoop {
     text: string,
   ): Promise<Array<{ channel: string; ok: boolean; id?: string; error?: string }>> {
     const jobs = channels.map(async ch => {
-      if (ch === 'x') {
-        const r = await X.postTweet(text)
-        return { channel: 'x', ok: r.ok, id: r.id, error: r.error }
-      }
-      if (ch === 'farcaster') {
-        const r = await Farcaster.postCast(text)
-        return { channel: 'farcaster', ok: r.ok, id: r.hash, error: r.error }
-      }
       if (ch === 'bluesky') {
         const r = await Bluesky.postSkeet(text)
         return { channel: 'bluesky', ok: r.ok, id: r.uri, error: r.error }

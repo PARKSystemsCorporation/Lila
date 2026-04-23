@@ -425,11 +425,10 @@ export class ManagementLoop {
 
   private async context(totalEarnedOverride?: number): Promise<string> {
     const { rows: [ls] } = await this.db.query(
-      'SELECT total_earned, active_tasks, last_bounty FROM lila_state WHERE id=1'
+      'SELECT total_earned, active_tasks FROM lila_state WHERE id=1'
     )
     const totalEarned = totalEarnedOverride ?? parseFloat(ls?.total_earned ?? '0')
     const tasks: string[] = ls?.active_tasks ?? []
-    const last = ls?.last_bounty
 
     const { rows: openPos } = await this.db.query(
       `SELECT symbol FROM lila_positions WHERE status='open' LIMIT 5`

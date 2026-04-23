@@ -32,6 +32,11 @@ export default function Login() {
   return (
     <div className="h-dvh bg-slate-950 flex flex-col items-center justify-center px-8 max-w-md mx-auto">
       <div className="w-full space-y-6">
+        {/* Corporate mark */}
+        <pre className="text-emerald-600/70 font-mono text-[10px] leading-tight text-center select-none whitespace-pre">
+{`▓▒░ PARKSYSTEMS CORPORATION ░▒▓`}
+        </pre>
+
         {/* Header */}
         <div className="text-center space-y-1">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -68,6 +73,11 @@ export default function Login() {
             {loading ? 'Verifying...' : 'Enter'}
           </button>
         </div>
+
+        {/* Footer mark */}
+        <p className="text-[9px] font-mono text-slate-800 text-center tracking-widest pt-4">
+          A PARKSYSTEMS CORP. AUTONOMOUS OPERATION
+        </p>
       </div>
     </div>
   )

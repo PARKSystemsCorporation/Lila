@@ -27,8 +27,6 @@ export const cfg = Object.freeze({
   MANAGEMENT_TRADE_SEC:   num('MANAGEMENT_TRADE_SEC', 900),
   // Analyst step interval (minutes).
   ANALYST_STEP_MIN:       num('ANALYST_STEP_MIN', 2),
-  // Hermes cadence: one synthesis every N server ticks.
-  HERMES_EVERY_N:         num('HERMES_EVERY_N', 20),
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).
   BROADCAST_INTERVAL_MIN: num('BROADCAST_INTERVAL_MIN', 60),
@@ -46,6 +44,5 @@ export const cfg = Object.freeze({
 
   // ── Switches ─────────────────────────────────────────────────────────────
   ENABLE_AUTONOMY_TICKER: bool('ENABLE_AUTONOMY_TICKER', true),
-  ENABLE_HERMES:          bool('ENABLE_HERMES', true),
   ENABLE_BROADCAST:       bool('ENABLE_BROADCAST', true),
 })

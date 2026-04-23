@@ -56,7 +56,6 @@ interface LogEntry {
 interface AgentData {
   totalEarned: number
   activeTasks: string[]
-  lastBounty: { name: string; value: number; time: number }
   log: LogEntry[]
 }
 
@@ -67,11 +66,14 @@ function fmt(ts: number) {
   return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function fmtAge(ts: number) {
+function fmtAge(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000)
   if (s < 60) return `${s}s ago`
   const m = Math.floor(s / 60)
-  return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -705,20 +707,8 @@ interface BroadcastData {
   last_broadcast_at: number | null
 }
 
-function fmtAgo(ts: number): string {
-  const s = Math.floor((Date.now() - ts) / 1000)
-  if (s < 60) return `${s}s ago`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
-
 const CHANNEL_STYLE: Record<string, string> = {
-  x:         'bg-slate-800 text-slate-300 border-slate-700',
-  farcaster: 'bg-purple-950 text-purple-300 border-purple-900',
-  bluesky:   'bg-blue-950 text-blue-300 border-blue-900',
+  bluesky: 'bg-blue-950 text-blue-300 border-blue-900',
 }
 
 function BroadcastCard() {
@@ -768,7 +758,7 @@ function BroadcastCard() {
 
       {data.channels.length === 0 ? (
         <p className="text-xs font-mono text-slate-600">
-          No channels configured. Set X_API_KEY+X_API_SECRET+X_ACCESS_TOKEN+X_ACCESS_TOKEN_SECRET, or NEYNAR_SIGNER_UUID, or BSKY_HANDLE+BSKY_APP_PASSWORD on Railway to enable.
+          Bluesky not configured. Set BSKY_HANDLE and BSKY_APP_PASSWORD (from Bluesky Settings → App Passwords) on Railway to enable hourly posts.
         </p>
       ) : (
         <>
@@ -786,7 +776,7 @@ function BroadcastCard() {
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-mono text-slate-600">
               {data.last_broadcast_at
-                ? `Last: ${fmtAgo(data.last_broadcast_at)}${nextDue ? ` · next ${overdue ? 'due' : `in ~${Math.max(1, Math.round((nextDue.getTime() - Date.now()) / 60_000))}m`}` : ''}`
+                ? `Last: ${fmtAge(data.last_broadcast_at)}${nextDue ? ` · next ${overdue ? 'due' : `in ~${Math.max(1, Math.round((nextDue.getTime() - Date.now()) / 60_000))}m`}` : ''}`
                 : 'Never posted.'}
             </p>
             <button
@@ -810,7 +800,7 @@ function BroadcastCard() {
                       {r.content}
                     </p>
                     <p className="text-[9px] font-mono text-slate-600 mt-0.5">
-                      {r.status === 'posted' ? '✓' : '✗'} {fmtAgo(r.ts)}
+                      {r.status === 'posted' ? '✓' : '✗'} {fmtAge(r.ts)}
                       {r.status === 'failed' && r.error ? ` · ${r.error.slice(0, 60)}` : ''}
                     </p>
                   </div>
@@ -1036,18 +1026,6 @@ function DashTab({ data, flash, visible, financials }: {
           )}
         </div>
 
-        {/* Last Bounty */}
-        {data?.lastBounty && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">Last Bounty Claimed</p>
-            <p className="text-sm text-slate-200 font-mono leading-snug">{data.lastBounty.name}</p>
-            <div className="flex justify-between items-center mt-3">
-              <span className="text-xl font-bold text-emerald-400 font-mono tabular-nums">+${data.lastBounty.value}</span>
-              <span className="text-[10px] text-slate-600 font-mono">{fmtAge(data.lastBounty.time)}</span>
-            </div>
-          </div>
-        )}
-
         {/* Status */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
@@ -1071,7 +1049,7 @@ function DashTab({ data, flash, visible, financials }: {
   )
 }
 
-// ─── Skills Tab ───────────────────────────────────────────────────────────────
+// ─── Report status styling ────────────────────────────────────────────────────
 
 const REPORT_STATUS_STYLE: Record<string, string> = {
   pending_review: 'bg-slate-800 text-slate-400 border-slate-700',
@@ -2007,8 +1985,13 @@ export default function Home() {
         <div className="flex items-center gap-2.5">
           <span className={`w-2 h-2 rounded-full shrink-0 ${status === 'live' ? 'bg-emerald-500 animate-pulse' : status === 'error' ? 'bg-red-500' : 'bg-slate-600 animate-pulse'}`} />
           <div>
-            <span className="text-white font-bold text-lg tracking-tight">Lila</span>
-            <span className="text-slate-700 font-mono text-[10px] ml-2 tracking-widest">AGENT v1</span>
+            <div className="flex items-baseline gap-2">
+              <span className="text-white font-bold text-lg tracking-tight">Lila</span>
+              <span className="text-slate-700 font-mono text-[10px] tracking-widest">AGENT v1</span>
+            </div>
+            <p className="text-[8px] font-mono text-slate-800 tracking-[0.2em] uppercase mt-0.5">
+              ▓ PARKSYSTEMS CORP
+            </p>
           </div>
         </div>
         {data && (
