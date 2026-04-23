@@ -3,23 +3,24 @@ import type { PoolClient } from 'pg'
 import { getPool, ensureSchema } from './db'
 import { TradingEngine } from './trading-engine'
 import { AnalystLoop } from './analyst-loop'
-import { LilaLoop } from './lila-loop'
+import { TaskerLoop } from './tasker-loop'
+import { ManagementLoop } from './management-loop'
 
 // Single entry point for an autonomy tick. Called from /api/agent (user poll)
 // and from the server-side ticker (instrumentation.ts). DB schema is lazy-init,
 // a no-op after first call.
 
-const HERMES_PROMPT = `You are Lila's Hermes synthesis module. Define one new skill she should acquire, based on bounty hunting + trading.
+const HERMES_PROMPT = `You are Tasker's Hermes synthesis module. Define one new SECURITY skill Tasker should acquire — something concrete and replayable against future bug-bounty targets.
+
+Prefer patterns that detect real vulnerability classes: reentrancy variants, access-control gaps, oracle staleness/manipulation, signature replay, precision/rounding loss, upgrade-pattern footguns, ERC-20/4626/721 invariants, cross-function state pollution, front-running.
 
 Respond with ONLY valid JSON — no markdown fences:
 {
   "name": "snake_case_name",
-  "description": "One sentence: what this skill does",
-  "trigger": "One sentence: when Lila activates this skill",
-  "code": "async function name(target: string): Promise<Result> {\\n  // Step 1...\\n}"
-}
-
-Focus on: web scraping, API testing, static analysis, contract auditing, recon, market analysis.`
+  "description": "One sentence: what this skill detects",
+  "trigger": "One sentence: when to run it",
+  "code": "async function name(target: string): Promise<Finding | null> {\\n  // concrete detection logic\\n}"
+}`
 
 async function maybeHermes(db: PoolClient): Promise<string | null> {
   if (!process.env.DEEPSEEK_API_KEY) return null
@@ -122,19 +123,31 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(analystResult.logMessage)
     }
 
-    // 3. Lila loop — time-gated internally.
-    const lila = new LilaLoop(db)
-    const lilaResult = await lila.run().catch((e: unknown) => ({
+    // 3. Tasker loop — time-gated internally.
+    const tasker = new TaskerLoop(db)
+    const taskerResult = await tasker.run().catch((e: unknown) => ({
       step: 'BT0' as const,
-      logMessage: `Lila loop error: ${String(e)}`,
+      logMessage: `Tasker loop error: ${String(e)}`,
       logType: 'warn' as const,
     }))
-    if (lilaResult) {
-      await db.query('INSERT INTO lila_log (message, type) VALUES ($1,$2)', [lilaResult.logMessage, lilaResult.logType])
-      logs.push(lilaResult.logMessage)
+    if (taskerResult) {
+      await db.query('INSERT INTO lila_log (message, type) VALUES ($1,$2)', [taskerResult.logMessage, taskerResult.logType])
+      logs.push(taskerResult.logMessage)
     }
 
-    // 4. Hermes every 20th server tick.
+    // 4. Management Lila — replies to operator, proactive check-ins.
+    const mgmt = new ManagementLoop(db)
+    const mgmtResult = await mgmt.run().catch((e: unknown) => ({
+      logMessage: `Management error: ${String(e)}`,
+      logType: 'warn' as const,
+      posted: false,
+    }))
+    if (mgmtResult) {
+      await db.query('INSERT INTO lila_log (message, type) VALUES ($1,$2)', [mgmtResult.logMessage, mgmtResult.logType])
+      logs.push(mgmtResult.logMessage)
+    }
+
+    // 5. Hermes every 20th server tick.
     if (tickCount % 20 === 0) {
       const name = await maybeHermes(db)
       const msg = name ? `Hermes: new skill — ${name}.` : 'Hermes synthesis attempted. No viable skill.'

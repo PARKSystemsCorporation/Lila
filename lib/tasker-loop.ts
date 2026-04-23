@@ -4,49 +4,50 @@ import { BountyEngine } from './bounty-engine'
 import { fetchAllBounties, type UnifiedBounty } from './bounties-fetch'
 import * as Alpaca from './platforms/alpaca'
 
-// ── Lila autonomy loop ────────────────────────────────────────────────────────
+// ── Tasker autonomy loop ──────────────────────────────────────────────────────
 //
-// Bounty cycle (every step):
-//   BT0 — Lila checks group chat, makes tasks if needed
-//   BH0 — Lila works the currently assigned bounty (real submission)
-//   BZ0 — Lila updates the group chat with status
+// The worker. Executes the plan Lila sets. Does NOT speak for the team —
+// Management Lila owns operator replies. Tasker posts its own status updates
+// to chat as sender='tasker' so Lila can read progress and the operator can
+// watch raw execution.
 //
-// Every 11 completed bounty cycles, Lila runs a trade check instead:
-//   TT0 — review open positions, queue portfolio tasks
-//   TT1 — read Analyst notes, write her own plan with tight stops
-//   TH0 — execute portfolio management (cut/hold/modify)
-//   TJ0 — update the group chat with the trade plan and outcome
+// Bounty cycle (every step, 30s-gated):
+//   BT0 — parse recent chat for operator-assigned tasks, queue them
+//   BH0 — work the assigned/top-scored bounty (security-focused filter)
+//   BZ0 — post an execution status update to the team chat
 //
-// Steps are time-gated so a UI polling every 5s can't advance Lila faster than
-// STEP_INTERVAL_SEC.
+// Every 11 completed bounty cycles, run a trade check instead:
+//   TT0 — review open positions, flag drawdowns
+//   TT1 — read Analyst output, Tasker files a plan with tight stops, queues picks
+//   TH0 — execute portfolio management (cut/hold) against Alpaca
+//   TJ0 — post the trade update to chat
 
 const STEP_INTERVAL_SEC = 30
 const TRADE_CYCLE_EVERY = 11
 
-export type LilaStep = 'BT0' | 'BH0' | 'BZ0' | 'TT0' | 'TT1' | 'TH0' | 'TJ0'
+export type TaskerStep = 'BT0' | 'BH0' | 'BZ0' | 'TT0' | 'TT1' | 'TH0' | 'TJ0'
 
 type LogType = 'info' | 'success' | 'warn'
 
-export interface LilaStepResult {
-  step: LilaStep
+export interface TaskerStepResult {
+  step: TaskerStep
   logMessage: string
   logType: LogType
 }
 
-const CHAT_CHECK_PROMPT = `You are Lila (COO). The group chat has Lila, the Analyst, and the operator.
+const CHAT_PARSE_PROMPT = `You are Tasker, the executor on Lila's team. Read the recent chat transcript and extract any concrete tasks the operator or Lila (the manager) has assigned.
 
-Review the recent chat transcript. Decide if anything the operator or Analyst said needs a task on your list or a short reply.
+Respond with ONLY valid JSON — no preamble:
+{ "tasks": ["task 1", "task 2"] }
 
-Respond with ONLY valid JSON:
-{ "tasks": ["task 1", "task 2"], "reply": "one sentence or empty string" }
+Rules:
+- Only include explicit assignments ("do X", "work on Y", "try Z"), not general commentary.
+- Keep each task <= 70 chars, imperative form.
+- Empty array if nothing actionable.`
 
-Tasks should be concrete and short (<= 70 chars). Empty arrays are fine. Keep the reply terse and in Lila's voice — dry, direct, no filler.`
-
-const PLAN_PROMPT = `You are Lila, the COO. The Analyst has filed notes and picks. Write YOUR plan in your own words.
-
-Two short sections:
-1) "Stance" — 1–2 sentences: what you're keeping, what you're changing, why.
-2) "Trades" — JSON array of trade intents you'd take today. Sizing is agnostic (small account, small trades are fine) but every trade needs a TIGHT stop. Include: symbol, entry (current price), target, stop, confidence 0-1, reason. Long only.
+const PLAN_PROMPT = `You are Tasker writing today's trade plan in 2 short sections:
+1) "Stance" — 1-2 sentences on what changes vs last session.
+2) "Trades" — JSON array of intended longs with TIGHT stops. Sizing is agnostic; stops must be close.
 
 Respond with ONLY valid JSON:
 {
@@ -54,16 +55,14 @@ Respond with ONLY valid JSON:
   "trades": [{"symbol":"XYZ","entry":12.34,"target":13.20,"stop":12.10,"confidence":0.7,"reason":"one sentence"}]
 }`
 
-const PORTFOLIO_PROMPT = `You are Lila managing open positions. Decide for each: HOLD, CLOSE, or TRIM.
-
-Be aggressive about cutting losers. Let winners run only if the thesis is intact. If a position is down more than its stop already, CLOSE now.
+const PORTFOLIO_PROMPT = `You manage open positions. Decide HOLD, CLOSE, or TRIM for each. Be aggressive about cutting losers.
 
 Respond with ONLY valid JSON:
 { "actions": [{"symbol":"X","action":"HOLD|CLOSE|TRIM","reason":"one sentence"}] }`
 
 function today() { return new Date().toISOString().slice(0, 10) }
 
-export class LilaLoop {
+export class TaskerLoop {
   private db: PoolClient
   private ai: OpenAI | null
 
@@ -74,17 +73,17 @@ export class LilaLoop {
       : null
   }
 
-  async run(): Promise<LilaStepResult | null> {
+  async run(): Promise<TaskerStepResult | null> {
     if (!(await this.shouldRun())) return null
 
     const { rows: [s] } = await this.db.query(
       'SELECT step, turn_count FROM lila_loop_state WHERE id=1'
     )
-    const step: LilaStep = (s?.step as LilaStep) ?? 'BT0'
+    const step: TaskerStep = (s?.step as TaskerStep) ?? 'BT0'
     let turnCount: number = s?.turn_count ?? 0
 
     let result: { logMessage: string; logType: LogType }
-    let next: LilaStep
+    let next: TaskerStep
 
     try {
       switch (step) {
@@ -104,11 +103,11 @@ export class LilaLoop {
       }
     } catch (e) {
       await this.advance(step, turnCount)
-      return { step, logMessage: `Lila ${step} error: ${String(e)}`, logType: 'warn' }
+      return { step, logMessage: `Tasker ${step} error: ${String(e)}`, logType: 'warn' }
     }
 
     await this.advance(next, turnCount)
-    return { step, logMessage: `Lila ${step}: ${result.logMessage}`, logType: result.logType }
+    return { step, logMessage: `Tasker ${step}: ${result.logMessage}`, logType: result.logType }
   }
 
   private async shouldRun(): Promise<boolean> {
@@ -117,14 +116,14 @@ export class LilaLoop {
     return (Date.now() - new Date(s.last_step_at).getTime()) / 1000 >= STEP_INTERVAL_SEC
   }
 
-  private async advance(step: LilaStep, turnCount: number): Promise<void> {
+  private async advance(step: TaskerStep, turnCount: number): Promise<void> {
     await this.db.query(
       'UPDATE lila_loop_state SET step=$1, turn_count=$2, last_step_at=NOW(), updated_at=NOW() WHERE id=1',
       [step, turnCount]
     )
   }
 
-  // ── BT0 — check chat, make tasks ───────────────────────────────────────────
+  // ── BT0 — parse chat for assigned tasks ────────────────────────────────────
 
   private async bt0(): Promise<{ logMessage: string; logType: LogType }> {
     if (!this.ai) return { logMessage: 'Skipped — no LLM key.', logType: 'info' }
@@ -140,26 +139,23 @@ export class LilaLoop {
       .map((m: { sender: string; content: string }) => `[${m.sender.toUpperCase()}]: ${m.content}`)
       .join('\n')
 
-    const raw = await this.llm(`${CHAT_CHECK_PROMPT}\n\nTranscript:\n${transcript}`, 220)
-    const parsed = this.parse(raw, { tasks: [] as string[], reply: '' })
+    const raw = await this.llm(`${CHAT_PARSE_PROMPT}\n\nTranscript:\n${transcript}`, 200)
+    const parsed = this.parse(raw, { tasks: [] as string[] })
 
     if (Array.isArray(parsed.tasks) && parsed.tasks.length) {
       await this.mergeTasks(parsed.tasks.slice(0, 5))
-    }
-    if (parsed.reply && typeof parsed.reply === 'string') {
-      await this.chat('lila', parsed.reply.slice(0, 400))
     }
 
     const taskCount = parsed.tasks?.length ?? 0
     return {
       logMessage: taskCount
-        ? `Chat reviewed. ${taskCount} new task${taskCount > 1 ? 's' : ''} queued.`
-        : 'Chat reviewed. Nothing actionable.',
+        ? `Chat parsed. ${taskCount} new task${taskCount > 1 ? 's' : ''} queued.`
+        : 'Chat parsed. Nothing to queue.',
       logType: 'info',
     }
   }
 
-  // ── BH0 — work the current bounty ──────────────────────────────────────────
+  // ── BH0 — work the current bounty (security-focused) ──────────────────────
 
   private async bh0(): Promise<{ logMessage: string; logType: LogType }> {
     let liveBounties: UnifiedBounty[] = []
@@ -171,7 +167,7 @@ export class LilaLoop {
     if (!this.ai) return { logMessage: 'Bounty tick skipped — no LLM key.', logType: 'info' }
 
     const engine = new BountyEngine()
-    const result = await engine.tick(assigned, liveBounties)
+    const result = await engine.tick(assigned, liveBounties, this.db)
 
     if (result.action === 'submitted' && result.title && result.reward) {
       await this.db.query(
@@ -191,12 +187,14 @@ export class LilaLoop {
       }
     } else if (result.action === 'claimed' && result.title) {
       await this.mergeTasks([result.title])
+    } else if (result.action === 'drafted' && result.title) {
+      await this.mergeTasks([`Review draft report: ${result.title}`])
     }
 
     return { logMessage: result.logMessage, logType: result.logType }
   }
 
-  // ── BZ0 — update chat ──────────────────────────────────────────────────────
+  // ── BZ0 — post execution status to chat (as tasker) ───────────────────────
 
   private async bz0(): Promise<{ logMessage: string; logType: LogType }> {
     const { rows: [s] } = await this.db.query(
@@ -207,23 +205,23 @@ export class LilaLoop {
     const last = s?.last_bounty
 
     const msg = tasks.length
-      ? `Earned $${earned}. ${tasks.length} task${tasks.length > 1 ? 's' : ''} open: ${tasks[0]}${tasks.length > 1 ? ` (+${tasks.length - 1})` : ''}.`
+      ? `Earned $${earned}. ${tasks.length} task${tasks.length > 1 ? 's' : ''} active. Top: ${tasks[0]}.`
       : last?.value
-        ? `Earned $${earned}. Last: ${last.name} (+$${last.value}). Queue empty.`
-        : `Earned $${earned}. Scanning.`
+        ? `Earned $${earned}. Last submission: ${last.name} (+$${last.value}). Queue empty.`
+        : `Earned $${earned}. Scanning security bounties.`
 
-    await this.chat('lila', msg)
-    return { logMessage: `Status posted. "${msg}"`, logType: 'info' }
+    await this.chat('tasker', msg)
+    return { logMessage: 'Status posted.', logType: 'info' }
   }
 
-  // ── TT0 — check positions, queue portfolio tasks ───────────────────────────
+  // ── TT0 — position check ───────────────────────────────────────────────────
 
   private async tt0(): Promise<{ logMessage: string; logType: LogType }> {
     const hasAlpaca = !!(process.env.ALPACA_API_KEY || process.env.APCA_API_KEY_ID)
     if (!hasAlpaca) return { logMessage: 'No Alpaca key — skipped.', logType: 'info' }
 
     const positions = await Alpaca.getPositions().catch(() => [] as Alpaca.AlpacaPosition[])
-    if (!positions.length) return { logMessage: 'Position check: flat.', logType: 'info' }
+    if (!positions.length) return { logMessage: 'Flat.', logType: 'info' }
 
     const urgent = positions.filter(p => parseFloat(p.unrealized_plpc) * 100 <= -2.5)
     const newTasks = urgent.map(p =>
@@ -235,12 +233,12 @@ export class LilaLoop {
       .map(p => `${p.symbol} ${(parseFloat(p.unrealized_plpc) * 100).toFixed(1)}%`)
       .join(', ')
     return {
-      logMessage: `Position check: ${positions.length} open. ${summary}.`,
+      logMessage: `${positions.length} open. ${summary}.`,
       logType: urgent.length ? 'warn' : 'info',
     }
   }
 
-  // ── TT1 — read Analyst notes, write Lila's plan ────────────────────────────
+  // ── TT1 — Tasker's trade plan ──────────────────────────────────────────────
 
   private async tt1(): Promise<{ logMessage: string; logType: LogType }> {
     if (!this.ai) return { logMessage: 'Plan skipped — no LLM key.', logType: 'info' }
@@ -251,7 +249,7 @@ export class LilaLoop {
        ORDER BY updated_at DESC LIMIT 12`
     )
     const { rows: picks } = await this.db.query(
-      `SELECT symbol, confidence, reason, entry_price, target_price, stop_loss
+      `SELECT symbol, confidence, reason
        FROM analyst_picks
        WHERE created_at > NOW() - INTERVAL '24 hours' AND status='pending'
        ORDER BY confidence DESC LIMIT 10`
@@ -264,29 +262,27 @@ export class LilaLoop {
     ].filter(Boolean).join('\n\n')
 
     if (!combined) {
-      await this.chat('lila', 'Analyst notes empty. Holding cash, watching.')
-      return { logMessage: 'No Analyst output. Plan: hold.', logType: 'info' }
+      await this.chat('tasker', 'Analyst notes empty. Holding cash.')
+      return { logMessage: 'No Analyst output. Holding.', logType: 'info' }
     }
 
     const raw = await this.llm(`${PLAN_PROMPT}\n\nAnalyst output:\n${combined}`, 500)
-    const plan = this.parse(raw, { stance: 'Holding.', trades: [] as LilaTrade[] })
+    const plan = this.parse(raw, { stance: 'Holding.', trades: [] as TaskerTrade[] })
 
-    // File Lila's plan
     await this.note(
-      `lila/plans/${today()}-${Date.now()}.md`,
-      `# Lila Plan ${today()}\n\n## Stance\n${plan.stance}\n\n## Trades\n${JSON.stringify(plan.trades ?? [], null, 2)}`
+      `tasker/plans/${today()}-${Date.now()}.md`,
+      `# Tasker Plan ${today()}\n\n## Stance\n${plan.stance}\n\n## Trades\n${JSON.stringify(plan.trades ?? [], null, 2)}`
     )
 
-    // Queue her trades as picks so TradingEngine picks them up.
     let queued = 0
     for (const t of plan.trades ?? []) {
       if (!t.symbol || !t.entry || !t.stop || !t.target) continue
-      if (t.stop >= t.entry) continue  // long only, stop must be below entry
+      if (t.stop >= t.entry) continue
       await this.db.query(
         `INSERT INTO analyst_picks
            (symbol, direction, entry_price, target_price, stop_loss, confidence, risk_level, reason, asset_class, status)
-         VALUES ($1,'long',$2,$3,$4,$5,'tight',$6,'lila-plan','pending')`,
-        [t.symbol.toUpperCase(), t.entry, t.target, t.stop, Math.min(Math.max(t.confidence ?? 0.6, 0), 1), t.reason ?? 'Lila plan']
+         VALUES ($1,'long',$2,$3,$4,$5,'tight',$6,'tasker-plan','pending')`,
+        [t.symbol.toUpperCase(), t.entry, t.target, t.stop, Math.min(Math.max(t.confidence ?? 0.6, 0), 1), t.reason ?? 'Tasker plan']
       )
       queued++
     }
@@ -297,12 +293,12 @@ export class LilaLoop {
     }
   }
 
-  // ── TH0 — portfolio management (cut / hold) ────────────────────────────────
+  // ── TH0 — portfolio management ─────────────────────────────────────────────
 
   private async th0(): Promise<{ logMessage: string; logType: LogType }> {
     const hasAlpaca = !!(process.env.ALPACA_API_KEY || process.env.APCA_API_KEY_ID)
     if (!hasAlpaca) return { logMessage: 'No Alpaca key — skipped.', logType: 'info' }
-    if (!this.ai) return { logMessage: 'Portfolio mgmt skipped — no LLM key.', logType: 'info' }
+    if (!this.ai) return { logMessage: 'Mgmt skipped — no LLM key.', logType: 'info' }
 
     const positions = await Alpaca.getPositions().catch(() => [] as Alpaca.AlpacaPosition[])
     if (!positions.length) return { logMessage: 'Nothing to manage.', logType: 'info' }
@@ -342,15 +338,15 @@ export class LilaLoop {
     }
   }
 
-  // ── TJ0 — update chat with trade plan + outcome ────────────────────────────
+  // ── TJ0 — post trade update to chat ────────────────────────────────────────
 
   private async tj0(): Promise<{ logMessage: string; logType: LogType }> {
     const { rows: [latest] } = await this.db.query(
       `SELECT content FROM analyst_notes
-       WHERE path LIKE 'lila/plans/%' ORDER BY updated_at DESC LIMIT 1`
+       WHERE path LIKE 'tasker/plans/%' ORDER BY updated_at DESC LIMIT 1`
     )
     const { rows: openPicks } = await this.db.query(
-      `SELECT symbol FROM analyst_picks WHERE status='pending' AND asset_class='lila-plan'
+      `SELECT symbol FROM analyst_picks WHERE status='pending' AND asset_class='tasker-plan'
        ORDER BY created_at DESC LIMIT 5`
     )
     const { rows: open } = await this.db.query(
@@ -367,8 +363,8 @@ export class LilaLoop {
       open.length ? `Open: ${open.map((p: { symbol: string }) => p.symbol).join(', ')}.` : 'Flat.',
     ].filter(Boolean).join(' ')
 
-    await this.chat('lila', msg.slice(0, 500))
-    return { logMessage: `Trade update posted.`, logType: 'success' }
+    await this.chat('tasker', msg.slice(0, 500))
+    return { logMessage: 'Trade update posted.', logType: 'success' }
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
@@ -408,7 +404,7 @@ export class LilaLoop {
   }
 }
 
-interface LilaTrade {
+interface TaskerTrade {
   symbol: string
   entry: number
   target: number

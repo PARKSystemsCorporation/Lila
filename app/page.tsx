@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'log' | 'dash' | 'bounties' | 'skills'
+type Tab = 'chat' | 'log' | 'dash' | 'bounties' | 'reports'
 
 interface UnifiedBounty {
   id: string
@@ -21,9 +21,24 @@ interface UnifiedBounty {
 }
 
 interface Message {
-  role: 'user' | 'assistant' | 'analyst'
+  role: 'user' | 'lila' | 'tasker' | 'analyst'
   content: string
   id?: number
+}
+
+interface SecurityReport {
+  id: number
+  bounty_id: string
+  platform: string
+  platform_label: string
+  title: string
+  reward: number
+  chain?: string
+  url?: string
+  content: string
+  confidence: number
+  status: 'draft' | 'approved' | 'submitted' | 'dismissed'
+  created_at: string
 }
 
 interface LogEntry {
@@ -40,15 +55,6 @@ interface AgentData {
   log: LogEntry[]
 }
 
-interface Skill {
-  id: number
-  name: string
-  description: string
-  trigger: string
-  code: string
-  use_count: number
-  created_at: string
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,9 +93,12 @@ const IconDash = () => (
   </svg>
 )
 
-const IconSkills = () => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-    <path d="M13 2 4.09 12.26a1 1 0 0 0 .91 1.74H11l-1 8 8.91-10.26A1 1 0 0 0 18 10h-5l1-8z" />
+const IconReports = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    <path d="M9 2h6l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h3" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="9" y1="13" x2="15" y2="13" />
+    <line x1="9" y1="17" x2="13" y2="17" />
   </svg>
 )
 
@@ -107,7 +116,7 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'log',      label: 'Log',     Icon: IconLog      },
   { key: 'dash',     label: 'Dash',    Icon: IconDash     },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
-  { key: 'skills',   label: 'Skills',  Icon: IconSkills   },
+  { key: 'reports',  label: 'Reports', Icon: IconReports  },
 ]
 
 function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
@@ -134,37 +143,45 @@ function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
 
 // ─── Chat Tab (group: you + Lila + Analyst) ───────────────────────────────────
 
+const ROLE_STYLE = {
+  lila:    { avatar: 'L', color: 'text-emerald-400', ring: 'bg-emerald-900 border-emerald-700', bubble: 'bg-slate-900 text-slate-200 border-slate-800' },
+  tasker:  { avatar: 'T', color: 'text-amber-400',   ring: 'bg-amber-950 border-amber-800',     bubble: 'bg-amber-950/40 text-amber-200 border-amber-900/60' },
+  analyst: { avatar: 'A', color: 'text-blue-400',    ring: 'bg-blue-900 border-blue-700',       bubble: 'bg-blue-950/60 text-blue-200 border-blue-900/60' },
+} as const
+
 function ChatTab({ visible }: { visible: boolean }) {
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: 'Online. What do you need.' },
+    { role: 'lila', content: 'Online. Direct line. What do you need.' },
   ])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const lastAnalystId = useRef(0)
+  const lastId = useRef(0)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Poll for Analyst messages every 5s
+  // Poll for Tasker/Lila/Analyst messages every 5s
   useEffect(() => {
     if (!visible) return
     const poll = async () => {
       try {
-        const res = await fetch(`/api/chat/messages?after=${lastAnalystId.current}`)
+        const res = await fetch(`/api/chat/messages?after=${lastId.current}`)
         if (!res.ok) return
         const { messages: incoming } = await res.json()
         if (incoming.length > 0) {
           setMessages(prev => [
             ...prev,
             ...incoming.map((m: { id: number; sender: string; content: string }) => ({
-              role: m.sender === 'analyst' ? 'analyst' as const : 'assistant' as const,
+              role: (m.sender === 'analyst' ? 'analyst'
+                   : m.sender === 'tasker'  ? 'tasker'
+                   : 'lila') as Message['role'],
               content: m.content,
               id: m.id,
             })),
           ])
-          lastAnalystId.current = incoming[incoming.length - 1].id
+          lastId.current = incoming[incoming.length - 1].id
         }
       } catch { /* network hiccup */ }
     }
@@ -178,14 +195,21 @@ function ChatTab({ visible }: { visible: boolean }) {
     setInput('')
 
     const history = [...messages, { role: 'user' as const, content: text }]
-    setMessages([...history, { role: 'assistant', content: '' }])
+    setMessages([...history, { role: 'lila', content: '' }])
     setStreaming(true)
 
     try {
+      // Only user/lila history goes to the /api/chat LLM; tasker/analyst posts
+      // are background noise from Lila's perspective (she sees the state via
+      // server-side context injection instead).
+      const apiMessages = history
+        .filter(m => m.role === 'user' || m.role === 'lila')
+        .map(m => ({ role: m.role === 'lila' ? 'assistant' : 'user', content: m.content }))
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history.filter(m => m.role !== 'analyst').map(m => ({ role: m.role === 'analyst' ? 'assistant' : m.role, content: m.content })) }),
+        body: JSON.stringify({ messages: apiMessages }),
       })
 
       if (!res.ok || !res.body) throw new Error()
@@ -200,14 +224,14 @@ function ChatTab({ visible }: { visible: boolean }) {
         full += decoder.decode(value, { stream: true })
         setMessages(prev => {
           const updated = [...prev]
-          updated[updated.length - 1] = { role: 'assistant', content: full }
+          updated[updated.length - 1] = { role: 'lila', content: full }
           return updated
         })
       }
     } catch {
       setMessages(prev => {
         const updated = [...prev]
-        updated[updated.length - 1] = { role: 'assistant', content: 'Dropped connection. Try again.' }
+        updated[updated.length - 1] = { role: 'lila', content: 'Dropped connection. Try again.' }
         return updated
       })
     } finally {
@@ -217,37 +241,39 @@ function ChatTab({ visible }: { visible: boolean }) {
 
   return (
     <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
-      {/* Group chat header */}
+      {/* Direct-line header */}
       <div className="shrink-0 px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-800/60">
         <div className="flex gap-1">
           <span className="w-5 h-5 rounded-full bg-emerald-900 border border-emerald-700 flex items-center justify-center text-[9px] font-mono text-emerald-400">L</span>
+          <span className="w-5 h-5 rounded-full bg-amber-950 border border-amber-800 flex items-center justify-center text-[9px] font-mono text-amber-400">T</span>
           <span className="w-5 h-5 rounded-full bg-blue-900 border border-blue-700 flex items-center justify-center text-[9px] font-mono text-blue-400">A</span>
           <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[9px] font-mono text-slate-400">U</span>
         </div>
-        <span className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Group · Lila · Analyst · You</span>
+        <div className="min-w-0">
+          <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">Direct line · Lila</p>
+          <p className="text-[9px] font-mono text-slate-600">Tasker & Analyst post status here</p>
+        </div>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.map((m, i) => {
           const isUser = m.role === 'user'
-          const isAnalyst = m.role === 'analyst'
+          const role = m.role !== 'user' ? ROLE_STYLE[m.role] : null
           return (
             <div key={m.id ?? i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-              {!isUser && (
-                <span className={`font-mono text-xs mr-2 mt-1.5 shrink-0 w-4 text-center ${isAnalyst ? 'text-blue-400' : 'text-emerald-500'}`}>
-                  {isAnalyst ? 'A' : 'L'}
+              {!isUser && role && (
+                <span className={`font-mono text-xs mr-2 mt-1.5 shrink-0 w-4 text-center ${role.color}`}>
+                  {role.avatar}
                 </span>
               )}
-              <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed ${
+              <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed border ${
                 isUser
-                  ? 'bg-slate-800 text-slate-100 rounded-tr-sm'
-                  : isAnalyst
-                    ? 'bg-blue-950/60 text-blue-200 rounded-tl-sm border border-blue-900/60'
-                    : 'bg-slate-900 text-slate-200 rounded-tl-sm border border-slate-800'
+                  ? 'bg-slate-800 text-slate-100 rounded-tr-sm border-slate-700'
+                  : `${role!.bubble} rounded-tl-sm`
               }`}>
                 {m.content}
-                {streaming && i === messages.length - 1 && m.role === 'assistant' && (
+                {streaming && i === messages.length - 1 && m.role === 'lila' && (
                   <span className="inline-block w-1.5 h-3.5 bg-emerald-500 ml-0.5 animate-pulse align-middle" />
                 )}
               </div>
@@ -263,7 +289,7 @@ function ChatTab({ visible }: { visible: boolean }) {
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && send()}
-          placeholder="Message the group..."
+          placeholder="Message Lila..."
           className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-700 focus:outline-none focus:border-emerald-800"
         />
         <button
@@ -634,34 +660,43 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
 
 // ─── Skills Tab ───────────────────────────────────────────────────────────────
 
-function SkillsTab({ skills, loading, visible }: { skills: Skill[]; loading: boolean; visible: boolean }) {
+const REPORT_STATUS_STYLE: Record<string, string> = {
+  draft:     'bg-amber-950 text-amber-300 border-amber-900',
+  approved:  'bg-emerald-950 text-emerald-300 border-emerald-900',
+  submitted: 'bg-blue-950 text-blue-300 border-blue-900',
+  dismissed: 'bg-slate-800 text-slate-500 border-slate-700',
+}
+
+function ReportsTab({ reports, loading, visible, onAction }: {
+  reports: SecurityReport[]
+  loading: boolean
+  visible: boolean
+  onAction: (id: number, action: 'approve' | 'dismiss' | 'submitted') => void
+}) {
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
       <div className="px-4 py-5">
-        {/* Header */}
         <div className="flex items-center gap-2 mb-4">
-          <span className="text-emerald-500"><IconSkills /></span>
+          <span className="text-emerald-500"><IconReports /></span>
           <div>
-            <p className="text-xs font-mono text-slate-300 font-semibold">Hermes Skill Library</p>
-            <p className="text-[10px] font-mono text-slate-600">Autonomously synthesized</p>
+            <p className="text-xs font-mono text-slate-300 font-semibold">Security Reports</p>
+            <p className="text-[10px] font-mono text-slate-600">Tasker drafts — you submit & collect</p>
           </div>
         </div>
 
         {loading ? (
           <div className="flex items-center gap-2 py-10 justify-center">
             <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
-            <p className="text-xs font-mono text-slate-600">Loading skill library...</p>
+            <p className="text-xs font-mono text-slate-600">Loading reports...</p>
           </div>
-        ) : skills.length === 0 ? (
+        ) : reports.length === 0 ? (
           <div className="border border-slate-800 rounded-2xl p-6 text-center">
-            <p className="text-sm font-mono text-slate-500">No skills yet.</p>
-            <p className="text-xs font-mono text-slate-700 mt-1">Hermes synthesizes one every 6 ticks.</p>
+            <p className="text-sm font-mono text-slate-500">No reports yet.</p>
+            <p className="text-xs font-mono text-slate-700 mt-1">Tasker files drafts on security bounties automatically.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {skills.map(skill => (
-              <SkillCard key={skill.id} skill={skill} />
-            ))}
+            {reports.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
           </div>
         )}
       </div>
@@ -669,32 +704,83 @@ function SkillsTab({ skills, loading, visible }: { skills: Skill[]; loading: boo
   )
 }
 
-function SkillCard({ skill }: { skill: Skill }) {
+function ReportCard({ report, onAction }: {
+  report: SecurityReport
+  onAction: (id: number, action: 'approve' | 'dismiss' | 'submitted') => void
+}) {
   const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const statusCls = REPORT_STATUS_STYLE[report.status] ?? 'bg-slate-800 text-slate-400 border-slate-700'
+
+  const copy = () => {
+    navigator.clipboard.writeText(report.content).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000)
+    })
+  }
 
   return (
     <div className="border border-slate-800 rounded-2xl bg-slate-900 overflow-hidden">
       <button className="w-full p-4 text-left" onClick={() => setExpanded(e => !e)}>
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-xs font-mono text-emerald-400 font-semibold truncate">{skill.name}</p>
-            <p className="text-sm text-slate-300 font-mono leading-snug mt-1">{skill.description}</p>
-          </div>
-          <span className={`text-slate-600 text-xs font-mono shrink-0 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        <div className="flex items-start gap-2 mb-2">
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${statusCls}`}>
+            {report.status.toUpperCase()}
+          </span>
+          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 bg-slate-800 text-slate-400 border-slate-700">
+            {report.platform_label.toUpperCase()}
+          </span>
+          <span className="text-[9px] font-mono text-slate-600 ml-auto mt-0.5">conf {Math.round(report.confidence * 100)}%</span>
         </div>
-        <p className="text-[10px] font-mono text-slate-600 mt-2">{skill.created_at} · used {skill.use_count}×</p>
+        <p className="text-sm font-mono text-slate-200 leading-snug">{report.title}</p>
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">
+            ${Number(report.reward).toLocaleString()}
+            <span className="text-[10px] text-slate-600 ml-1">{report.chain ?? ''}</span>
+          </p>
+          <span className={`text-slate-600 text-xs font-mono transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        </div>
       </button>
 
       {expanded && (
         <div className="border-t border-slate-800 px-4 py-3 space-y-3">
-          <div>
-            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Trigger</p>
-            <p className="text-xs font-mono text-slate-400 leading-snug">{skill.trigger}</p>
+          <pre className="text-[10px] font-mono text-slate-300 leading-relaxed overflow-x-auto whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
+            {report.content}
+          </pre>
+
+          <div className="flex gap-2">
+            <button
+              onClick={copy}
+              className="flex-1 text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+            >
+              {copied ? 'Copied ✓' : 'Copy report'}
+            </button>
+            {report.url && (
+              <a
+                href={report.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 text-[10px] font-mono text-blue-400 border border-blue-900 rounded-lg py-2 text-center"
+              >
+                Open bounty ↗
+              </a>
+            )}
           </div>
-          <div>
-            <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Implementation</p>
-            <pre className="text-[10px] font-mono text-emerald-300/70 leading-relaxed overflow-x-auto whitespace-pre-wrap break-all">{skill.code}</pre>
-          </div>
+
+          {report.status === 'draft' && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => onAction(report.id, 'submitted')}
+                className="flex-1 text-[10px] font-mono bg-emerald-700 text-white rounded-lg py-2 active:bg-emerald-600"
+              >
+                Mark submitted
+              </button>
+              <button
+                onClick={() => onAction(report.id, 'dismiss')}
+                className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -855,8 +941,8 @@ export default function Home() {
   const [data, setData] = useState<AgentData | null>(null)
   const [status, setStatus] = useState<'connecting' | 'live' | 'error'>('connecting')
   const [flash, setFlash] = useState(false)
-  const [skills, setSkills] = useState<Skill[]>([])
-  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [reports, setReports] = useState<SecurityReport[]>([])
+  const [reportsLoading, setReportsLoading] = useState(false)
   const [bounties, setBounties] = useState<UnifiedBounty[]>([])
   const [assignedBounty, setAssignedBounty] = useState<UnifiedBounty | null>(null)
   const [bountiesLoading, setBountiesLoading] = useState(false)
@@ -885,16 +971,25 @@ export default function Home() {
     return () => clearInterval(id)
   }, [])
 
-  // Load skills when tab opens
-  useEffect(() => {
-    if (tab !== 'skills') return
-    setSkillsLoading(true)
-    fetch('/api/skills')
-      .then(r => r.json())
-      .then(setSkills)
-      .catch(() => {})
-      .finally(() => setSkillsLoading(false))
-  }, [tab])
+  // Load security reports when tab opens
+  const loadReports = useCallback(async () => {
+    setReportsLoading(true)
+    try {
+      const res = await fetch('/api/reports')
+      if (res.ok) setReports(await res.json())
+    } finally { setReportsLoading(false) }
+  }, [])
+
+  useEffect(() => { if (tab === 'reports') loadReports() }, [tab, loadReports])
+
+  const reportAction = useCallback(async (id: number, action: 'approve' | 'dismiss' | 'submitted') => {
+    await fetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action }),
+    })
+    loadReports()
+  }, [loadReports])
 
   // Load bounties when tab opens
   useEffect(() => {
@@ -943,7 +1038,12 @@ export default function Home() {
           visible={tab === 'bounties'}
           onAssign={setAssignedBounty}
         />
-        <SkillsTab skills={skills} loading={skillsLoading} visible={tab === 'skills'} />
+        <ReportsTab
+          reports={reports}
+          loading={reportsLoading}
+          visible={tab === 'reports'}
+          onAction={reportAction}
+        />
       </main>
 
       <BottomNav tab={tab} onTab={setTab} />

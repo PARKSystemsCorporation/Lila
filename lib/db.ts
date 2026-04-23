@@ -112,6 +112,31 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO lila_loop_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS management_state (
+      id             INTEGER       PRIMARY KEY DEFAULT 1,
+      last_check_at  TIMESTAMPTZ,
+      last_earned    NUMERIC(12,2) NOT NULL DEFAULT 0,
+      last_error_cnt INTEGER       NOT NULL DEFAULT 0,
+      updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO management_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS security_reports (
+      id             SERIAL        PRIMARY KEY,
+      bounty_id      TEXT          NOT NULL UNIQUE,
+      platform       TEXT          NOT NULL,
+      platform_label TEXT          NOT NULL,
+      title          TEXT          NOT NULL,
+      reward         NUMERIC(12,2) NOT NULL DEFAULT 0,
+      chain          TEXT,
+      url            TEXT,
+      content        TEXT          NOT NULL,
+      confidence     NUMERIC(3,2)  NOT NULL DEFAULT 0,
+      status         TEXT          NOT NULL DEFAULT 'draft',
+      created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
   `)
   schemaReady = true
 }
