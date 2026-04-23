@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import type { PoolClient } from 'pg'
 import { getPool, ensureSchema } from '@/lib/db'
 
 const ai = process.env.DEEPSEEK_API_KEY
@@ -65,7 +66,7 @@ async function llmCall(prompt: string, systemOverride?: string): Promise<string 
   }
 }
 
-async function maybeCreateSkill(db: Awaited<ReturnType<ReturnType<typeof getPool>['connect']>>) {
+async function maybeCreateSkill(db: PoolClient) {
   const raw = await llmCall('Create a new skill now.', HERMES_PROMPT)
   if (!raw) return null
 
