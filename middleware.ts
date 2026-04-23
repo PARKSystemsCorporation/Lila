@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createHash } from 'crypto'
 
-const AUTH_HASH = createHash('sha256').update('58132133').digest('hex')
+const AUTH_HASH = createHash('sha256').update(process.env.AUTH_PASSWORD ?? '').digest('hex')
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl

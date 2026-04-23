@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { registerAgent as registerClaw } from '@/lib/platforms/clawtasks'
 import { registerAgent as registerSuperteam } from '@/lib/platforms/superteam'
 
-const WALLET = '0x3a6Dd93f29041aDC2ffB142EdC98434c60110926'
+const WALLET = process.env.WALLET_ADDRESS ?? ''
 
 export async function GET() {
   return NextResponse.json({

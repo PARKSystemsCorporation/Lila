@@ -16,7 +16,7 @@ export interface EngineResult {
   logType: 'info' | 'success' | 'warn'
 }
 
-const WALLET = '0x3a6Dd93f29041aDC2ffB142EdC98434c60110926'
+const WALLET = process.env.WALLET_ADDRESS ?? ''
 
 const SCORE_PROMPT = `You are Lila's task evaluation module. Given a bounty, decide if you can complete it autonomously using only text generation, research, code writing, or analysis.
 
