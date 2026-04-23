@@ -30,6 +30,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Fail closed: if no password is configured, nobody gets in.
+  if (!PASSWORD) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
   const cookie = request.cookies.get('lila_auth')
   const authHash = await getAuthHash()
   if (cookie?.value === authHash) {

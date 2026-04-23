@@ -2,7 +2,7 @@ import OpenAI from 'openai'
 import * as ClawTasks from './platforms/clawtasks'
 import * as Superteam from './platforms/superteam'
 
-import type { UnifiedBounty } from '@/app/api/bounties/route'
+import type { UnifiedBounty } from '@/lib/bounties-fetch'
 
 export type { UnifiedBounty }
 

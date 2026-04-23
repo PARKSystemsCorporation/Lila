@@ -103,6 +103,15 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO analyst_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS lila_loop_state (
+      id           INTEGER     PRIMARY KEY DEFAULT 1,
+      step         TEXT        NOT NULL DEFAULT 'BT0',
+      turn_count   INTEGER     NOT NULL DEFAULT 0,
+      last_step_at TIMESTAMPTZ,
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO lila_loop_state (id) VALUES (1) ON CONFLICT DO NOTHING;
   `)
   schemaReady = true
 }

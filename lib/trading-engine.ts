@@ -1,9 +1,13 @@
 import * as Alpaca from './platforms/alpaca'
 import type { PoolClient } from 'pg'
 
-const MAX_POSITION_PCT = 0.20  // never more than 20% of buying power per trade
+// Sizing is agnostic — up to 75% of buying power per pick so a $30 account
+// can take a $20 trade. The safety rails are the *stops*, not position size.
+const MAX_POSITION_PCT = 0.75
 const MIN_NOTIONAL = 1.00
-const STOP_LOSS_PCT = 7        // hard stop at -7% if no tracked stop exists
+// Default tight stop when a pick doesn't carry one. Individual picks can
+// override via stop_loss (Lila's plans usually do).
+const DEFAULT_STOP_PCT = 3
 
 export interface TradingResult {
   action: 'bought' | 'sold' | 'monitored' | 'idle' | 'error'
@@ -17,14 +21,12 @@ export interface TradingResult {
 export class TradingEngine {
   async tick(db: PoolClient): Promise<TradingResult | null> {
     const hasKey = !!(process.env.ALPACA_API_KEY || process.env.APCA_API_KEY_ID)
-    if (!hasKey) return null  // no Alpaca — skip silently
+    if (!hasKey) return null
 
     try {
-      // Always monitor open positions (works outside market hours too)
       const monitor = await this.monitorPositions(db)
       if (monitor) return monitor
 
-      // Only try to buy when market is open
       const open = await Alpaca.isMarketOpen().catch(() => false)
       if (!open) return null
 
@@ -46,11 +48,18 @@ export class TradingEngine {
       if (!tracked) continue
 
       const current = parseFloat(pos.current_price)
+      const entry = parseFloat(tracked.entry_price ?? pos.avg_entry_price)
       const pnlPct = parseFloat(pos.unrealized_plpc) * 100
       const pnl = parseFloat(pos.unrealized_pl)
 
-      const hitTarget = current >= parseFloat(tracked.target_price)
-      const hitStop = pnlPct <= -(tracked.stop_loss ? STOP_LOSS_PCT : STOP_LOSS_PCT)
+      const target = tracked.target_price ? parseFloat(tracked.target_price) : null
+      const hitTarget = target !== null && current >= target
+
+      // Tight stop: honor per-pick stop_loss if set, otherwise DEFAULT_STOP_PCT.
+      const stopPrice = tracked.stop_loss ? parseFloat(tracked.stop_loss) : null
+      const hitStop = stopPrice !== null
+        ? current <= stopPrice
+        : pnlPct <= -DEFAULT_STOP_PCT
 
       if (hitTarget || hitStop) {
         await Alpaca.closePosition(pos.symbol).catch(() => {})
@@ -65,7 +74,7 @@ export class TradingEngine {
         const sign = pnl >= 0 ? '+' : ''
         return {
           action: 'sold', symbol: pos.symbol, pnl,
-          logMessage: `${tag}: closed ${pos.symbol} at $${current.toFixed(2)}. ${sign}$${pnl.toFixed(2)} P&L.`,
+          logMessage: `${tag}: closed ${pos.symbol} at $${current.toFixed(2)} (from $${entry.toFixed(2)}). ${sign}$${pnl.toFixed(2)} P&L.`,
           logType: hitTarget ? 'success' : 'warn',
         }
       }
@@ -85,7 +94,6 @@ export class TradingEngine {
 
     const pick = picks[0]
 
-    // Skip if already holding this symbol
     const { rows: existing } = await db.query(
       `SELECT id FROM lila_positions WHERE symbol=$1 AND status='open' LIMIT 1`,
       [pick.symbol]
@@ -112,9 +120,10 @@ export class TradingEngine {
       )
       await db.query(`UPDATE analyst_picks SET status='executed' WHERE id=$1`, [pick.id])
 
+      const stop = pick.stop_loss ? `$${parseFloat(pick.stop_loss).toFixed(2)}` : `-${DEFAULT_STOP_PCT}%`
       return {
         action: 'bought', symbol: pick.symbol, notional,
-        logMessage: `Executed Analyst pick: bought ${pick.symbol} — $${notional.toFixed(2)}. Target $${parseFloat(pick.target_price).toFixed(2)}. ${pick.reason}`,
+        logMessage: `Bought ${pick.symbol} — $${notional.toFixed(2)} @ ~$${parseFloat(pick.entry_price).toFixed(2)}. Target $${parseFloat(pick.target_price).toFixed(2)} · stop ${stop}. ${pick.reason}`,
         logType: 'success',
       }
     } catch (e) {
