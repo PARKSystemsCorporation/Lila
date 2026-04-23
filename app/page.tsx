@@ -4,7 +4,21 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'log' | 'dash' | 'skills'
+type Tab = 'chat' | 'log' | 'dash' | 'bounties' | 'skills'
+
+interface UnifiedBounty {
+  id: string
+  platform: string
+  platformLabel: string
+  title: string
+  description: string
+  reward: number
+  token: string
+  url?: string
+  deadline?: string
+  readOnly: boolean
+  chain: string
+}
 
 interface Message {
   role: 'user' | 'assistant'
@@ -78,13 +92,21 @@ const IconSkills = () => (
   </svg>
 )
 
+const IconBounties = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 6v6l4 2" />
+  </svg>
+)
+
 // ─── Bottom Nav ───────────────────────────────────────────────────────────────
 
 const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
-  { key: 'chat',   label: 'Chat',      Icon: IconChat   },
-  { key: 'log',    label: 'Log',       Icon: IconLog    },
-  { key: 'dash',   label: 'Dashboard', Icon: IconDash   },
-  { key: 'skills', label: 'Skills',    Icon: IconSkills },
+  { key: 'chat',     label: 'Chat',    Icon: IconChat     },
+  { key: 'log',      label: 'Log',     Icon: IconLog      },
+  { key: 'dash',     label: 'Dash',    Icon: IconDash     },
+  { key: 'bounties', label: 'Board',   Icon: IconBounties },
+  { key: 'skills',   label: 'Skills',  Icon: IconSkills   },
 ]
 
 function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
@@ -376,6 +398,153 @@ function SkillCard({ skill }: { skill: Skill }) {
   )
 }
 
+// ─── Bounties Tab ─────────────────────────────────────────────────────────────
+
+const PLATFORM_COLOR: Record<string, string> = {
+  superteam:   'bg-purple-950 text-purple-300 border-purple-900',
+  bountycaster:'bg-blue-950  text-blue-300  border-blue-900',
+  immunefi:    'bg-red-950   text-red-300   border-red-900',
+  clawtasks:   'bg-amber-950 text-amber-300 border-amber-900',
+}
+
+function BountiesTab({
+  bounties,
+  assignedBounty,
+  loading,
+  visible,
+  onAssign,
+}: {
+  bounties: UnifiedBounty[]
+  assignedBounty: UnifiedBounty | null
+  loading: boolean
+  visible: boolean
+  onAssign: (b: UnifiedBounty | null) => void
+}) {
+  const [assigning, setAssigning] = useState<string | null>(null)
+
+  const handleAssign = async (b: UnifiedBounty | null) => {
+    const key = b?.id ?? 'clear'
+    setAssigning(key)
+    try {
+      await fetch('/api/bounties', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bounty: b }),
+      })
+      onAssign(b)
+    } finally {
+      setAssigning(null)
+    }
+  }
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-5 space-y-3">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-1">
+          <div>
+            <p className="text-xs font-mono text-slate-300 font-semibold">Bounty Board</p>
+            <p className="text-[10px] font-mono text-slate-600">Sorted by value · tap to assign</p>
+          </div>
+          {assignedBounty && (
+            <button
+              onClick={() => handleAssign(null)}
+              disabled={assigning === 'clear'}
+              className="text-[10px] font-mono text-red-400 border border-red-900 rounded-lg px-2 py-1 active:opacity-70 disabled:opacity-40"
+            >
+              {assigning === 'clear' ? '...' : 'Clear task'}
+            </button>
+          )}
+        </div>
+
+        {/* Assigned banner */}
+        {assignedBounty && (
+          <div className="rounded-2xl border border-emerald-800 bg-emerald-950/30 px-4 py-3">
+            <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest mb-1">Assigned to Lila</p>
+            <p className="text-sm font-mono text-emerald-300 leading-snug">{assignedBounty.title}</p>
+            <p className="text-[10px] font-mono text-emerald-700 mt-1">${assignedBounty.reward} · {assignedBounty.platformLabel}</p>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex items-center gap-2 py-12 justify-center">
+            <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
+            <p className="text-xs font-mono text-slate-600">Scanning boards...</p>
+          </div>
+        ) : bounties.length === 0 ? (
+          <div className="border border-slate-800 rounded-2xl p-6 text-center">
+            <p className="text-sm font-mono text-slate-500">No bounties found.</p>
+            <p className="text-xs font-mono text-slate-700 mt-1">Add API keys to pull live boards.</p>
+          </div>
+        ) : (
+          bounties.map(b => {
+            const isAssigned = assignedBounty?.id === b.id
+            const platformCls = PLATFORM_COLOR[b.platform] ?? 'bg-slate-800 text-slate-400 border-slate-700'
+            return (
+              <div
+                key={b.id}
+                className={`rounded-2xl border bg-slate-900 overflow-hidden transition-colors ${isAssigned ? 'border-emerald-700' : 'border-slate-800'}`}
+              >
+                <div className="p-4">
+                  <div className="flex items-start gap-2 mb-2">
+                    <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${platformCls}`}>
+                      {b.platformLabel.toUpperCase()}
+                    </span>
+                    {b.readOnly && (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 bg-slate-800 text-slate-500 border-slate-700">
+                        VIEW-ONLY
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-sm font-mono text-slate-200 leading-snug">{b.title}</p>
+
+                  <div className="flex items-center justify-between mt-3">
+                    <div>
+                      <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">
+                        ${b.reward.toLocaleString()}
+                        <span className="text-[10px] text-slate-600 ml-1">{b.token}</span>
+                      </p>
+                      <p className="text-[10px] font-mono text-slate-600">{b.chain}</p>
+                    </div>
+
+                    {!b.readOnly && (
+                      isAssigned ? (
+                        <span className="text-[10px] font-mono text-emerald-500 border border-emerald-800 rounded-lg px-2 py-1">
+                          ▶ Active
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleAssign(b)}
+                          disabled={!!assigning}
+                          className="text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg px-3 py-1.5 active:bg-slate-800 disabled:opacity-40 transition-colors"
+                        >
+                          {assigning === b.id ? '...' : 'Assign to Lila'}
+                        </button>
+                      )
+                    )}
+
+                    {b.readOnly && b.url && (
+                      <a
+                        href={b.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] font-mono text-slate-500 border border-slate-800 rounded-lg px-2 py-1"
+                      >
+                        Open ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -385,6 +554,9 @@ export default function Home() {
   const [flash, setFlash] = useState(false)
   const [skills, setSkills] = useState<Skill[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
+  const [bounties, setBounties] = useState<UnifiedBounty[]>([])
+  const [assignedBounty, setAssignedBounty] = useState<UnifiedBounty | null>(null)
+  const [bountiesLoading, setBountiesLoading] = useState(false)
   const prevEarned = useRef<number | null>(null)
 
   // Agent poll every 5s
@@ -421,6 +593,20 @@ export default function Home() {
       .finally(() => setSkillsLoading(false))
   }, [tab])
 
+  // Load bounties when tab opens
+  useEffect(() => {
+    if (tab !== 'bounties') return
+    setBountiesLoading(true)
+    fetch('/api/bounties')
+      .then(r => r.json())
+      .then(d => {
+        setBounties(d.bounties ?? [])
+        setAssignedBounty(d.assignedBounty ?? null)
+      })
+      .catch(() => {})
+      .finally(() => setBountiesLoading(false))
+  }, [tab])
+
   return (
     <div className="h-dvh flex flex-col bg-slate-950 max-w-md mx-auto select-none">
       {/* Header */}
@@ -447,6 +633,13 @@ export default function Home() {
         <ChatTab visible={tab === 'chat'} />
         <LogTab log={data?.log ?? []} visible={tab === 'log'} />
         <DashTab data={data} flash={flash} visible={tab === 'dash'} />
+        <BountiesTab
+          bounties={bounties}
+          assignedBounty={assignedBounty}
+          loading={bountiesLoading}
+          visible={tab === 'bounties'}
+          onAssign={setAssignedBounty}
+        />
         <SkillsTab skills={skills} loading={skillsLoading} visible={tab === 'skills'} />
       </main>
 

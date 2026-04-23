@@ -83,7 +83,7 @@ export async function GET() {
     await ensureSchema(db)
 
     const { rows: [s] } = await db.query(
-      'SELECT total_earned, active_tasks, last_bounty, tick_count FROM lila_state WHERE id = 1'
+      'SELECT total_earned, active_tasks, last_bounty, tick_count, assigned_bounty FROM lila_state WHERE id = 1'
     )
 
     let totalEarned: number = parseFloat(s.total_earned)
@@ -92,6 +92,7 @@ export async function GET() {
       time: Date.now() - 240_000, ...s.last_bounty,
     }
     const tickCount = (s.tick_count ?? 0) + 1
+    const assignedBounty = s.assigned_bounty ?? null
 
     let logMessage: string
     let logType: string
@@ -105,35 +106,36 @@ export async function GET() {
       logType = skillName ? 'success' : 'info'
 
     } else {
-      // Real bounty engine — poll platforms and do actual work
-      const engine = new BountyEngine(
-        process.env.CLAWTASKS_API_KEY,
-        process.env.ROSE_API_KEY,
-      )
+      // Fetch live bounties from all platforms
+      let liveBounties: import('@/app/api/bounties/route').UnifiedBounty[] = []
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_URL ?? 'http://localhost:3000'
+        const res = await fetch(`${baseUrl}/api/bounties`, { signal: AbortSignal.timeout(20_000) })
+        if (res.ok) {
+          const data = await res.json()
+          liveBounties = data.bounties ?? []
+        }
+      } catch { /* platforms may be slow — engine handles empty list gracefully */ }
 
-      const result = await engine.tick()
+      const engine = new BountyEngine()
+      const result = await engine.tick(assignedBounty, liveBounties)
       logMessage = result.logMessage
       logType = result.logType
 
       if (result.action === 'submitted' && result.title && result.reward) {
-        // Real work completed — update earnings + task state
         totalEarned = parseFloat((totalEarned + result.reward).toFixed(2))
-        lastBounty = {
-          name: result.title,
-          value: result.reward,
-          time: Date.now(),
-        }
-        // Remove from active if present (it was just submitted)
+        lastBounty = { name: result.title, value: result.reward, time: Date.now() }
         activeTasks = activeTasks.filter(t => t !== result.title)
-
+        // Clear operator assignment once submitted
+        if (assignedBounty?.title === result.title) {
+          await db.query('UPDATE lila_state SET assigned_bounty = NULL WHERE id = 1')
+        }
       } else if (result.action === 'claimed' && result.title) {
-        // Add to active tasks while work is pending review
         if (!activeTasks.includes(result.title)) {
           activeTasks = [...activeTasks, result.title].slice(-3)
         }
-
-      } else if (result.action === 'idle' && !process.env.CLAWTASKS_API_KEY && !process.env.ROSE_API_KEY) {
-        // No real platforms configured — fall through to LLM idle log
+      } else if (result.action === 'idle' && liveBounties.length === 0) {
+        // No platforms configured — LLM idle log
         if (ai) {
           try {
             const r = await ai.chat.completions.create({
@@ -142,14 +144,11 @@ export async function GET() {
                 { role: 'system', content: 'You are Lila. Autonomous bounty agent. Terse, past tense, no fluff. One sentence.' },
                 { role: 'user', content: 'Write one status log entry.' },
               ],
-              max_tokens: 60,
-              temperature: 0.85,
+              max_tokens: 60, temperature: 0.85,
             })
             const content = r.choices[0]?.message?.content?.trim()
             if (content) { logMessage = content; logType = 'info' }
-          } catch {
-            ;[logMessage, logType] = pick(IDLE_LOGS)
-          }
+          } catch { ;[logMessage, logType] = pick(IDLE_LOGS) }
         } else {
           ;[logMessage, logType] = pick(IDLE_LOGS)
         }

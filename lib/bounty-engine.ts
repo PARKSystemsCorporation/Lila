@@ -1,26 +1,17 @@
 import OpenAI from 'openai'
 import * as ClawTasks from './platforms/clawtasks'
-import * as Rose from './platforms/rose'
+import * as Superteam from './platforms/superteam'
 
-export type Platform = 'clawtasks' | 'rose'
+import type { UnifiedBounty } from '@/app/api/bounties/route'
 
-export interface UnifiedBounty {
-  platform: Platform
-  id: string
-  title: string
-  description: string
-  reward: number        // USD
-  canComplete: boolean
-  confidence: number    // 0–1
-  rawScore: number      // reward * confidence
-}
+export type { UnifiedBounty }
 
 export interface EngineResult {
   action: 'claimed' | 'submitted' | 'idle' | 'error'
-  platform?: Platform
   bountyId?: string
   title?: string
   reward?: number
+  platform?: string
   logMessage: string
   logType: 'info' | 'success' | 'warn'
 }
@@ -36,190 +27,126 @@ Respond with ONLY valid JSON:
   "reason": "one sentence"
 }
 
-Tasks you CAN do: writing, research, code review, documentation, smart contract analysis, bug reports, data analysis, content creation, technical explanations.
-Tasks you CANNOT do: tasks requiring a GitHub account login, tasks requiring OAuth/KYC, tasks requiring running code locally, tasks requiring video/audio/images you'd generate.`
+Tasks you CAN do: writing, research, code review, documentation, smart contract analysis, bug reports, data analysis, content creation, technical explanations, proposals.
+Tasks you CANNOT do: tasks requiring GitHub OAuth login, KYC, running code locally, video/audio/image generation, on-chain transactions.`
 
-const WORK_PROMPT = `You are Lila, an autonomous AI agent completing a paid bounty. Do the work completely and professionally. This is a real submission that will be reviewed and paid.
+const WORK_PROMPT = `You are Lila, an autonomous AI agent completing a paid bounty. This is a real submission that will be reviewed. Do the work completely and professionally.
 
-Be thorough. Cover every requirement stated. Provide actual deliverable output — not an outline, not a plan, but the real thing.
+Be thorough. Cover every requirement. Deliver actual output — not an outline, the real thing.
 
-Bounty title: {TITLE}
+Bounty: {TITLE}
 Requirements: {DESCRIPTION}
 
-Deliver the complete work now. No preamble. No "here is my submission." Just the work.`
+Deliver the complete work now. No preamble.`
 
 export class BountyEngine {
   private ai: OpenAI
-  private clawKey?: string
-  private roseKey?: string
 
-  constructor(clawKey?: string, roseKey?: string) {
+  constructor() {
     this.ai = new OpenAI({
       apiKey: process.env.DEEPSEEK_API_KEY!,
       baseURL: 'https://api.deepseek.com/v1',
     })
-    this.clawKey = clawKey
-    this.roseKey = roseKey
   }
 
-  // ── Fetch bounties from all configured platforms ─────────────────────────
+  // ── Score a list of bounties with DeepSeek ─────────────────────────────
 
-  async fetchAll(): Promise<UnifiedBounty[]> {
-    const results: UnifiedBounty[] = []
-    const fetches: Promise<void>[] = []
+  async scoreBounties(bounties: UnifiedBounty[]): Promise<(UnifiedBounty & { confidence: number; rawScore: number })[]> {
+    const candidates = bounties.filter(b => !b.readOnly && b.reward >= 50).slice(0, 6)
 
-    if (this.clawKey) {
-      fetches.push(
-        ClawTasks.listOpenBounties(this.clawKey)
-          .then(bounties => {
-            for (const b of bounties.slice(0, 10)) {
-              results.push({
-                platform: 'clawtasks',
-                id: b.id,
-                title: b.title,
-                description: b.description,
-                reward: b.reward ?? 0,
-                canComplete: false,
-                confidence: 0,
-                rawScore: 0,
-              })
-            }
-          })
-          .catch(() => {}) // platform down — keep going
-      )
-    }
+    const scored = await Promise.all(candidates.map(async b => {
+      try {
+        const res = await this.ai.chat.completions.create({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: SCORE_PROMPT },
+            { role: 'user', content: `Title: ${b.title}\n\nDescription: ${b.description.slice(0, 800)}` },
+          ],
+          max_tokens: 100,
+          temperature: 0.2,
+        })
+        const raw = (res.choices[0]?.message?.content ?? '{}')
+          .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+        const score = JSON.parse(raw)
+        const confidence = Number(score.canComplete ? score.confidence : 0) || 0
+        return { ...b, confidence, rawScore: b.reward * confidence }
+      } catch {
+        return { ...b, confidence: 0, rawScore: 0 }
+      }
+    }))
 
-    if (this.roseKey) {
-      fetches.push(
-        Rose.listOpenTasks(this.roseKey)
-          .then(tasks => {
-            for (const t of tasks.slice(0, 10)) {
-              results.push({
-                platform: 'rose',
-                id: t.id,
-                title: t.title,
-                description: t.description,
-                reward: t.rewardUsd ?? t.reward ?? 0,
-                canComplete: false,
-                confidence: 0,
-                rawScore: 0,
-              })
-            }
-          })
-          .catch(() => {})
-      )
-    }
-
-    await Promise.all(fetches)
-    return results
-  }
-
-  // ── Score each bounty with DeepSeek ──────────────────────────────────────
-
-  async scoreBounties(bounties: UnifiedBounty[]): Promise<UnifiedBounty[]> {
-    // Score up to 5 bounties in parallel to stay within rate limits
-    const toScore = bounties.slice(0, 5)
-    const scored = await Promise.all(
-      toScore.map(async b => {
-        try {
-          const res = await this.ai.chat.completions.create({
-            model: 'deepseek-chat',
-            messages: [
-              { role: 'system', content: SCORE_PROMPT },
-              { role: 'user', content: `Title: ${b.title}\n\nDescription: ${b.description}` },
-            ],
-            max_tokens: 100,
-            temperature: 0.2,
-          })
-          const raw = res.choices[0]?.message?.content?.trim() ?? '{}'
-          const json = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-          const score = JSON.parse(json)
-          return {
-            ...b,
-            canComplete: !!score.canComplete,
-            confidence: Number(score.confidence) || 0,
-            rawScore: (b.reward || 1) * (Number(score.confidence) || 0),
-          }
-        } catch {
-          return b
-        }
-      })
-    )
     return scored.sort((a, b) => b.rawScore - a.rawScore)
   }
 
-  // ── Actually do the work ──────────────────────────────────────────────────
+  // ── Generate real work output ──────────────────────────────────────────
 
   async executeWork(bounty: UnifiedBounty): Promise<string> {
-    const prompt = WORK_PROMPT
-      .replace('{TITLE}', bounty.title)
-      .replace('{DESCRIPTION}', bounty.description.slice(0, 3000))
-
     const res = await this.ai.chat.completions.create({
       model: 'deepseek-chat',
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{
+        role: 'user',
+        content: WORK_PROMPT
+          .replace('{TITLE}', bounty.title)
+          .replace('{DESCRIPTION}', bounty.description.slice(0, 3000)),
+      }],
       max_tokens: 2000,
       temperature: 0.7,
     })
     return res.choices[0]?.message?.content?.trim() ?? ''
   }
 
-  // ── Main tick — find, claim, do, submit ───────────────────────────────────
+  // ── Claim + submit on the correct platform ─────────────────────────────
 
-  async tick(): Promise<EngineResult> {
-    if (!this.clawKey && !this.roseKey) {
-      return {
-        action: 'idle',
-        logMessage: 'No platform API keys configured. Set CLAWTASKS_API_KEY or ROSE_API_KEY.',
-        logType: 'warn',
-      }
+  async claimAndSubmit(bounty: UnifiedBounty, work: string): Promise<boolean> {
+    const rawId = bounty.id.replace(/^(st|bc|ct|imf)_/, '')
+
+    if (bounty.platform === 'clawtasks' && process.env.CLAWTASKS_API_KEY) {
+      const claimed = await ClawTasks.claimBounty(process.env.CLAWTASKS_API_KEY, rawId)
+      if (!claimed) return false
+      return ClawTasks.submitWork(process.env.CLAWTASKS_API_KEY, { bountyId: rawId, content: work })
     }
 
-    // 1. Fetch all available bounties
-    let bounties: UnifiedBounty[]
-    try {
-      bounties = await this.fetchAll()
-    } catch {
-      return { action: 'error', logMessage: 'Platform fetch failed. Retrying next tick.', logType: 'warn' }
+    if (bounty.platform === 'superteam' && process.env.SUPERTEAM_API_KEY) {
+      // Superteam: submit directly (no separate claim step)
+      return Superteam.submitWork(process.env.SUPERTEAM_API_KEY, rawId, work)
     }
 
-    if (bounties.length === 0) {
-      return { action: 'idle', logMessage: 'Scanned all boards. No open bounties right now.', logType: 'info' }
+    // Bountycaster: no programmatic claim API — log for operator to submit manually
+    if (bounty.platform === 'bountycaster') {
+      return true  // work is done; operator submits via Warpcast
     }
 
-    // 2. Score with DeepSeek
-    const scored = await this.scoreBounties(bounties)
-    const best = scored.find(b => b.canComplete && b.confidence > 0.6)
+    return false
+  }
+
+  // ── Main tick ──────────────────────────────────────────────────────────
+
+  async tick(assignedBounty: UnifiedBounty | null, liveBounties: UnifiedBounty[]): Promise<EngineResult> {
+    // If operator assigned a specific task, work on that first
+    const workQueue = assignedBounty
+      ? [assignedBounty, ...liveBounties.filter(b => b.id !== assignedBounty.id)]
+      : liveBounties
+
+    const actionable = workQueue.filter(b => !b.readOnly && b.reward >= 50)
+
+    if (actionable.length === 0) {
+      return { action: 'idle', logMessage: 'Scanned all boards. No qualifying paid tasks right now.', logType: 'info' }
+    }
+
+    // Score candidates (operator-assigned gets priority boost)
+    const scored = await this.scoreBounties(actionable)
+    const best = assignedBounty && scored.find(b => b.id === assignedBounty.id && b.confidence > 0.4)
+      ?? scored.find(b => b.confidence > 0.6)
 
     if (!best) {
       return {
         action: 'idle',
-        logMessage: `Reviewed ${scored.length} bounties across platforms. None within capability threshold.`,
+        logMessage: `Reviewed ${scored.length} bounties. None above confidence threshold. Waiting.`,
         logType: 'info',
       }
     }
 
-    // 3. Claim it
-    let claimed = false
-    try {
-      if (best.platform === 'clawtasks' && this.clawKey) {
-        claimed = await ClawTasks.claimBounty(this.clawKey, best.id)
-      } else if (best.platform === 'rose' && this.roseKey) {
-        claimed = await Rose.claimTask(this.roseKey, best.id)
-      }
-    } catch {
-      return { action: 'error', logMessage: `Claim failed for "${best.title}". Moving on.`, logType: 'warn' }
-    }
-
-    if (!claimed) {
-      return {
-        action: 'idle',
-        logMessage: `Bounty "${best.title}" already taken. Rescanning.`,
-        logType: 'info',
-      }
-    }
-
-    // 4. Do the work
+    // Execute the work
     let work: string
     try {
       work = await this.executeWork(best)
@@ -227,35 +154,24 @@ export class BountyEngine {
       return { action: 'error', logMessage: `Work generation failed for "${best.title}".`, logType: 'warn' }
     }
 
-    // 5. Submit
-    let submitted = false
-    try {
-      if (best.platform === 'clawtasks' && this.clawKey) {
-        submitted = await ClawTasks.submitWork(this.clawKey, { bountyId: best.id, content: work })
-      } else if (best.platform === 'rose' && this.roseKey) {
-        submitted = await Rose.submitWork(this.roseKey, { taskId: best.id, content: work })
-      }
-    } catch {
-      submitted = false
-    }
+    // Submit
+    const submitted = await this.claimAndSubmit(best, work).catch(() => false)
 
-    const platform = best.platform === 'clawtasks' ? 'ClawTasks' : 'Rose'
+    const chain = best.chain === 'Solana' ? '(you cash out)' : `→ ${WALLET.slice(0, 10)}...`
+
     if (submitted) {
+      const manualNote = best.platform === 'bountycaster' ? ' Work ready — submit via Warpcast.' : ''
       return {
         action: 'submitted',
-        platform: best.platform,
         bountyId: best.id,
         title: best.title,
         reward: best.reward,
-        logMessage: `Submitted: "${best.title}" on ${platform}. Payout pending: $${best.reward.toFixed(0)} → ${WALLET.slice(0, 8)}...`,
+        platform: best.platformLabel,
+        logMessage: `Submitted: "${best.title}" on ${best.platformLabel}. $${best.reward} pending ${chain}.${manualNote}`,
         logType: 'success',
       }
     }
 
-    return {
-      action: 'error',
-      logMessage: `Work complete but submission failed on ${platform}. Will retry.`,
-      logType: 'warn',
-    }
+    return { action: 'error', logMessage: `Submission failed on ${best.platformLabel}. Will retry.`, logType: 'warn' }
   }
 }
