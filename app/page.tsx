@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'log' | 'dash' | 'trading' | 'bounties' | 'reports'
+type Tab = 'chat' | 'log' | 'dash' | 'trading' | 'bounties' | 'reports' | 'notes'
 
 interface UnifiedBounty {
   id: string
@@ -116,6 +116,15 @@ const IconReports = () => (
   </svg>
 )
 
+const IconNotes = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    <path d="M4 4h12l4 4v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
+    <line x1="7" y1="10" x2="17" y2="10" />
+    <line x1="7" y1="14" x2="17" y2="14" />
+    <line x1="7" y1="18" x2="13" y2="18" />
+  </svg>
+)
+
 const IconBounties = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
     <circle cx="12" cy="12" r="10" />
@@ -132,6 +141,7 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
   { key: 'reports',  label: 'Reports', Icon: IconReports  },
+  { key: 'notes',    label: 'Notes',   Icon: IconNotes    },
 ]
 
 function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
@@ -1781,6 +1791,277 @@ function ClosedTradeRow({ t }: { t: ClosedTrade }) {
   )
 }
 
+// ─── Notes Tab ────────────────────────────────────────────────────────────────
+
+type NoteCategory = 'analyst' | 'lila' | 'tasker' | 'pitches' | 'other'
+
+interface NoteRow {
+  id: number
+  path: string
+  category: NoteCategory
+  preview: string
+  size: number
+  created_ts: number
+  updated_ts: number
+}
+
+interface NotesData {
+  notes: NoteRow[]
+  counts: Record<NoteCategory | 'total', number>
+}
+
+const NOTE_CATEGORY_STYLE: Record<NoteCategory, string> = {
+  analyst: 'bg-blue-950 text-blue-300 border-blue-900',
+  lila:    'bg-emerald-950 text-emerald-300 border-emerald-900',
+  tasker:  'bg-amber-950 text-amber-300 border-amber-900',
+  pitches: 'bg-purple-950 text-purple-300 border-purple-900',
+  other:   'bg-slate-800 text-slate-400 border-slate-700',
+}
+
+const NOTE_CATEGORY_LABEL: Record<NoteCategory, string> = {
+  analyst: 'ANALYST',
+  lila:    'LILA',
+  tasker:  'TASKER',
+  pitches: 'PITCH',
+  other:   'OTHER',
+}
+
+type NoteFilter = 'all' | NoteCategory
+
+function NotesTab({ visible }: { visible: boolean }) {
+  const [data, setData] = useState<NotesData | null>(null)
+  const [filter, setFilter] = useState<NoteFilter>('all')
+  const [loading, setLoading] = useState(true)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [expandedContent, setExpandedContent] = useState<string | null>(null)
+  const [fetchingContent, setFetchingContent] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/notes')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (!visible) return
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [visible, load])
+
+  const expand = useCallback(async (id: number) => {
+    if (expandedId === id) {
+      setExpandedId(null)
+      setExpandedContent(null)
+      return
+    }
+    setExpandedId(id)
+    setExpandedContent(null)
+    setFetchingContent(true)
+    try {
+      const res = await fetch(`/api/notes?id=${id}`)
+      if (res.ok) {
+        const d = await res.json()
+        setExpandedContent(d.content ?? '')
+      }
+    } finally { setFetchingContent(false) }
+  }, [expandedId])
+
+  const remove = useCallback(async (id: number) => {
+    if (!confirm('Delete this note permanently?')) return
+    await fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id }),
+    })
+    if (expandedId === id) {
+      setExpandedId(null)
+      setExpandedContent(null)
+    }
+    await load()
+  }, [expandedId, load])
+
+  const clearCategory = useCallback(async (category: Exclude<NoteFilter, 'all'>) => {
+    const label = NOTE_CATEGORY_LABEL[category] ?? category
+    const count = data?.counts?.[category] ?? 0
+    if (count === 0) return
+    if (!confirm(`Delete ALL ${count} ${label} notes? This cannot be undone.`)) return
+    await fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_category', category }),
+    })
+    setExpandedId(null)
+    setExpandedContent(null)
+    await load()
+  }, [data?.counts, load])
+
+  const filtered = useMemo(() => {
+    if (!data) return []
+    if (filter === 'all') return data.notes
+    return data.notes.filter(n => n.category === filter)
+  }, [data, filter])
+
+  const pills: { key: NoteFilter; label: string; count: number }[] = data ? [
+    { key: 'all',     label: 'ALL',     count: data.counts.total   },
+    { key: 'analyst', label: 'ANALYST', count: data.counts.analyst },
+    { key: 'lila',    label: 'LILA',    count: data.counts.lila    },
+    { key: 'tasker',  label: 'TASKER',  count: data.counts.tasker  },
+    { key: 'pitches', label: 'PITCH',   count: data.counts.pitches },
+    ...(data.counts.other > 0 ? [{ key: 'other' as const, label: 'OTHER', count: data.counts.other }] : []),
+  ] : []
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-emerald-500"><IconNotes /></span>
+          <div>
+            <p className="text-xs font-mono text-slate-300 font-semibold">Notes Library</p>
+            <p className="text-[10px] font-mono text-slate-600">
+              Everything Analyst / Lila / Tasker has written down
+            </p>
+          </div>
+        </div>
+
+        {/* Filter pills */}
+        {data && data.counts.total > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {pills.map(p => (
+              <button
+                key={p.key}
+                onClick={() => setFilter(p.key)}
+                className={`text-[9px] font-mono px-2 py-1 rounded border tracking-wider ${
+                  filter === p.key
+                    ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                    : 'text-slate-500 border-slate-800 active:bg-slate-800'
+                }`}
+              >
+                {p.label} · {p.count}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Bulk delete for the active filter (except 'all') */}
+        {data && filter !== 'all' && (data.counts[filter] ?? 0) > 0 && (
+          <button
+            onClick={() => clearCategory(filter)}
+            className="text-[9px] font-mono text-red-400 border border-red-900 rounded px-2 py-1 active:opacity-70"
+          >
+            Clear all {NOTE_CATEGORY_LABEL[filter]} · {data.counts[filter]}
+          </button>
+        )}
+
+        {loading && !data ? (
+          <div className="flex items-center gap-2 py-10 justify-center">
+            <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
+            <p className="text-xs font-mono text-slate-600">Loading notes...</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="border border-slate-800 rounded-2xl p-6 text-center">
+            <p className="text-sm font-mono text-slate-500">Nothing here yet.</p>
+            <p className="text-xs font-mono text-slate-700 mt-1">
+              Analyst, Lila, and Tasker write notes as they work. They&apos;ll show up here.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filtered.map(n => (
+              <NoteRow
+                key={n.id}
+                note={n}
+                expanded={expandedId === n.id}
+                content={expandedId === n.id ? expandedContent : null}
+                loadingContent={expandedId === n.id && fetchingContent}
+                onToggle={() => expand(n.id)}
+                onDelete={() => remove(n.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function NoteRow({ note, expanded, content, loadingContent, onToggle, onDelete }: {
+  note: NoteRow
+  expanded: boolean
+  content: string | null
+  loadingContent: boolean
+  onToggle: () => void
+  onDelete: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const catCls = NOTE_CATEGORY_STYLE[note.category] ?? NOTE_CATEGORY_STYLE.other
+
+  const copy = () => {
+    if (!content) return
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  // Path → readable leaf. "analyst/notes/scan-2026-04-23.md" → "scan-2026-04-23.md"
+  const leaf = note.path.split('/').slice(1).join('/') || note.path
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
+      <button className="w-full p-3 text-left" onClick={onToggle}>
+        <div className="flex items-start gap-2">
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${catCls}`}>
+            {NOTE_CATEGORY_LABEL[note.category]}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-mono text-slate-300 break-all">{leaf}</p>
+            <p className="text-[9px] font-mono text-slate-600 mt-0.5">
+              {fmtAge(note.updated_ts)} · {note.size.toLocaleString()} chars
+            </p>
+            {!expanded && (
+              <p className="text-[10px] font-mono text-slate-500 mt-1 line-clamp-2 leading-snug">
+                {note.preview}
+              </p>
+            )}
+          </div>
+          <span className={`text-slate-600 text-xs font-mono shrink-0 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-800 px-3 py-3 space-y-3">
+          {loadingContent ? (
+            <p className="text-[10px] font-mono text-slate-600 text-center py-3">Loading…</p>
+          ) : content ? (
+            <pre className="text-[10px] font-mono text-slate-300 leading-relaxed bg-slate-950 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-96 overflow-y-auto select-text">
+              {content}
+            </pre>
+          ) : null}
+
+          <div className="flex gap-2">
+            <button
+              onClick={copy}
+              disabled={!content}
+              className="flex-1 text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-2 active:bg-slate-800 disabled:opacity-40"
+            >
+              {copied ? '✓ copied' : 'Copy MD'}
+            </button>
+            <button
+              onClick={onDelete}
+              className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
 
 function ReportsTab({ reports, loading, visible, onAction }: {
@@ -2324,6 +2605,7 @@ export default function Home() {
           visible={tab === 'reports'}
           onAction={reportAction}
         />
+        <NotesTab visible={tab === 'notes'} />
       </main>
 
       <BottomNav tab={tab} onTab={setTab} />
