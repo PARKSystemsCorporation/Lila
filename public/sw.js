@@ -1,4 +1,4 @@
-const CACHE = 'lila-v1'
+const CACHE = 'lila-v3'
 const PRECACHE = ['/', '/manifest.json']
 
 self.addEventListener('install', (e) => {
