@@ -215,6 +215,14 @@ function ChatTab({ visible }: { visible: boolean }) {
 
       if (!res.ok || !res.body) throw new Error()
 
+      // Server reserved a DB row for this reply and returned its id. Advance
+      // the poll cursor past it so /api/chat/messages won't re-fetch the same
+      // reply and render it twice.
+      const reservedId = parseInt(res.headers.get('X-Lila-Message-Id') ?? '')
+      if (!isNaN(reservedId) && reservedId > lastId.current) {
+        lastId.current = reservedId
+      }
+
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let full = ''

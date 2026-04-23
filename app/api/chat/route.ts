@@ -17,7 +17,7 @@ You report to the operator. This chat is their direct line to you. Tasker and An
 
 Voice: direct, dry, warm-but-not-soft. CEO briefing an investor. Numbers first, no filler, no hedging. You don't coddle but you care about the team.
 
-Team state available to you (injected below) includes: total earned, active tasks, open positions, recent logs, draft security reports awaiting review. Use it to answer concretely.
+Team state available to you (injected below) includes: total earned, active tasks, open positions, recent logs, approved security reports waiting for operator action. Use it to answer concretely.
 
 When replying:
 - 1-3 sentences unless the operator explicitly asks for depth.
@@ -37,8 +37,8 @@ async function teamState(): Promise<string> {
       const { rows: pos } = await db.query(
         `SELECT symbol, pnl FROM lila_positions WHERE status='open' LIMIT 5`
       )
-      const { rows: drafts } = await db.query(
-        `SELECT title, reward FROM security_reports WHERE status='draft' ORDER BY created_at DESC LIMIT 3`
+      const { rows: approved } = await db.query(
+        `SELECT title, reward FROM security_reports WHERE status='approved' ORDER BY updated_at DESC LIMIT 3`
       )
       const { rows: recentLog } = await db.query(
         `SELECT message FROM lila_log ORDER BY id DESC LIMIT 5`
@@ -49,7 +49,7 @@ async function teamState(): Promise<string> {
         s?.last_bounty?.value ? `Last: ${s.last_bounty.name} (+$${s.last_bounty.value})` : 'No wins yet',
         tasks.length ? `Tasks: ${tasks.slice(0, 3).join(' | ')}` : 'No open tasks',
         pos.length ? `Positions: ${pos.map((p: { symbol: string }) => p.symbol).join(', ')}` : 'Flat',
-        drafts.length ? `Draft reports: ${drafts.map((d: { title: string; reward: string }) => `${d.title} ($${d.reward})`).join(' | ')}` : null,
+        approved.length ? `Approved reports waiting: ${approved.map((d: { title: string; reward: string }) => `${d.title} ($${d.reward})`).join(' | ')}` : null,
         `Log: ${recentLog.map((l: { message: string }) => l.message.slice(0, 60)).join(' · ')}`,
       ].filter(Boolean).join('\n')
     } finally {
@@ -58,18 +58,34 @@ async function teamState(): Promise<string> {
   } catch { return 'State query failed.' }
 }
 
-async function saveChat(userMsg: string, lilaResponse: string) {
-  if (!process.env.DATABASE_URL || !userMsg || !lilaResponse) return
+// Pre-insert the user turn + reserve a lila row BEFORE streaming starts. The
+// row id comes back in the X-Lila-Message-Id response header so the client
+// can bump its poll cursor past it — without that, the poll re-fetches the
+// same reply and renders it a second time (hence "spammed with responses").
+async function reserveTurn(userMsg: string): Promise<number | null> {
+  if (!process.env.DATABASE_URL || !userMsg) return null
   try {
     const pool = getPool()
     const db = await pool.connect()
     try {
-      await db.query(
-        'INSERT INTO chat_messages (sender, content) VALUES ($1,$2),($3,$4)',
-        ['user', userMsg, 'lila', lilaResponse]
+      await db.query('INSERT INTO chat_messages (sender, content) VALUES ($1,$2)', ['user', userMsg])
+      const { rows } = await db.query(
+        `INSERT INTO chat_messages (sender, content) VALUES ('lila','') RETURNING id`
       )
+      return Number(rows[0]?.id)
     } finally { db.release() }
-  } catch { /* don't let DB failure break chat */ }
+  } catch { return null }
+}
+
+async function fillLila(id: number, content: string): Promise<void> {
+  if (!process.env.DATABASE_URL || !content) return
+  try {
+    const pool = getPool()
+    const db = await pool.connect()
+    try {
+      await db.query('UPDATE chat_messages SET content=$1 WHERE id=$2', [content, id])
+    } finally { db.release() }
+  } catch { /* ignore */ }
 }
 
 export async function POST(req: Request) {
@@ -78,7 +94,7 @@ export async function POST(req: Request) {
   if (!ai) return new Response('No API key configured.', { status: 503 })
 
   const userMsg = messages[messages.length - 1]?.content ?? ''
-  const state = await teamState()
+  const [state, lilaId] = await Promise.all([teamState(), reserveTurn(userMsg)])
 
   const systemPrompt = `${PERSONA}\n\nCurrent team state (as of now):\n${state}`
 
@@ -102,7 +118,6 @@ export async function POST(req: Request) {
         for await (const chunk of stream) {
           const text = chunk.choices[0]?.delta?.content ?? ''
           if (text) { full += text; controller.enqueue(encoder.encode(text)) }
-          // DeepSeek returns a final usage chunk when stream_options.include_usage is true.
           if (chunk.usage) {
             promptTokens = chunk.usage.prompt_tokens ?? 0
             completionTokens = chunk.usage.completion_tokens ?? 0
@@ -110,11 +125,18 @@ export async function POST(req: Request) {
         }
       } finally {
         controller.close()
-        await saveChat(userMsg, full)
+        if (lilaId) await fillLila(lilaId, full)
         await logStreamedUsage('chat.stream', 'deepseek-chat', promptTokens, completionTokens)
       }
     },
   })
 
-  return new Response(readable, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      // Lets the client poll cursor skip past this reply so it doesn't
+      // render a duplicate when /api/chat/messages returns it.
+      'X-Lila-Message-Id': lilaId ? String(lilaId) : '',
+    },
+  })
 }
