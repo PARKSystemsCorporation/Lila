@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'log' | 'dash' | 'trading' | 'bounties' | 'reports' | 'notes'
+type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'reports' | 'notes'
 
 interface UnifiedBounty {
   id: string
@@ -24,6 +24,7 @@ interface Message {
   role: 'user' | 'lila' | 'tasker' | 'analyst'
   content: string
   id?: number
+  ts?: number   // unix ms; server-provided for posted messages, local-stamped for in-flight
 }
 
 interface SecurityReport {
@@ -136,7 +137,6 @@ const IconBounties = () => (
 
 const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'chat',     label: 'Chat',    Icon: IconChat     },
-  { key: 'log',      label: 'Log',     Icon: IconLog      },
   { key: 'dash',     label: 'Dash',    Icon: IconDash     },
   { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
@@ -174,6 +174,52 @@ const ROLE_STYLE = {
   analyst: { avatar: 'A', color: 'text-blue-400',    ring: 'bg-blue-900 border-blue-700',       bubble: 'bg-blue-950/60 text-blue-200 border-blue-900/60' },
 } as const
 
+// ─── Shared UI primitives ─────────────────────────────────────────────────────
+
+function Section({
+  label, count, defaultOpen = true, children,
+}: {
+  label: string
+  count?: number | string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="space-y-3">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-1 py-1 active:opacity-70"
+      >
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10px] font-mono text-emerald-600 uppercase tracking-[0.2em]">
+            {label}
+          </span>
+          {count != null && (
+            <span className="text-[9px] font-mono text-slate-700">· {count}</span>
+          )}
+        </div>
+        <span className={`text-slate-700 text-xs font-mono transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+      {open && <div className="space-y-4">{children}</div>}
+    </div>
+  )
+}
+
+function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="border border-slate-800 rounded-2xl p-6 text-center">
+      <p className="text-sm font-mono text-slate-500">{title}</p>
+      {subtitle && <p className="text-xs font-mono text-slate-700 mt-1 leading-snug">{subtitle}</p>}
+    </div>
+  )
+}
+
+// Cross-tab navigation. Children call `onNavigate({ tab, notesFilter? })` to
+// jump to a tab and pre-set a filter — e.g. TargetCard sends you to Notes
+// pre-filtered to Tasker's plans.
+type NavigateFn = (to: { tab: Tab; notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'pitches' | 'other' }) => void
+
 function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
   const [copied, setCopied] = useState(false)
   const isUser = m.role === 'user'
@@ -206,16 +252,23 @@ function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
           )}
         </div>
       </div>
-      {/* Copy affordance — always visible once the bubble has content */}
+      {/* Timestamp + copy affordance */}
       {m.content && !streaming && (
-        <button
-          onClick={copy}
-          className={`text-[9px] font-mono mt-1 px-1 tracking-wider uppercase transition-colors ${
-            copied ? 'text-emerald-400' : 'text-slate-700 active:text-slate-500'
-          } ${isUser ? 'mr-1' : 'ml-6'}`}
-        >
-          {copied ? '✓ copied' : 'copy'}
-        </button>
+        <div className={`flex items-center gap-2 mt-1 ${isUser ? 'mr-1 flex-row-reverse' : 'ml-6'}`}>
+          <button
+            onClick={copy}
+            className={`text-[9px] font-mono px-1 tracking-wider uppercase transition-colors ${
+              copied ? 'text-emerald-400' : 'text-slate-700 active:text-slate-500'
+            }`}
+          >
+            {copied ? '✓ copied' : 'copy'}
+          </button>
+          {m.ts != null && (
+            <span className="text-[9px] font-mono text-slate-800">
+              {fmt(m.ts)}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )
@@ -227,12 +280,27 @@ function ChatTab({ visible }: { visible: boolean }) {
   ])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [nearBottom, setNearBottom] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollerRef = useRef<HTMLDivElement>(null)
   const lastId = useRef(0)
 
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    bottomRef.current?.scrollIntoView({ behavior })
+  }, [])
+
+  // Only auto-scroll when the user is already near the bottom — otherwise
+  // we'd yank them back while they're reading history.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (nearBottom) scrollToBottom('smooth')
+  }, [messages, nearBottom, scrollToBottom])
+
+  const onScroll = useCallback(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    setNearBottom(dist < 60)
+  }, [])
 
   // Poll for Tasker/Lila/Analyst messages every 5s
   useEffect(() => {
@@ -245,12 +313,13 @@ function ChatTab({ visible }: { visible: boolean }) {
         if (incoming.length > 0) {
           setMessages(prev => [
             ...prev,
-            ...incoming.map((m: { id: number; sender: string; content: string }) => ({
+            ...incoming.map((m: { id: number; sender: string; content: string; timestamp?: number }) => ({
               role: (m.sender === 'analyst' ? 'analyst'
                    : m.sender === 'tasker'  ? 'tasker'
                    : 'lila') as Message['role'],
               content: m.content,
               id: m.id,
+              ts: m.timestamp,
             })),
           ])
           lastId.current = incoming[incoming.length - 1].id
@@ -266,8 +335,9 @@ function ChatTab({ visible }: { visible: boolean }) {
     if (!text || streaming) return
     setInput('')
 
-    const history = [...messages, { role: 'user' as const, content: text }]
-    setMessages([...history, { role: 'lila', content: '' }])
+    const now = Date.now()
+    const history: Message[] = [...messages, { role: 'user', content: text, ts: now }]
+    setMessages([...history, { role: 'lila', content: '', ts: now }])
     setStreaming(true)
 
     try {
@@ -336,7 +406,11 @@ function ChatTab({ visible }: { visible: boolean }) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div
+        ref={scrollerRef}
+        onScroll={onScroll}
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-3 relative"
+      >
         {messages.map((m, i) => (
           <ChatMessage
             key={m.id ?? i}
@@ -346,6 +420,16 @@ function ChatTab({ visible }: { visible: boolean }) {
         ))}
         <div ref={bottomRef} />
       </div>
+
+      {/* Scroll-to-bottom pill — floats above input when the user has scrolled up */}
+      {!nearBottom && (
+        <button
+          onClick={() => scrollToBottom('smooth')}
+          className="absolute bottom-20 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700 rounded-full px-3 py-1.5 shadow-lg active:bg-slate-700 z-10"
+        >
+          ↓ Jump to latest
+        </button>
+      )}
 
       {/* Input */}
       <div className="shrink-0 px-4 py-3 border-t border-slate-800 bg-slate-950 flex gap-2">
@@ -376,24 +460,44 @@ function ChatTab({ visible }: { visible: boolean }) {
 const LOG_COLOR = { info: 'text-slate-400', success: 'text-emerald-400', warn: 'text-amber-400' }
 const LOG_PREFIX = { info: '›', success: '✓', warn: '⚠' }
 
-function LogTab({ log, visible }: { log: LogEntry[]; visible: boolean }) {
+// Recent activity — shown as a collapsible card on Dash (replaces the
+// old Log tab). Defaults collapsed to keep Dash short.
+function ActivityLog({ log }: { log: LogEntry[] }) {
+  const [open, setOpen] = useState(false)
+  const shown = open ? log : log.slice(0, 5)
+
   return (
-    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-4 space-y-3.5">
-        {log.length === 0 ? (
-          <p className="text-xs font-mono text-slate-700 pt-10 text-center">Waiting for first tick...</p>
-        ) : log.map(e => (
-          <div key={e.id} className="flex gap-3 items-start">
-            <span className={`font-mono text-sm shrink-0 w-4 text-center ${LOG_COLOR[e.type]}`}>
-              {LOG_PREFIX[e.type]}
-            </span>
-            <div className="min-w-0">
-              <p className={`text-sm font-mono leading-snug break-words ${LOG_COLOR[e.type]}`}>{e.message}</p>
-              <p className="text-[10px] text-slate-700 font-mono mt-0.5">{fmt(e.timestamp)}</p>
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between"
+      >
+        <div>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Recent activity</p>
+          <p className="text-[10px] font-mono text-slate-700 mt-0.5">
+            {log.length === 0 ? 'Waiting for first tick…' : `${log.length} entries · tap to ${open ? 'collapse' : 'expand'}`}
+          </p>
+        </div>
+        <span className={`text-slate-700 text-xs font-mono transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+      </button>
+
+      {log.length === 0 ? null : (
+        <div className="space-y-2.5 pt-1 border-t border-slate-800">
+          {shown.map(e => (
+            <div key={e.id} className="flex gap-3 items-start pt-1.5">
+              <span className={`font-mono text-xs shrink-0 w-3 text-center ${LOG_COLOR[e.type]}`}>
+                {LOG_PREFIX[e.type]}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className={`text-[11px] font-mono leading-snug break-words ${LOG_COLOR[e.type]}`}>
+                  {e.message}
+                </p>
+                <p className="text-[9px] text-slate-700 font-mono mt-0.5">{fmt(e.timestamp)}</p>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1121,7 +1225,7 @@ function PitchCard() {
   )
 }
 
-function TargetCard() {
+function TargetCard({ onNavigate }: { onNavigate?: NavigateFn }) {
   const [current, setCurrent] = useState<ResearchTarget | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -1203,6 +1307,15 @@ function TargetCard() {
           {closed} hypothesis{closed > 1 ? 'es' : ''} tested · fruitless {current.fruitless_cycles}/3
         </p>
       )}
+
+      {onNavigate && (
+        <button
+          onClick={() => onNavigate({ tab: 'notes', notesFilter: 'tasker' })}
+          className="w-full text-[10px] font-mono text-slate-400 border border-slate-800 rounded-lg py-2 active:bg-slate-800 mt-1"
+        >
+          View Tasker plans →
+        </button>
+      )}
     </div>
   )
 }
@@ -1281,15 +1394,18 @@ function PortfolioCard() {
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 
-function DashTab({ data, flash, visible, financials }: {
+function DashTab({ data, flash, visible, financials, onNavigate }: {
   data: AgentData | null
   flash: boolean
   visible: boolean
   financials: { paidMtd: number; pendingMax: number; pendingCount: number } | null
+  onNavigate: NavigateFn
 }) {
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-4">
+      <div className="px-4 py-5 space-y-6">
+        {/* ── Always visible: the numbers that matter right now ─────────── */}
+
         {/* Earned — now means confirmed payouts + closed-trade P&L */}
         <div className={`rounded-2xl border p-5 transition-colors duration-300 ${flash ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-800 bg-slate-900'}`}>
           <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Confirmed earnings</p>
@@ -1342,19 +1458,30 @@ function DashTab({ data, flash, visible, financials }: {
           </div>
         </div>
 
-        <CostCard />
+        {/* ── Grouped sections — collapsible, tuned defaults ─────────────── */}
 
-        <BroadcastCard />
+        <Section label="Financials">
+          <CostCard />
+          <PortfolioCard />
+        </Section>
 
-        <TargetCard />
+        <Section label="Ops">
+          <BroadcastCard />
+          <TargetCard onNavigate={onNavigate} />
+          <DiscoveryCard />
+        </Section>
 
-        <DiscoveryCard />
+        <Section label="Assets" defaultOpen={false}>
+          <PitchCard />
+        </Section>
 
-        <PitchCard />
+        <Section label="Activity" defaultOpen={false}>
+          <ActivityLog log={data?.log ?? []} />
+        </Section>
 
-        <PortfolioCard />
-
-        <SetupCard />
+        <Section label="Integrations" defaultOpen={false}>
+          <SetupCard />
+        </Section>
       </div>
     </div>
   )
@@ -1828,9 +1955,13 @@ const NOTE_CATEGORY_LABEL: Record<NoteCategory, string> = {
 
 type NoteFilter = 'all' | NoteCategory
 
-function NotesTab({ visible }: { visible: boolean }) {
+function NotesTab({ visible, filter, onFilterChange }: {
+  visible: boolean
+  filter: NoteFilter
+  onFilterChange: (f: NoteFilter) => void
+}) {
   const [data, setData] = useState<NotesData | null>(null)
-  const [filter, setFilter] = useState<NoteFilter>('all')
+  const setFilter = onFilterChange
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [expandedContent, setExpandedContent] = useState<string | null>(null)
@@ -1961,12 +2092,10 @@ function NotesTab({ visible }: { visible: boolean }) {
             <p className="text-xs font-mono text-slate-600">Loading notes...</p>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="border border-slate-800 rounded-2xl p-6 text-center">
-            <p className="text-sm font-mono text-slate-500">Nothing here yet.</p>
-            <p className="text-xs font-mono text-slate-700 mt-1">
-              Analyst, Lila, and Tasker write notes as they work. They&apos;ll show up here.
-            </p>
-          </div>
+          <EmptyState
+            title="Nothing here yet."
+            subtitle="Analyst, Lila, and Tasker write notes as they work. They'll show up here."
+          />
         ) : (
           <div className="space-y-2">
             {filtered.map(n => (
@@ -2064,11 +2193,12 @@ function NoteRow({ note, expanded, content, loadingContent, onToggle, onDelete }
 
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
 
-function ReportsTab({ reports, loading, visible, onAction }: {
+function ReportsTab({ reports, loading, visible, onAction, onNavigate }: {
   reports: SecurityReport[]
   loading: boolean
   visible: boolean
   onAction: (a: ReportAction) => void
+  onNavigate: NavigateFn
 }) {
   const toSubmit   = reports.filter(r => r.status === 'approved')
   const awaiting   = reports.filter(r => r.status === 'submitted')
@@ -2110,40 +2240,40 @@ function ReportsTab({ reports, loading, visible, onAction }: {
             <p className="text-xs font-mono text-slate-600">Loading reports...</p>
           </div>
         ) : reports.length === 0 ? (
-          <div className="border border-slate-800 rounded-2xl p-6 text-center">
-            <p className="text-sm font-mono text-slate-500">No reports yet.</p>
-            <p className="text-xs font-mono text-slate-700 mt-1">Tasker files drafts on security bounties automatically.</p>
-          </div>
+          <EmptyState
+            title="No reports yet."
+            subtitle="Tasker files drafts on security bounties automatically."
+          />
         ) : (
           <>
             {toSubmit.length > 0 && (
               <section className="space-y-3">
                 <p className="text-[10px] font-mono text-amber-400 uppercase tracking-widest">Ready to submit · {toSubmit.length}</p>
-                {toSubmit.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                {toSubmit.map(r => <ReportCard key={r.id} report={r} onAction={onAction} onNavigate={onNavigate} />)}
               </section>
             )}
             {awaiting.length > 0 && (
               <section className="space-y-3">
                 <p className="text-[10px] font-mono text-blue-400 uppercase tracking-widest">Submitted · awaiting payout · {awaiting.length}</p>
-                {awaiting.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                {awaiting.map(r => <ReportCard key={r.id} report={r} onAction={onAction} onNavigate={onNavigate} />)}
               </section>
             )}
             {paid.length > 0 && (
               <section className="space-y-3">
                 <p className="text-[10px] font-mono text-emerald-400 uppercase tracking-widest">Paid · {paid.length}</p>
-                {paid.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                {paid.map(r => <ReportCard key={r.id} report={r} onAction={onAction} onNavigate={onNavigate} />)}
               </section>
             )}
             {lilaQueue.length > 0 && (
               <section className="space-y-3">
                 <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Lila reviewing · {lilaQueue.length}</p>
-                {lilaQueue.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                {lilaQueue.map(r => <ReportCard key={r.id} report={r} onAction={onAction} onNavigate={onNavigate} />)}
               </section>
             )}
             {archive.length > 0 && (
               <section className="space-y-3">
                 <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Archive · {archive.length}</p>
-                {archive.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                {archive.map(r => <ReportCard key={r.id} report={r} onAction={onAction} onNavigate={onNavigate} />)}
               </section>
             )}
           </>
@@ -2153,9 +2283,10 @@ function ReportsTab({ reports, loading, visible, onAction }: {
   )
 }
 
-function ReportCard({ report, onAction }: {
+function ReportCard({ report, onAction, onNavigate }: {
   report: SecurityReport
   onAction: (a: ReportAction) => void
+  onNavigate?: NavigateFn
 }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -2240,6 +2371,14 @@ function ReportCard({ report, onAction }: {
               >
                 Open bounty ↗
               </a>
+            )}
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate({ tab: 'notes', notesFilter: 'tasker' })}
+                className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+              >
+                Research notes →
+              </button>
             )}
           </div>
 
@@ -2394,10 +2533,10 @@ function BountiesTab({
             <p className="text-xs font-mono text-slate-600">Scanning boards...</p>
           </div>
         ) : bounties.length === 0 ? (
-          <div className="border border-slate-800 rounded-2xl p-6 text-center">
-            <p className="text-sm font-mono text-slate-500">No bounties found.</p>
-            <p className="text-xs font-mono text-slate-700 mt-1">Add API keys to pull live boards.</p>
-          </div>
+          <EmptyState
+            title="No bounties found."
+            subtitle="Add platform API keys to pull live boards."
+          />
         ) : (
           bounties.map(b => {
             const isAssigned = assignedBounty?.id === b.id
@@ -2480,7 +2619,15 @@ export default function Home() {
   const [assignedBounty, setAssignedBounty] = useState<UnifiedBounty | null>(null)
   const [bountiesLoading, setBountiesLoading] = useState(false)
   const [financials, setFinancials] = useState<{ paidMtd: number; pendingMax: number; pendingCount: number } | null>(null)
+  // Pre-filter the Notes tab when the operator deep-links from elsewhere
+  // (TargetCard → Tasker plans, ReportCard → Tasker, etc).
+  const [notesFilter, setNotesFilter] = useState<NoteFilter>('all')
   const prevEarned = useRef<number | null>(null)
+
+  const navigate: NavigateFn = useCallback((to) => {
+    if (to.notesFilter) setNotesFilter(to.notesFilter)
+    setTab(to.tab)
+  }, [])
 
   // Financial summary for Dash (paid MTD, pending). Polled cheaply.
   useEffect(() => {
@@ -2589,8 +2736,7 @@ export default function Home() {
       {/* Tab content */}
       <main className="flex-1 relative overflow-hidden">
         <ChatTab visible={tab === 'chat'} />
-        <LogTab log={data?.log ?? []} visible={tab === 'log'} />
-        <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} />
+        <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} onNavigate={navigate} />
         <TradingTab visible={tab === 'trading'} />
         <BountiesTab
           bounties={bounties}
@@ -2604,8 +2750,9 @@ export default function Home() {
           loading={reportsLoading}
           visible={tab === 'reports'}
           onAction={reportAction}
+          onNavigate={navigate}
         />
-        <NotesTab visible={tab === 'notes'} />
+        <NotesTab visible={tab === 'notes'} filter={notesFilter} onFilterChange={setNotesFilter} />
       </main>
 
       <BottomNav tab={tab} onTab={setTab} />
