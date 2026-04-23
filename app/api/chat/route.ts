@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { getPool, ensureSchema } from '@/lib/db'
+import { logStreamedUsage } from '@/lib/llm'
 
 export const dynamic = 'force-dynamic'
 
@@ -87,10 +88,13 @@ export async function POST(req: Request) {
     max_tokens: 220,
     temperature: 0.7,
     stream: true,
+    stream_options: { include_usage: true },
   })
 
   const encoder = new TextEncoder()
   let full = ''
+  let promptTokens = 0
+  let completionTokens = 0
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -98,10 +102,16 @@ export async function POST(req: Request) {
         for await (const chunk of stream) {
           const text = chunk.choices[0]?.delta?.content ?? ''
           if (text) { full += text; controller.enqueue(encoder.encode(text)) }
+          // DeepSeek returns a final usage chunk when stream_options.include_usage is true.
+          if (chunk.usage) {
+            promptTokens = chunk.usage.prompt_tokens ?? 0
+            completionTokens = chunk.usage.completion_tokens ?? 0
+          }
         }
       } finally {
         controller.close()
         await saveChat(userMsg, full)
+        await logStreamedUsage('chat.stream', 'deepseek-chat', promptTokens, completionTokens)
       }
     },
   })

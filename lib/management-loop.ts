@@ -1,6 +1,8 @@
 import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import * as Alpaca from './platforms/alpaca'
+import { llmCall, LLMBudgetExceeded } from './llm'
+import { cfg } from './config'
 
 // ── Management Lila ──────────────────────────────────────────────────────────
 //
@@ -16,8 +18,6 @@ import * as Alpaca from './platforms/alpaca'
 // Each run returns after the first priority that fires, keeping token cost
 // bounded. She never ticks unprompted — work must be there.
 
-const CHECK_INTERVAL_SEC = 300    // 5 min between proactive check-ins
-const TRADE_INTERVAL_SEC = 900    // 15 min between trade cycles
 const BIG_WIN_THRESHOLD = 50
 const ERROR_THRESHOLD   = 3
 
@@ -158,6 +158,7 @@ export class ManagementLoop {
       .join('\n')
 
     const msg = await this.llm(
+      'lila.reply',
       REPLY_PROMPT.replace('{CONTEXT}', context).replace('{TRANSCRIPT}', transcript),
       220
     )
@@ -180,6 +181,7 @@ export class ManagementLoop {
 
     const r = rows[0]
     const raw = await this.llm(
+      'lila.review',
       REVIEW_PROMPT
         .replace('{TITLE}', r.title)
         .replace('{REWARD}', String(r.reward))
@@ -227,7 +229,7 @@ export class ManagementLoop {
       'SELECT last_trade_at FROM management_state WHERE id=1'
     )
     if (!s?.last_trade_at) return true
-    return (Date.now() - new Date(s.last_trade_at).getTime()) / 1000 >= TRADE_INTERVAL_SEC
+    return (Date.now() - new Date(s.last_trade_at).getTime()) / 1000 >= cfg.MANAGEMENT_TRADE_SEC
   }
 
   private async runTradeCycle(): Promise<ManagementResult | null> {
@@ -268,6 +270,7 @@ export class ManagementLoop {
       : '(flat)'
 
     const raw = await this.llm(
+      'lila.trade',
       TRADE_PLAN_PROMPT
         .replace('{NOTES}', notesBlob)
         .replace('{PICKS}', picksBlob)
@@ -340,7 +343,7 @@ export class ManagementLoop {
       'SELECT last_check_at FROM management_state WHERE id=1'
     )
     if (!s?.last_check_at) return true
-    return (Date.now() - new Date(s.last_check_at).getTime()) / 1000 >= CHECK_INTERVAL_SEC
+    return (Date.now() - new Date(s.last_check_at).getTime()) / 1000 >= cfg.MANAGEMENT_CHECK_SEC
   }
 
   private async proactiveCheckIn(): Promise<ManagementResult | null> {
@@ -391,6 +394,7 @@ export class ManagementLoop {
 
     const context = await this.context(totalEarned)
     const msg = await this.llm(
+      'lila.proactive',
       PROACTIVE_PROMPT.replace('{CONTEXT}', context).replace('{EVENT}', event),
       160
     )
@@ -439,17 +443,20 @@ export class ManagementLoop {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  private async llm(prompt: string, maxTokens: number): Promise<string> {
+  private async llm(module: string, prompt: string, maxTokens: number): Promise<string> {
     try {
-      const res = await this.ai!.chat.completions.create({
-        model: 'deepseek-chat',
+      const { content } = await llmCall({
+        ai: this.ai!,
+        module,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: maxTokens,
         temperature: 0.5,
       })
-      return (res.choices[0]?.message?.content ?? '')
-        .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-    } catch { return '' }
+      return content
+    } catch (e) {
+      if (e instanceof LLMBudgetExceeded) return ''
+      return ''
+    }
   }
 
   private parse<T>(raw: string, fallback: T): T {

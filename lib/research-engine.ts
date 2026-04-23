@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import type { UnifiedBounty } from './bounties-fetch'
+import { llmCall, LLMBudgetExceeded } from './llm'
 
 // ── Research engine ───────────────────────────────────────────────────────────
 //
@@ -230,6 +231,7 @@ export class ResearchEngine {
       switch (target.phase) {
         case 'map': {
           const md = await this.llm(
+            'research.map',
             MAP_PROMPT.replace('{TITLE}', target.title)
                      .replace('{PLATFORM}', target.platform_label)
                      .replace('{SCOPE}', target.scope.slice(0, 6000)),
@@ -241,6 +243,7 @@ export class ResearchEngine {
         }
         case 'surfaces': {
           const md = await this.llm(
+            'research.surfaces',
             SURFACES_PROMPT.replace('{TITLE}', target.title).replace('{NOTES}', notesBlob),
             900
           )
@@ -250,6 +253,7 @@ export class ResearchEngine {
         }
         case 'invariants': {
           const md = await this.llm(
+            'research.invariants',
             INVARIANTS_PROMPT.replace('{TITLE}', target.title).replace('{NOTES}', notesBlob),
             700
           )
@@ -259,6 +263,7 @@ export class ResearchEngine {
         }
         case 'hypothesize': {
           const raw = await this.llm(
+            'research.hypothesize',
             HYPOTHESIZE_PROMPT.replace('{TITLE}', target.title).replace('{NOTES}', notesBlob),
             900
           )
@@ -282,6 +287,7 @@ export class ResearchEngine {
             break
           }
           const raw = await this.llm(
+            'research.investigate',
             INVESTIGATE_PROMPT
               .replace('{HID}', String(hypothesis.id))
               .replace('{TITLE}', target.title)
@@ -321,6 +327,14 @@ export class ResearchEngine {
           }
       }
     } catch (e) {
+      if (e instanceof LLMBudgetExceeded) {
+        return {
+          action: 'error',
+          phase: target.phase,
+          logMessage: `Research paused: ${e.message}`,
+          logType: 'warn',
+        }
+      }
       return {
         action: 'error',
         phase: target.phase,
@@ -420,15 +434,15 @@ export class ResearchEngine {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  private async llm(prompt: string, maxTokens: number): Promise<string> {
-    const res = await this.ai.chat.completions.create({
-      model: 'deepseek-chat',
+  private async llm(module: string, prompt: string, maxTokens: number): Promise<string> {
+    const { content } = await llmCall({
+      ai: this.ai,
+      module,
       messages: [{ role: 'user', content: prompt }],
       max_tokens: maxTokens,
       temperature: 0.4,
     })
-    return (res.choices[0]?.message?.content ?? '')
-      .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+    return content
   }
 
   private parse<T>(raw: string, fallback: T): T {

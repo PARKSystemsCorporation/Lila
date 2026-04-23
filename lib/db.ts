@@ -175,6 +175,18 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_research_notes_kind ON research_notes(target_id, kind);
 
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_target_id INTEGER;
+
+    CREATE TABLE IF NOT EXISTS llm_usage (
+      id                SERIAL        PRIMARY KEY,
+      module            TEXT          NOT NULL,
+      model             TEXT          NOT NULL,
+      prompt_tokens     INTEGER       NOT NULL DEFAULT 0,
+      completion_tokens INTEGER       NOT NULL DEFAULT 0,
+      cost_usd          NUMERIC(10,6) NOT NULL DEFAULT 0,
+      created_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_llm_usage_module ON llm_usage(module, created_at DESC);
   `)
   schemaReady = true
 }

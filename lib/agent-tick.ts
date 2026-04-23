@@ -5,6 +5,8 @@ import { TradingEngine } from './trading-engine'
 import { AnalystLoop } from './analyst-loop'
 import { TaskerLoop } from './tasker-loop'
 import { ManagementLoop } from './management-loop'
+import { llmCall, LLMBudgetExceeded } from './llm'
+import { cfg } from './config'
 
 // Single entry point for an autonomy tick. Called from /api/agent (user poll)
 // and from the server-side ticker (instrumentation.ts). DB schema is lazy-init,
@@ -24,10 +26,12 @@ Respond with ONLY valid JSON — no markdown fences:
 
 async function maybeHermes(db: PoolClient): Promise<string | null> {
   if (!process.env.DEEPSEEK_API_KEY) return null
+  if (!cfg.ENABLE_HERMES) return null
   try {
     const ai = new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })
-    const res = await ai.chat.completions.create({
-      model: 'deepseek-chat',
+    const { content } = await llmCall({
+      ai,
+      module: 'hermes',
       messages: [
         { role: 'system', content: HERMES_PROMPT },
         { role: 'user', content: 'Create a new skill now.' },
@@ -35,9 +39,7 @@ async function maybeHermes(db: PoolClient): Promise<string | null> {
       max_tokens: 300,
       temperature: 0.85,
     })
-    const raw = (res.choices[0]?.message?.content ?? '')
-      .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-    const skill = JSON.parse(raw)
+    const skill = JSON.parse(content)
     if (!skill.name || !skill.description || !skill.trigger || !skill.code) return null
     await db.query(
       `INSERT INTO lila_skills (name, description, trigger, code)
@@ -50,7 +52,10 @@ async function maybeHermes(db: PoolClient): Promise<string | null> {
       ]
     )
     return String(skill.name)
-  } catch { return null }
+  } catch (e) {
+    if (e instanceof LLMBudgetExceeded) return null
+    return null
+  }
 }
 
 export interface TickOutcome {
@@ -75,12 +80,11 @@ export function runAgentTick(): Promise<TickOutcome> {
 let tickerStarted = false
 function startTicker() {
   if (tickerStarted) return
-  if (process.env.ENABLE_AUTONOMY_TICKER === 'false') return
-  // Skip during `next build` page-data collection.
+  if (!cfg.ENABLE_AUTONOMY_TICKER) return
   if (process.env.NEXT_PHASE === 'phase-production-build') return
   tickerStarted = true
 
-  const interval = Number(process.env.AUTONOMY_TICK_MS ?? 30_000)
+  const interval = cfg.AUTONOMY_TICK_MS
   setTimeout(() => {
     setInterval(() => {
       runAgentTick().catch(e => console.error('[autonomy] tick failed:', e))
@@ -147,8 +151,8 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(mgmtResult.logMessage)
     }
 
-    // 5. Hermes every 20th server tick.
-    if (tickCount % 20 === 0) {
+    // 5. Hermes cadence — every N-th server tick (cfg.HERMES_EVERY_N).
+    if (cfg.ENABLE_HERMES && cfg.HERMES_EVERY_N > 0 && tickCount % cfg.HERMES_EVERY_N === 0) {
       const name = await maybeHermes(db)
       const msg = name ? `Hermes: new skill — ${name}.` : 'Hermes synthesis attempted. No viable skill.'
       const type = name ? 'success' : 'info'

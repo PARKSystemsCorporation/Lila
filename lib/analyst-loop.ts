@@ -1,6 +1,8 @@
 import OpenAI from 'openai'
 import * as Alpaca from './platforms/alpaca'
 import type { PoolClient } from 'pg'
+import { llmCall, LLMBudgetExceeded } from './llm'
+import { cfg } from './config'
 
 // ── Analyst watchlist ─────────────────────────────────────────────────────────
 // No biotech, no retail. Commodity ETFs + leveraged index + global macro only.
@@ -12,8 +14,7 @@ const WATCHLIST = {
 }
 const ALL = [...WATCHLIST.commodity, ...WATCHLIST.leveraged, ...WATCHLIST.macro]
 
-const STEP_INTERVAL_MIN = 2   // minutes between steps
-const MAX_CYCLES        = 11  // cycles before maintenance
+const MAX_CYCLES = 11  // cycles before maintenance
 
 export type AnalystStep = 'T0' | 'T1' | 'T2' | 'T3' | 'F0' | 'M0' | 'M1'
 
@@ -31,7 +32,7 @@ export class AnalystLoop {
   async shouldRun(): Promise<boolean> {
     const { rows: [s] } = await this.db.query('SELECT last_step_at FROM analyst_state WHERE id=1')
     if (!s?.last_step_at) return true
-    return (Date.now() - new Date(s.last_step_at).getTime()) / 60000 >= STEP_INTERVAL_MIN
+    return (Date.now() - new Date(s.last_step_at).getTime()) / 60000 >= cfg.ANALYST_STEP_MIN
   }
 
   async run(): Promise<{ logMessage: string; logType: 'info' | 'success' | 'warn' } | null> {
@@ -82,6 +83,7 @@ export class AnalystLoop {
     ).join('\n')
 
     const res = await this.llm(
+      'analyst.t0',
       `You are the Analyst in a group chat with Lila (COO) and the operator. Review recent chat:\n\n${transcript}\n\nDo any messages require your response or a task? JSON only: { "action": true/false, "task": "one sentence or null", "response": "one sentence or null" }`,
       120
     )
@@ -103,6 +105,7 @@ export class AnalystLoop {
 
     const headlines = news.map(n => `- ${n.headline} (${n.symbols?.join(',') ?? ''})`).join('\n')
     const res = await this.llm(
+      'analyst.t1',
       `Analyst reviewing macro/commodity/ETF news. No biotech, no retail.\n\n${headlines}\n\nBreaking thesis? JSON: { "thesis": true/false, "summary": "one sentence" }`,
       100
     )
@@ -124,6 +127,7 @@ export class AnalystLoop {
       .join('\n')
 
     const res = await this.llm(
+      'analyst.t2',
       `Analyst scanning commodity ETFs, leveraged S&P/NQ, global macro. Long only, no biotech, no retail.\n\n${data}\n\nAny thesis? JSON: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"reason":"one sentence"}], "summary": "one sentence" }`,
       250
     )
@@ -146,6 +150,7 @@ export class AnalystLoop {
 
   private async t3(): Promise<string> {
     const res = await this.llm(
+      'analyst.t3',
       'You are the Analyst. No trade setup today. Write 3-5 bullet research notes: what to watch next and why. Focus on commodity ETFs, leveraged indices, global macro.',
       180
     )
@@ -206,6 +211,7 @@ export class AnalystLoop {
     ).join('\n\n')
 
     const summary = await this.llm(
+      'analyst.m0',
       `Summarize these analyst notes into a concise market brief (5-7 bullets):\n\n${combined}`, 250
     )
     await this.note(`analyst/summaries/${today()}-maintenance.md`, `# Maintenance Summary ${today()}\n\n${summary}`)
@@ -225,6 +231,7 @@ export class AnalystLoop {
       : 'No positions yet.'
 
     const analysis = await this.llm(
+      'analyst.m1',
       `Analyst P&L briefing for Lila (COO).\n\nPositions:\n${posStr}\n\nTrading P&L: $${totalPnl.toFixed(2)}\nBounty earnings: $${parseFloat(earned?.total_earned ?? '0').toFixed(2)}\n\nWrite 2-3 sentence analysis + recommendation.`,
       150
     )
@@ -235,14 +242,20 @@ export class AnalystLoop {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  private async llm(prompt: string, maxTokens: number): Promise<string> {
-    const res = await this.ai.chat.completions.create({
-      model: 'deepseek-chat',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: maxTokens,
-      temperature: 0.3,
-    })
-    return (res.choices[0]?.message?.content ?? '').replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+  private async llm(module: string, prompt: string, maxTokens: number): Promise<string> {
+    try {
+      const { content } = await llmCall({
+        ai: this.ai,
+        module,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature: 0.3,
+      })
+      return content
+    } catch (e) {
+      if (e instanceof LLMBudgetExceeded) return ''
+      throw e
+    }
   }
 
   private parse<T>(raw: string, fallback: T): T {

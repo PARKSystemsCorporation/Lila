@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg'
 import * as ClawTasks from './platforms/clawtasks'
 import * as Superteam from './platforms/superteam'
 import type { UnifiedBounty } from './bounties-fetch'
+import { llmCall, LLMBudgetExceeded } from './llm'
 
 export type { UnifiedBounty }
 
@@ -133,8 +134,9 @@ export class BountyEngine {
 
     const scored = await Promise.all(candidates.map(async b => {
       try {
-        const res = await this.ai.chat.completions.create({
-          model: 'deepseek-chat',
+        const { content } = await llmCall({
+          ai: this.ai,
+          module: 'bounty.score',
           messages: [
             { role: 'system', content: SCORE_PROMPT },
             { role: 'user', content: `Title: ${b.title}\n\nDescription: ${b.description.slice(0, 1200)}` },
@@ -142,19 +144,17 @@ export class BountyEngine {
           max_tokens: 160,
           temperature: 0.2,
         })
-        const raw = (res.choices[0]?.message?.content ?? '{}')
-          .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
-        const score = JSON.parse(raw)
+        const score = JSON.parse(content || '{}')
         if (score.mode === 'skip' || !score.canComplete) {
           return { ...b, confidence: 0, rawScore: 0, mode: 'code_work' as const }
         }
         const confidence = Number(score.confidence) || 0
         const mode: 'security_report' | 'code_work' =
           score.mode === 'security_report' ? 'security_report' : 'code_work'
-        // Prefer security mode with a 20% score bonus — that's the grinding ground.
         const weight = mode === 'security_report' ? 1.2 : 1.0
         return { ...b, confidence, rawScore: b.reward * confidence * weight, mode }
-      } catch {
+      } catch (e) {
+        if (e instanceof LLMBudgetExceeded) throw e
         return { ...b, confidence: 0, rawScore: 0, mode: 'code_work' as const }
       }
     }))
@@ -169,8 +169,9 @@ export class BountyEngine {
     mode: 'security_report' | 'code_work'
   ): Promise<{ content: string; hasFinding: boolean }> {
     const prompt = mode === 'security_report' ? SECURITY_REPORT_PROMPT : CODE_WORK_PROMPT
-    const res = await this.ai.chat.completions.create({
-      model: 'deepseek-chat',
+    const { content: resContent } = await llmCall({
+      ai: this.ai,
+      module: mode === 'security_report' ? 'bounty.work.security' : 'bounty.work.code',
       messages: [{
         role: 'user',
         content: prompt
@@ -180,7 +181,7 @@ export class BountyEngine {
       max_tokens: 2200,
       temperature: 0.4,
     })
-    const content = res.choices[0]?.message?.content?.trim() ?? ''
+    const content = resContent.trim()
     const hasFinding = mode === 'security_report'
       ? !content.startsWith('NO_FINDING')
       : content.length > 100

@@ -3,6 +3,8 @@ import type { PoolClient } from 'pg'
 import { BountyEngine, pickSecurityCandidates } from './bounty-engine'
 import { fetchAllBounties, type UnifiedBounty } from './bounties-fetch'
 import { ResearchEngine } from './research-engine'
+import { llmCall, LLMBudgetExceeded } from './llm'
+import { cfg } from './config'
 
 // ── Tasker autonomy loop ──────────────────────────────────────────────────────
 //
@@ -15,8 +17,6 @@ import { ResearchEngine } from './research-engine'
 //   BZ0 — post an execution status update to the team chat
 //
 // Trading, report review, operator replies all belong to Lila (ManagementLoop).
-
-const STEP_INTERVAL_SEC = 30
 
 export type TaskerStep = 'BT0' | 'BH0' | 'BZ0'
 
@@ -79,7 +79,7 @@ export class TaskerLoop {
   private async shouldRun(): Promise<boolean> {
     const { rows: [s] } = await this.db.query('SELECT last_step_at FROM lila_loop_state WHERE id=1')
     if (!s?.last_step_at) return true
-    return (Date.now() - new Date(s.last_step_at).getTime()) / 1000 >= STEP_INTERVAL_SEC
+    return (Date.now() - new Date(s.last_step_at).getTime()) / 1000 >= cfg.TASKER_STEP_SEC
   }
 
   private async advance(step: TaskerStep): Promise<void> {
@@ -105,7 +105,7 @@ export class TaskerLoop {
       .map((m: { sender: string; content: string }) => `[${m.sender.toUpperCase()}]: ${m.content}`)
       .join('\n')
 
-    const raw = await this.llm(`${CHAT_PARSE_PROMPT}\n\nTranscript:\n${transcript}`, 200)
+    const raw = await this.llm('tasker.bt0', `${CHAT_PARSE_PROMPT}\n\nTranscript:\n${transcript}`, 200)
     const parsed = this.parse(raw, { tasks: [] as string[] })
 
     if (Array.isArray(parsed.tasks) && parsed.tasks.length) {
@@ -146,6 +146,30 @@ export class TaskerLoop {
     const candidates = assignedIsSecurity ? [assigned!, ...securityCandidates] : securityCandidates
 
     const target = await research.pinOrGetCurrent(candidates)
+
+    // Tiered cadence: don't burn a research cycle on every Tasker tick. Cycles
+    // on the same target are expensive (prompt includes accumulated notes); a
+    // 3-minute default gate lets cheap code-work bounties run in between.
+    if (target) {
+      const last = await this.lastResearchAt(target.id)
+      const tooRecent = last && (Date.now() - last.getTime()) / 1000 < cfg.RESEARCH_CYCLE_SEC
+      if (tooRecent) {
+        // Fall through to code-work path with security bounties filtered out —
+        // the research target is already claimed, and we'll hit it next window.
+        const securityIds = new Set(securityCandidates.map(b => b.id))
+        const codeOnly = liveBounties.filter(b => !securityIds.has(b.id))
+        const engine = new BountyEngine()
+        const result = await engine.tick(
+          assigned && !securityIds.has(assigned.id) ? assigned : null,
+          codeOnly,
+          this.db
+        )
+        return {
+          logMessage: `Researching "${target.title}" (next cycle ${this.untilNext(last)}). Meanwhile: ${result.logMessage}`,
+          logType: result.logType,
+        }
+      }
+    }
 
     if (target) {
       const cycle = await research.runCycle(target)
@@ -245,15 +269,35 @@ export class TaskerLoop {
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  private async llm(prompt: string, maxTokens: number): Promise<string> {
-    const res = await this.ai!.chat.completions.create({
-      model: 'deepseek-chat',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: maxTokens,
-      temperature: 0.4,
-    })
-    return (res.choices[0]?.message?.content ?? '')
-      .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+  private async llm(module: string, prompt: string, maxTokens: number): Promise<string> {
+    try {
+      const { content } = await llmCall({
+        ai: this.ai!,
+        module,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature: 0.4,
+      })
+      return content
+    } catch (e) {
+      if (e instanceof LLMBudgetExceeded) return ''
+      throw e
+    }
+  }
+
+  private async lastResearchAt(targetId: number): Promise<Date | null> {
+    const { rows } = await this.db.query(
+      'SELECT last_worked_at FROM research_targets WHERE id=$1',
+      [targetId]
+    )
+    return rows[0]?.last_worked_at ? new Date(rows[0].last_worked_at) : null
+  }
+
+  private untilNext(last: Date | null): string {
+    if (!last) return 'soon'
+    const remainingSec = cfg.RESEARCH_CYCLE_SEC - (Date.now() - last.getTime()) / 1000
+    if (remainingSec <= 0) return 'now'
+    return remainingSec >= 60 ? `${Math.ceil(remainingSec / 60)}m` : `${Math.ceil(remainingSec)}s`
   }
 
   private parse<T>(raw: string, fallback: T): T {

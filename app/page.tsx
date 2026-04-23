@@ -547,6 +547,118 @@ const PHASE_LABEL: Record<string, string> = {
 }
 const PHASE_ORDER = ['map', 'surfaces', 'invariants', 'hypothesize', 'investigate']
 
+interface CostData {
+  today: number
+  today_tokens: number
+  calls_today: number
+  mtd: number
+  earnings_submitted_mtd: number
+  earnings_lifetime: number
+  budget: number
+  byModule: { module: string; cost: number; calls: number; tokens: number }[]
+}
+
+function CostCard() {
+  const [data, setData] = useState<CostData | null>(null)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/costs')
+        if (res.ok) setData(await res.json())
+      } catch { /* ignore */ }
+    }
+    load()
+    const id = setInterval(load, 20_000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!data) return null
+
+  const pct = data.budget > 0 ? Math.min(100, (data.today / data.budget) * 100) : 0
+  const net = data.earnings_submitted_mtd - data.mtd
+  const top = data.byModule.slice(0, 5)
+  const maxCost = top[0]?.cost ?? 0
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Service Costs</p>
+        {data.budget > 0 && (
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${
+            pct >= 90 ? 'bg-red-950 text-red-400 border-red-900'
+            : pct >= 60 ? 'bg-amber-950 text-amber-400 border-amber-900'
+            : 'bg-slate-800 text-slate-400 border-slate-700'
+          }`}>
+            {pct.toFixed(0)}% of cap
+          </span>
+        )}
+      </div>
+
+      <div className="flex gap-4">
+        <div>
+          <p className="text-2xl font-bold font-mono text-white tabular-nums">${data.today.toFixed(4)}</p>
+          <p className="text-[10px] font-mono text-slate-600">today · {data.calls_today} calls</p>
+        </div>
+        <div className="border-l border-slate-800 pl-4">
+          <p className="text-sm font-mono text-slate-400 tabular-nums">${data.mtd.toFixed(2)}</p>
+          <p className="text-[10px] font-mono text-slate-600">month to date</p>
+        </div>
+      </div>
+
+      {data.budget > 0 && (
+        <div className="h-1 rounded-full bg-slate-800 overflow-hidden">
+          <div className={`h-full transition-all ${
+            pct >= 90 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-emerald-500'
+          }`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {/* Earnings vs costs */}
+      <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-800">
+        <div>
+          <p className="text-sm font-mono text-emerald-400 tabular-nums">
+            +${data.earnings_submitted_mtd.toFixed(2)}
+          </p>
+          <p className="text-[10px] font-mono text-slate-600">submitted reports (MTD)</p>
+        </div>
+        <div>
+          <p className={`text-sm font-mono tabular-nums ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {net >= 0 ? '+' : ''}${net.toFixed(2)}
+          </p>
+          <p className="text-[10px] font-mono text-slate-600">net MTD</p>
+        </div>
+      </div>
+
+      {/* Per-module burn, today */}
+      {top.length > 0 && (
+        <div className="space-y-1.5 pt-2 border-t border-slate-800">
+          <p className="text-[9px] font-mono text-slate-600 uppercase tracking-widest">Burn today by module</p>
+          {top.map(m => {
+            const barPct = maxCost > 0 ? (m.cost / maxCost) * 100 : 0
+            return (
+              <div key={m.module} className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-slate-400 w-28 shrink-0 truncate">{m.module}</span>
+                <div className="flex-1 h-1 rounded-full bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-slate-600" style={{ width: `${barPct}%` }} />
+                </div>
+                <span className="text-[10px] font-mono text-slate-500 tabular-nums w-16 text-right shrink-0">
+                  ${m.cost.toFixed(4)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <p className="text-[9px] font-mono text-slate-700">
+        Lifetime earned: ${data.earnings_lifetime.toFixed(2)}.
+        {data.budget > 0 ? ` Daily cap: $${data.budget.toFixed(2)}.` : ' No daily cap.'}
+      </p>
+    </div>
+  )
+}
+
 function TargetCard() {
   const [current, setCurrent] = useState<ResearchTarget | null>(null)
   const [loading, setLoading] = useState(true)
@@ -762,6 +874,8 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
             <p className="text-[10px] text-slate-600 font-mono mt-0.5">Lila is running. You don't need to do anything.</p>
           </div>
         </div>
+
+        <CostCard />
 
         <TargetCard />
 
