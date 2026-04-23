@@ -27,6 +27,8 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     INSERT INTO lila_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+    -- Reset legacy seed data
+    UPDATE lila_state SET total_earned = 0 WHERE id = 1 AND total_earned = 1247.50;
     -- Add assigned_bounty column if upgrading from earlier schema
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS assigned_bounty JSONB DEFAULT NULL;
 
