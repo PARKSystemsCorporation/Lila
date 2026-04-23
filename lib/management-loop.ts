@@ -368,13 +368,30 @@ export class ManagementLoop {
     )
     const approvedCount = Number(approved[0]?.n ?? 0)
 
+    // Count reports newly paid this window — that's a REAL win.
+    const { rows: paidWindow } = await this.db.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(payout), 0) AS total
+       FROM security_reports
+       WHERE paid_at IS NOT NULL
+         AND paid_at > COALESCE(
+           (SELECT last_check_at FROM management_state WHERE id=1),
+           NOW() - INTERVAL '1 hour'
+         )`
+    )
+    const paidN = Number(paidWindow[0]?.n ?? 0)
+    const paidTotal = parseFloat(paidWindow[0]?.total ?? '0')
+
     let event: string | null = null
-    if (delta >= BIG_WIN_THRESHOLD) {
-      event = `Earnings up $${delta.toFixed(2)} since last check. Acknowledge the team.`
+    if (paidN > 0) {
+      event = `${paidN} bounty payout${paidN > 1 ? 's' : ''} confirmed: +$${paidTotal.toFixed(2)}. Real money in. Acknowledge.`
+    } else if (delta >= BIG_WIN_THRESHOLD) {
+      // Trading P&L (position closed at profit) is the only other path that
+      // increments total_earned. Report it as trading, not "earnings".
+      event = `Trading P&L up $${delta.toFixed(2)} since last check (closed position).`
     } else if (errors >= ERROR_THRESHOLD) {
       event = `${errors} warnings in the last 30 minutes. Tasker may be stuck.`
     } else if (approvedCount > 0) {
-      event = `${approvedCount} approved report${approvedCount > 1 ? 's' : ''} ready for the operator to submit.`
+      event = `${approvedCount} approved report${approvedCount > 1 ? 's' : ''} ready for operator to submit. Still unpaid — not earnings yet.`
     } else if (delta === 0 && totalEarned > 0) {
       const { rows: [last] } = await this.db.query(
         `SELECT last_check_at FROM management_state WHERE id=1`
@@ -424,17 +441,28 @@ export class ManagementLoop {
       `SELECT COUNT(*) AS n FROM security_reports WHERE status='pending_review'`
     )
     const pendingCount = Number(reviewQueue[0]?.n ?? 0)
+    const { rows: submittedRows } = await this.db.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(reward), 0) AS max_pending
+       FROM security_reports WHERE status='submitted'`
+    )
+    const submittedCount = Number(submittedRows[0]?.n ?? 0)
+    const submittedMax = parseFloat(submittedRows[0]?.max_pending ?? '0')
+    const { rows: [lastPaid] } = await this.db.query(
+      `SELECT title, payout FROM security_reports
+       WHERE status='paid' ORDER BY paid_at DESC LIMIT 1`
+    )
     const { rows: recentLog } = await this.db.query(
       `SELECT message FROM lila_log ORDER BY id DESC LIMIT 5`
     )
 
     return [
-      `Earned: $${totalEarned.toFixed(2)}`,
-      last?.value ? `Last win: ${last.name} (+$${last.value})` : 'No wins yet.',
+      `Earned (confirmed paid + closed-trade P&L): $${totalEarned.toFixed(2)}`,
+      lastPaid ? `Last payout: ${lastPaid.title} +$${parseFloat(lastPaid.payout ?? '0').toFixed(2)}` : 'No confirmed payouts yet.',
+      submittedCount ? `Pending payouts: ${submittedCount} up to $${submittedMax.toFixed(2)} max (NOT yet earned).` : null,
       tasks.length ? `Tasks: ${tasks.slice(0, 3).join(' | ')}` : 'No open tasks.',
       openPos.length ? `Positions: ${openPos.map((p: { symbol: string }) => p.symbol).join(', ')}` : 'Flat.',
       approvedDrafts.length
-        ? `Approved reports waiting for operator: ${approvedDrafts.map((d: { title: string; reward: string }) => `${d.title} ($${d.reward})`).join(' | ')}`
+        ? `Approved reports waiting for operator submit: ${approvedDrafts.map((d: { title: string; reward: string }) => `${d.title} (max $${d.reward})`).join(' | ')}`
         : null,
       pendingCount ? `My review queue: ${pendingCount}` : null,
       `Recent: ${recentLog.map((l: { message: string }) => l.message.slice(0, 70)).join(' · ')}`,

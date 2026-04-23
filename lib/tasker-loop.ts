@@ -214,18 +214,20 @@ export class TaskerLoop {
     const engine = new BountyEngine()
     const result = await engine.tick(assigned, liveBounties, this.db)
 
-    if (result.action === 'submitted' && result.title && result.reward) {
+    if (result.action === 'submitted' && result.title) {
+      // DO NOT credit total_earned here. Acceptance by the platform API is
+      // not payment. BountyEngine.saveSubmission already recorded the row;
+      // operator confirms via /api/reports mark_paid and total_earned is
+      // updated there (see lib/llm.ts? actually in api/reports/route.ts).
       await this.db.query(
         `UPDATE lila_state
-           SET total_earned = total_earned + $1,
-               last_bounty  = $2,
-               active_tasks = (
+           SET active_tasks = (
                  SELECT COALESCE(jsonb_agg(t), '[]'::jsonb)
                  FROM jsonb_array_elements_text(active_tasks) t
-                 WHERE t <> $3
+                 WHERE t <> $1
                )
          WHERE id = 1`,
-        [result.reward, JSON.stringify({ name: result.title, value: result.reward, time: Date.now() }), result.title]
+        [result.title]
       )
       if (assigned?.title === result.title) {
         await this.db.query('UPDATE lila_state SET assigned_bounty = NULL WHERE id=1')

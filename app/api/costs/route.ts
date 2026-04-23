@@ -11,7 +11,9 @@ export async function GET() {
       today_tokens: 0,
       calls_today: 0,
       mtd: 0,
-      earnings_submitted_mtd: 0,
+      earnings_paid_mtd: 0,
+      pending_max: 0,
+      pending_count: 0,
       earnings_lifetime: 0,
       budget: cfg.DAILY_LLM_BUDGET_USD,
       byModule: [],
@@ -37,15 +39,18 @@ export async function GET() {
        WHERE created_at >= date_trunc('month', NOW() AT TIME ZONE 'UTC')`
     )
 
+    // Confirmed payouts this month (not max bounty values — actual $ paid).
     const { rows: [earnings] } = await db.query(
-      `SELECT COALESCE(SUM(reward), 0) AS total
+      `SELECT COALESCE(SUM(payout), 0) AS total
        FROM security_reports
-       WHERE status='submitted'
-         AND updated_at >= date_trunc('month', NOW() AT TIME ZONE 'UTC')`
+       WHERE paid_at >= date_trunc('month', NOW() AT TIME ZONE 'UTC')`
     )
-    // Plus submitted bounties logged as lila_state earnings delta since MTD —
-    // we don't have a per-submission log, so fall back to total_earned as a
-    // lifetime proxy and clearly label it.
+    // Pending = submitted but not yet paid. Upper bound on what might arrive.
+    const { rows: [pending] } = await db.query(
+      `SELECT COALESCE(SUM(reward), 0) AS total, COUNT(*) AS n
+       FROM security_reports
+       WHERE status='submitted'`
+    )
     const { rows: [lifetime] } = await db.query(
       'SELECT total_earned FROM lila_state WHERE id=1'
     )
@@ -66,7 +71,9 @@ export async function GET() {
       today_tokens: Number(today.tokens),
       calls_today: Number(today.calls),
       mtd: parseFloat(mtd.cost),
-      earnings_submitted_mtd: parseFloat(earnings.total),
+      earnings_paid_mtd: parseFloat(earnings.total),
+      pending_max: parseFloat(pending.total),
+      pending_count: Number(pending.n),
       earnings_lifetime: parseFloat(lifetime?.total_earned ?? '0'),
       budget: cfg.DAILY_LLM_BUDGET_USD,
       byModule: byModule.map(r => ({

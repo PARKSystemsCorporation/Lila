@@ -130,17 +130,25 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       platform       TEXT          NOT NULL,
       platform_label TEXT          NOT NULL,
       title          TEXT          NOT NULL,
-      reward         NUMERIC(12,2) NOT NULL DEFAULT 0,
+      reward         NUMERIC(12,2) NOT NULL DEFAULT 0,   -- max bounty per platform brief
       chain          TEXT,
       url            TEXT,
       content        TEXT          NOT NULL,
       confidence     NUMERIC(3,2)  NOT NULL DEFAULT 0,
       status         TEXT          NOT NULL DEFAULT 'pending_review',
+      kind           TEXT          NOT NULL DEFAULT 'security',  -- 'security' | 'code'
       review_notes   TEXT,
+      payout         NUMERIC(12,2),                        -- actual $ received (NULL until paid)
+      submitted_at   TIMESTAMPTZ,
+      paid_at        TIMESTAMPTZ,
       created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
       updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS review_notes TEXT;
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS kind         TEXT NOT NULL DEFAULT 'security';
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS payout       NUMERIC(12,2);
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS paid_at      TIMESTAMPTZ;
     UPDATE security_reports SET status='pending_review' WHERE status='draft';
 
     -- Research targets: Tasker pins one bounty codebase and burns cycles on it.

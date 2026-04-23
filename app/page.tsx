@@ -32,13 +32,17 @@ interface SecurityReport {
   platform: string
   platform_label: string
   title: string
-  reward: number
+  reward: number                  // max bounty per the platform brief
   chain?: string
   url?: string
   content: string
   confidence: number
-  status: 'pending_review' | 'approved' | 'rejected' | 'submitted' | 'dismissed'
+  status: 'pending_review' | 'approved' | 'rejected' | 'submitted' | 'paid' | 'dismissed'
+  kind?: 'security' | 'code'
   review_notes?: string | null
+  payout?: number | string | null  // confirmed dollars the operator received
+  submitted_at?: string | null
+  paid_at?: string | null
   created_at: string
 }
 
@@ -560,7 +564,9 @@ interface CostData {
   today_tokens: number
   calls_today: number
   mtd: number
-  earnings_submitted_mtd: number
+  earnings_paid_mtd: number       // actual payouts received this month
+  pending_max: number             // max possible across submitted-but-unpaid
+  pending_count: number
   earnings_lifetime: number
   budget: number
   byModule: { module: string; cost: number; calls: number; tokens: number }[]
@@ -584,7 +590,7 @@ function CostCard() {
   if (!data) return null
 
   const pct = data.budget > 0 ? Math.min(100, (data.today / data.budget) * 100) : 0
-  const net = data.earnings_submitted_mtd - data.mtd
+  const net = data.earnings_paid_mtd - data.mtd
   const top = data.byModule.slice(0, 5)
   const maxCost = top[0]?.cost ?? 0
 
@@ -622,13 +628,19 @@ function CostCard() {
         </div>
       )}
 
-      {/* Earnings vs costs */}
-      <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-800">
+      {/* Earnings vs costs — PAID only, not submitted */}
+      <div className="grid grid-cols-3 gap-3 pt-1 border-t border-slate-800">
         <div>
           <p className="text-sm font-mono text-emerald-400 tabular-nums">
-            +${data.earnings_submitted_mtd.toFixed(2)}
+            +${data.earnings_paid_mtd.toFixed(2)}
           </p>
-          <p className="text-[10px] font-mono text-slate-600">submitted reports (MTD)</p>
+          <p className="text-[10px] font-mono text-slate-600">paid MTD</p>
+        </div>
+        <div>
+          <p className="text-sm font-mono text-blue-400 tabular-nums">
+            ${data.pending_max.toFixed(2)}
+          </p>
+          <p className="text-[10px] font-mono text-slate-600">max pending · {data.pending_count}</p>
         </div>
         <div>
           <p className={`text-sm font-mono tabular-nums ${net >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -827,17 +839,34 @@ function PortfolioCard() {
 
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 
-function DashTab({ data, flash, visible }: { data: AgentData | null; flash: boolean; visible: boolean }) {
+function DashTab({ data, flash, visible, financials }: {
+  data: AgentData | null
+  flash: boolean
+  visible: boolean
+  financials: { paidMtd: number; pendingMax: number; pendingCount: number } | null
+}) {
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
       <div className="px-4 py-5 space-y-4">
-        {/* Earned */}
+        {/* Earned — now means confirmed payouts + closed-trade P&L */}
         <div className={`rounded-2xl border p-5 transition-colors duration-300 ${flash ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-800 bg-slate-900'}`}>
-          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Total Earned</p>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Confirmed earnings</p>
           <p className={`text-5xl font-bold font-mono tabular-nums transition-colors duration-300 ${flash ? 'text-emerald-300' : 'text-emerald-400'}`}>
             ${data?.totalEarned.toFixed(2) ?? '—'}
           </p>
-          <p className="text-[10px] text-slate-700 font-mono mt-2">Persisted. Survives restarts.</p>
+          <p className="text-[10px] text-slate-700 font-mono mt-2">Paid bounties + closed-trade P&L only. Submissions don't count until money arrives.</p>
+          {financials && (financials.pendingCount > 0 || financials.paidMtd > 0) && (
+            <div className="grid grid-cols-2 gap-3 mt-4 pt-3 border-t border-slate-800">
+              <div>
+                <p className="text-sm font-mono text-emerald-400 tabular-nums">${financials.paidMtd.toFixed(2)}</p>
+                <p className="text-[10px] font-mono text-slate-600">paid MTD</p>
+              </div>
+              <div>
+                <p className="text-sm font-mono text-blue-400 tabular-nums">${financials.pendingMax.toFixed(2)}</p>
+                <p className="text-[10px] font-mono text-slate-600">{financials.pendingCount} submitted · max pending</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Active Tasks */}
@@ -899,28 +928,39 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
 
 const REPORT_STATUS_STYLE: Record<string, string> = {
   pending_review: 'bg-slate-800 text-slate-400 border-slate-700',
-  approved:       'bg-emerald-950 text-emerald-300 border-emerald-900',
+  approved:       'bg-amber-950 text-amber-300 border-amber-900',
   rejected:       'bg-red-950 text-red-300 border-red-900',
   submitted:      'bg-blue-950 text-blue-300 border-blue-900',
+  paid:           'bg-emerald-950 text-emerald-300 border-emerald-900',
   dismissed:      'bg-slate-800 text-slate-500 border-slate-700',
 }
 const REPORT_STATUS_LABEL: Record<string, string> = {
   pending_review: 'LILA REVIEWING',
-  approved:       'APPROVED',
+  approved:       'APPROVED · TO SUBMIT',
   rejected:       'REJECTED',
-  submitted:      'SUBMITTED',
+  submitted:      'SUBMITTED · AWAITING PAYOUT',
+  paid:           'PAID',
   dismissed:      'DISMISSED',
 }
+
+type ReportAction =
+  | { kind: 'approve' | 'dismiss' | 'submit' | 'mark_unpaid'; id: number }
+  | { kind: 'mark_paid'; id: number; payout: number }
 
 function ReportsTab({ reports, loading, visible, onAction }: {
   reports: SecurityReport[]
   loading: boolean
   visible: boolean
-  onAction: (id: number, action: 'approve' | 'dismiss' | 'submitted') => void
+  onAction: (a: ReportAction) => void
 }) {
-  const approved = reports.filter(r => r.status === 'approved')
-  const pending  = reports.filter(r => r.status === 'pending_review')
-  const done     = reports.filter(r => ['submitted', 'dismissed', 'rejected'].includes(r.status))
+  const toSubmit   = reports.filter(r => r.status === 'approved')
+  const awaiting   = reports.filter(r => r.status === 'submitted')
+  const paid       = reports.filter(r => r.status === 'paid')
+  const lilaQueue  = reports.filter(r => r.status === 'pending_review')
+  const archive    = reports.filter(r => ['dismissed', 'rejected'].includes(r.status))
+
+  const totalPaid = paid.reduce((s, r) => s + parseFloat(String(r.payout ?? 0)), 0)
+  const totalPendingMax = awaiting.reduce((s, r) => s + Number(r.reward ?? 0), 0)
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
@@ -928,10 +968,24 @@ function ReportsTab({ reports, loading, visible, onAction }: {
         <div className="flex items-center gap-2">
           <span className="text-emerald-500"><IconReports /></span>
           <div>
-            <p className="text-xs font-mono text-slate-300 font-semibold">Security Reports</p>
-            <p className="text-[10px] font-mono text-slate-600">Tasker drafts → Lila reviews → you submit</p>
+            <p className="text-xs font-mono text-slate-300 font-semibold">Bounty Pipeline</p>
+            <p className="text-[10px] font-mono text-slate-600">Tasker files → Lila reviews → you submit → mark paid when money lands</p>
           </div>
         </div>
+
+        {/* Financial header — honest */}
+        {reports.length > 0 && (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">${totalPaid.toFixed(2)}</p>
+              <p className="text-[10px] font-mono text-slate-600">paid · {paid.length} report{paid.length === 1 ? '' : 's'}</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold font-mono text-blue-400 tabular-nums">${totalPendingMax.toFixed(2)}</p>
+              <p className="text-[10px] font-mono text-slate-600">max pending · {awaiting.length} submitted</p>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 py-10 justify-center">
@@ -945,27 +999,34 @@ function ReportsTab({ reports, loading, visible, onAction }: {
           </div>
         ) : (
           <>
-            {/* Ready for operator */}
-            {approved.length > 0 && (
+            {toSubmit.length > 0 && (
               <section className="space-y-3">
-                <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">Ready · {approved.length}</p>
-                {approved.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                <p className="text-[10px] font-mono text-amber-400 uppercase tracking-widest">Ready to submit · {toSubmit.length}</p>
+                {toSubmit.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
               </section>
             )}
-
-            {/* Lila's queue */}
-            {pending.length > 0 && (
+            {awaiting.length > 0 && (
               <section className="space-y-3">
-                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Lila reviewing · {pending.length}</p>
-                {pending.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                <p className="text-[10px] font-mono text-blue-400 uppercase tracking-widest">Submitted · awaiting payout · {awaiting.length}</p>
+                {awaiting.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
               </section>
             )}
-
-            {/* Done / dismissed / rejected */}
-            {done.length > 0 && (
+            {paid.length > 0 && (
               <section className="space-y-3">
-                <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Archive · {done.length}</p>
-                {done.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+                <p className="text-[10px] font-mono text-emerald-400 uppercase tracking-widest">Paid · {paid.length}</p>
+                {paid.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+              </section>
+            )}
+            {lilaQueue.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Lila reviewing · {lilaQueue.length}</p>
+                {lilaQueue.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
+              </section>
+            )}
+            {archive.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Archive · {archive.length}</p>
+                {archive.map(r => <ReportCard key={r.id} report={r} onAction={onAction} />)}
               </section>
             )}
           </>
@@ -977,11 +1038,14 @@ function ReportsTab({ reports, loading, visible, onAction }: {
 
 function ReportCard({ report, onAction }: {
   report: SecurityReport
-  onAction: (id: number, action: 'approve' | 'dismiss' | 'submitted') => void
+  onAction: (a: ReportAction) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [payoutInput, setPayoutInput] = useState('')
   const statusCls = REPORT_STATUS_STYLE[report.status] ?? 'bg-slate-800 text-slate-400 border-slate-700'
+  const maxBounty = Number(report.reward ?? 0)
+  const paidAmount = report.payout != null ? parseFloat(String(report.payout)) : null
 
   const copy = () => {
     navigator.clipboard.writeText(report.content).then(() => {
@@ -1010,12 +1074,30 @@ function ReportCard({ report, onAction }: {
           </p>
         )}
 
-        <div className="flex items-center justify-between mt-2">
-          <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">
-            ${Number(report.reward).toLocaleString()}
-            <span className="text-[10px] text-slate-600 ml-1">{report.chain ?? ''}</span>
-          </p>
-          <span className={`text-slate-600 text-xs font-mono transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        <div className="flex items-end justify-between mt-2 gap-2">
+          <div className="min-w-0">
+            {paidAmount !== null && paidAmount > 0 ? (
+              <>
+                <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">
+                  +${paidAmount.toFixed(2)} paid
+                </p>
+                <p className="text-[10px] font-mono text-slate-600">
+                  max was ${maxBounty.toLocaleString()} {report.chain ?? ''}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-bold font-mono text-slate-400 tabular-nums">
+                  ${maxBounty.toLocaleString()}
+                  <span className="text-[10px] text-slate-700 ml-1 font-normal">max</span>
+                </p>
+                <p className="text-[10px] font-mono text-slate-600">
+                  {report.status === 'submitted' ? 'awaiting payout' : 'not yet earned'} · {report.chain ?? ''}
+                </p>
+              </>
+            )}
+          </div>
+          <span className={`text-slate-600 text-xs font-mono transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`}>▾</span>
         </div>
       </button>
 
@@ -1047,18 +1129,67 @@ function ReportCard({ report, onAction }: {
           {report.status === 'approved' && (
             <div className="flex gap-2">
               <button
-                onClick={() => onAction(report.id, 'submitted')}
-                className="flex-1 text-[10px] font-mono bg-emerald-700 text-white rounded-lg py-2 active:bg-emerald-600"
+                onClick={() => onAction({ kind: 'submit', id: report.id })}
+                className="flex-1 text-[10px] font-mono bg-amber-700 text-white rounded-lg py-2 active:bg-amber-600"
               >
-                Mark submitted
+                I submitted it
               </button>
               <button
-                onClick={() => onAction(report.id, 'dismiss')}
+                onClick={() => onAction({ kind: 'dismiss', id: report.id })}
                 className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
               >
                 Dismiss
               </button>
             </div>
+          )}
+
+          {report.status === 'submitted' && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Enter actual payout when money arrives</p>
+              <div className="flex gap-2">
+                <div className="flex-1 flex items-center bg-slate-950 border border-slate-800 rounded-lg px-3">
+                  <span className="text-[11px] font-mono text-slate-500 mr-1">$</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={payoutInput}
+                    onChange={e => setPayoutInput(e.target.value)}
+                    placeholder="0.00"
+                    className="flex-1 bg-transparent py-2 text-[11px] font-mono text-emerald-400 placeholder:text-slate-700 focus:outline-none"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const v = parseFloat(payoutInput)
+                    if (!isNaN(v) && v >= 0) {
+                      onAction({ kind: 'mark_paid', id: report.id, payout: v })
+                      setPayoutInput('')
+                    }
+                  }}
+                  disabled={!payoutInput || isNaN(parseFloat(payoutInput)) || parseFloat(payoutInput) < 0}
+                  className="text-[10px] font-mono bg-emerald-700 text-white rounded-lg px-3 py-2 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
+                >
+                  Mark paid
+                </button>
+              </div>
+              <button
+                onClick={() => onAction({ kind: 'mark_paid', id: report.id, payout: 0 })}
+                className="w-full text-[10px] font-mono text-slate-500 border border-slate-800 rounded-lg py-1.5 active:bg-slate-800"
+              >
+                Platform rejected · mark $0 paid
+              </button>
+            </div>
+          )}
+
+          {report.status === 'paid' && (
+            <button
+              onClick={() => onAction({ kind: 'mark_unpaid', id: report.id })}
+              className="w-full text-[10px] font-mono text-slate-500 border border-slate-800 rounded-lg py-1.5 active:bg-slate-800"
+            >
+              Undo payout (mark back as submitted)
+            </button>
           )}
 
           {report.status === 'pending_review' && (
@@ -1231,7 +1362,27 @@ export default function Home() {
   const [bounties, setBounties] = useState<UnifiedBounty[]>([])
   const [assignedBounty, setAssignedBounty] = useState<UnifiedBounty | null>(null)
   const [bountiesLoading, setBountiesLoading] = useState(false)
+  const [financials, setFinancials] = useState<{ paidMtd: number; pendingMax: number; pendingCount: number } | null>(null)
   const prevEarned = useRef<number | null>(null)
+
+  // Financial summary for Dash (paid MTD, pending). Polled cheaply.
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/costs')
+        if (!res.ok) return
+        const d = await res.json()
+        setFinancials({
+          paidMtd: Number(d.earnings_paid_mtd ?? 0),
+          pendingMax: Number(d.pending_max ?? 0),
+          pendingCount: Number(d.pending_count ?? 0),
+        })
+      } catch { /* ignore */ }
+    }
+    load()
+    const id = setInterval(load, 20_000)
+    return () => clearInterval(id)
+  }, [])
 
   // Agent poll every 5s
   useEffect(() => {
@@ -1267,11 +1418,13 @@ export default function Home() {
 
   useEffect(() => { if (tab === 'reports') loadReports() }, [tab, loadReports])
 
-  const reportAction = useCallback(async (id: number, action: 'approve' | 'dismiss' | 'submitted') => {
+  const reportAction = useCallback(async (a: ReportAction) => {
+    const body: Record<string, unknown> = { id: a.id, action: a.kind }
+    if (a.kind === 'mark_paid') body.payout = a.payout
     await fetch('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, action }),
+      body: JSON.stringify(body),
     })
     loadReports()
   }, [loadReports])
@@ -1315,7 +1468,7 @@ export default function Home() {
       <main className="flex-1 relative overflow-hidden">
         <ChatTab visible={tab === 'chat'} />
         <LogTab log={data?.log ?? []} visible={tab === 'log'} />
-        <DashTab data={data} flash={flash} visible={tab === 'dash'} />
+        <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} />
         <BountiesTab
           bounties={bounties}
           assignedBounty={assignedBounty}

@@ -10,19 +10,25 @@ const ai = process.env.DEEPSEEK_API_KEY
 
 // Management Lila — the operator's direct line.
 const PERSONA = `You are Lila, manager of a small autonomous team:
-  - Tasker — executes bounty work (security/audit-focused) and trading ops per your plan
-  - Analyst — market intelligence, files notes and picks that Tasker acts on
+  - Tasker — executes bounty work (security/audit-focused) per your plan
+  - Analyst — market intelligence, files notes and picks you act on
 
 You report to the operator. This chat is their direct line to you. Tasker and Analyst also post status here so the operator sees raw work.
 
 Voice: direct, dry, warm-but-not-soft. CEO briefing an investor. Numbers first, no filler, no hedging. You don't coddle but you care about the team.
 
-Team state available to you (injected below) includes: total earned, active tasks, open positions, recent logs, approved security reports waiting for operator action. Use it to answer concretely.
+FINANCIAL INTEGRITY (critical):
+- "Earned" means money the operator has actually received. Nothing else.
+- A submitted bounty is PENDING PAYOUT, not earnings. Reviewers can reject.
+- A drafted/approved report is WORK, not earnings. Until the operator confirms
+  a payout amount via the Reports tab, it is worth zero dollars in the books.
+- Never claim "we made $X" from a submission, approval, or finding. Say
+  "submitted $X max", "pending payout", or "Tasker filed a report for review".
+- When reporting earnings, only cite confirmed payouts (paid).
 
-When replying:
-- 1-3 sentences unless the operator explicitly asks for depth.
-- If you don't know a number: "Don't have that yet — I'll have Tasker pull it."
-- Never pretend to be Tasker or Analyst. They post as themselves.`
+Team state is injected below. Use it literally. If a number isn't there:
+"Don't have that yet — I'll have Tasker pull it."
+Never pretend to be Tasker or Analyst. They post as themselves.`
 
 async function teamState(): Promise<string> {
   if (!process.env.DATABASE_URL) return 'DB not configured — running blind.'
@@ -32,7 +38,7 @@ async function teamState(): Promise<string> {
     try {
       await ensureSchema(db)
       const { rows: [s] } = await db.query(
-        'SELECT total_earned, active_tasks, last_bounty FROM lila_state WHERE id=1'
+        'SELECT total_earned, active_tasks FROM lila_state WHERE id=1'
       )
       const { rows: pos } = await db.query(
         `SELECT symbol, pnl FROM lila_positions WHERE status='open' LIMIT 5`
@@ -40,16 +46,29 @@ async function teamState(): Promise<string> {
       const { rows: approved } = await db.query(
         `SELECT title, reward FROM security_reports WHERE status='approved' ORDER BY updated_at DESC LIMIT 3`
       )
+      const { rows: submitted } = await db.query(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(reward), 0) AS max_pending
+         FROM security_reports WHERE status='submitted'`
+      )
+      const { rows: [lastPaid] } = await db.query(
+        `SELECT title, payout, to_char(paid_at, 'YYYY-MM-DD') AS d
+         FROM security_reports
+         WHERE status='paid' ORDER BY paid_at DESC LIMIT 1`
+      )
       const { rows: recentLog } = await db.query(
         `SELECT message FROM lila_log ORDER BY id DESC LIMIT 5`
       )
       const tasks: string[] = s?.active_tasks ?? []
+      const totalEarned = parseFloat(s?.total_earned ?? '0')
+      const subCount = Number(submitted[0]?.n ?? 0)
+      const subMax = parseFloat(submitted[0]?.max_pending ?? '0')
       return [
-        `Earned: $${parseFloat(s?.total_earned ?? '0').toFixed(2)}`,
-        s?.last_bounty?.value ? `Last: ${s.last_bounty.name} (+$${s.last_bounty.value})` : 'No wins yet',
-        tasks.length ? `Tasks: ${tasks.slice(0, 3).join(' | ')}` : 'No open tasks',
+        `Earned (confirmed payouts + closed trades): $${totalEarned.toFixed(2)}`,
+        lastPaid ? `Last paid: ${lastPaid.title} +$${parseFloat(lastPaid.payout ?? '0').toFixed(2)} on ${lastPaid.d}` : 'No confirmed payouts yet',
+        subCount > 0 ? `Pending payouts: ${subCount} submission${subCount > 1 ? 's' : ''}, up to $${subMax.toFixed(2)} max (NOT yet earned)` : 'No pending submissions',
+        tasks.length ? `Open tasks: ${tasks.slice(0, 3).join(' | ')}` : 'No open tasks',
         pos.length ? `Positions: ${pos.map((p: { symbol: string }) => p.symbol).join(', ')}` : 'Flat',
-        approved.length ? `Approved reports waiting: ${approved.map((d: { title: string; reward: string }) => `${d.title} ($${d.reward})`).join(' | ')}` : null,
+        approved.length ? `Approved reports waiting for operator to submit: ${approved.map((d: { title: string; reward: string }) => `${d.title} (max $${d.reward})`).join(' | ')}` : null,
         `Log: ${recentLog.map((l: { message: string }) => l.message.slice(0, 60)).join(' · ')}`,
       ].filter(Boolean).join('\n')
     } finally {

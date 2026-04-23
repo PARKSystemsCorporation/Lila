@@ -210,7 +210,40 @@ export class BountyEngine {
     return false
   }
 
-  // ── Save a draft report (Immunefi + any security finding) ─────────────
+  // ── Record any submission (code or security). Acceptance by a platform
+  // API is NOT payment — reviewers still decide. Everything lands here
+  // with status='submitted' (code) or 'pending_review' (security drafts);
+  // total_earned is only credited when the operator confirms payout.
+
+  async saveSubmission(
+    db: PoolClient,
+    bounty: UnifiedBounty,
+    content: string,
+    confidence: number,
+    kind: 'security' | 'code',
+    status: 'pending_review' | 'submitted',
+  ): Promise<number | null> {
+    try {
+      const { rows } = await db.query(
+        `INSERT INTO security_reports
+           (bounty_id, platform, platform_label, title, reward, chain, url,
+            content, confidence, status, kind, submitted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+                 CASE WHEN $10='submitted' THEN NOW() ELSE NULL END)
+         ON CONFLICT (bounty_id) DO UPDATE SET
+           content=$8, confidence=$9, status=$10, kind=$11,
+           submitted_at=CASE WHEN $10='submitted' THEN NOW() ELSE security_reports.submitted_at END,
+           review_notes=NULL, updated_at=NOW()
+         RETURNING id`,
+        [
+          bounty.id, bounty.platform, bounty.platformLabel, bounty.title,
+          bounty.reward, bounty.chain, bounty.url ?? null,
+          content, confidence, status, kind,
+        ]
+      )
+      return rows[0]?.id ?? null
+    } catch { return null }
+  }
 
   async saveDraftReport(
     db: PoolClient,
@@ -218,20 +251,7 @@ export class BountyEngine {
     content: string,
     confidence: number
   ): Promise<number | null> {
-    try {
-      const { rows } = await db.query(
-        `INSERT INTO security_reports
-           (bounty_id, platform, platform_label, title, reward, chain, url, content, confidence, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_review')
-         ON CONFLICT (bounty_id) DO UPDATE SET content=$8, confidence=$9, status='pending_review', review_notes=NULL, updated_at=NOW()
-         RETURNING id`,
-        [
-          bounty.id, bounty.platform, bounty.platformLabel, bounty.title,
-          bounty.reward, bounty.chain, bounty.url ?? null, content, confidence,
-        ]
-      )
-      return rows[0]?.id ?? null
-    } catch { return null }
+    return this.saveSubmission(db, bounty, content, confidence, 'security', 'pending_review')
   }
 
   // ── Main tick ──────────────────────────────────────────────────────────
@@ -299,11 +319,15 @@ export class BountyEngine {
       }
     }
 
-    // Writable + approved path: submit.
+    // Writable + approved path: submit. Acceptance ≠ payment — we record
+    // the submission and the operator marks paid when money arrives.
     const submitted = await this.claimAndSubmit(best, output.content).catch(() => false)
     const chain = best.chain === 'Solana' ? '(you cash out)' : `→ ${WALLET.slice(0, 10)}...`
 
     if (submitted) {
+      if (db) {
+        await this.saveSubmission(db, best, output.content, best.confidence, 'code', 'submitted')
+      }
       const manualNote = best.platform === 'bountycaster' ? ' Submit via Warpcast.' : ''
       return {
         action: 'submitted',
@@ -311,7 +335,7 @@ export class BountyEngine {
         title: best.title,
         reward: best.reward,
         platform: best.platformLabel,
-        logMessage: `Submitted: "${best.title}" on ${best.platformLabel}. $${best.reward} pending ${chain}.${manualNote}`,
+        logMessage: `Submitted: "${best.title}" on ${best.platformLabel}. Max $${best.reward} pending payout ${chain}.${manualNote}`,
         logType: 'success',
       }
     }
