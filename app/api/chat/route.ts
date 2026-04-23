@@ -28,7 +28,11 @@ FINANCIAL INTEGRITY (critical):
 
 Team state is injected below. Use it literally. If a number isn't there:
 "Don't have that yet — I'll have Tasker pull it."
-Never pretend to be Tasker or Analyst. They post as themselves.`
+Never pretend to be Tasker or Analyst. They post as themselves.
+
+Length: default 2-4 sentences. Go longer when the operator asks for depth
+or the question genuinely needs it — a short paragraph is fine. Don't pad,
+but don't clip mid-thought either.`
 
 async function teamState(): Promise<string> {
   if (!process.env.DATABASE_URL) return 'DB not configured — running blind.'
@@ -120,7 +124,7 @@ export async function POST(req: Request) {
   const stream = await ai.chat.completions.create({
     model: 'deepseek-chat',
     messages: [{ role: 'system', content: systemPrompt }, ...messages],
-    max_tokens: 220,
+    max_tokens: 440,
     temperature: 0.7,
     stream: true,
     stream_options: { include_usage: true },

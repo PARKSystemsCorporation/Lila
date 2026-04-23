@@ -3,6 +3,7 @@ import * as Alpaca from './platforms/alpaca'
 import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
+import * as Telegram from './channels/telegram'
 
 // ── Analyst watchlist ─────────────────────────────────────────────────────────
 // No biotech, no retail. Commodity ETFs + leveraged index + global macro only.
@@ -164,6 +165,7 @@ export class AnalystLoop {
   private async f0(cycle: number): Promise<string> {
     const { rows: [s] } = await this.db.query('SELECT notes_buffer FROM analyst_state WHERE id=1')
     let queued = 0
+    const queuedPicks: Array<{ symbol: string; entry: number; target: number; stop: number; confidence: number; reason: string }> = []
 
     if (s?.notes_buffer) {
       try {
@@ -174,12 +176,15 @@ export class AnalystLoop {
             const bar = bars[0]
             if (bar) {
               const entry = bar.price
+              const target = +(entry * 1.05).toFixed(4)
+              const stop = +(entry * 0.93).toFixed(4)
               await this.db.query(
                 `INSERT INTO analyst_picks (symbol, direction, entry_price, target_price, stop_loss, confidence, risk_level, reason, asset_class)
                  VALUES ($1,'long',$2,$3,$4,$5,'medium',$6,'etf/macro') ON CONFLICT DO NOTHING`,
-                [p.symbol, entry, +(entry * 1.05).toFixed(4), +(entry * 0.93).toFixed(4), p.confidence, p.reason]
+                [p.symbol, entry, target, stop, p.confidence, p.reason]
               )
               queued++
+              queuedPicks.push({ symbol: p.symbol, entry, target, stop, confidence: p.confidence, reason: p.reason })
             }
           }
         }
@@ -193,6 +198,16 @@ export class AnalystLoop {
 
     await this.chat('analyst', msg)
     await this.note(`analyst/picks/${today()}-c${cycle + 1}.md`, `# Picks Report\n${msg}`)
+
+    // Mirror new picks to Telegram (event-driven, fire-and-forget).
+    if (queuedPicks.length > 0 && Telegram.isConfigured()) {
+      const body = queuedPicks.map(p =>
+        `• *${p.symbol}* @ $${p.entry.toFixed(2)} — tgt $${p.target.toFixed(2)} · stop $${p.stop.toFixed(2)} · conf ${Math.round(p.confidence * 100)}%\n  ${p.reason}`
+      ).join('\n\n')
+      const tgText = `📊 *Analyst picks* (cycle ${cycle + 1})\n\n${body}\n\n_Tight stops. Long only._`
+      Telegram.sendMessage(tgText, { parseMode: 'Markdown' }).catch(() => {})
+    }
+
     return msg
   }
 

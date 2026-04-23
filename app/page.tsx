@@ -164,6 +164,53 @@ const ROLE_STYLE = {
   analyst: { avatar: 'A', color: 'text-blue-400',    ring: 'bg-blue-900 border-blue-700',       bubble: 'bg-blue-950/60 text-blue-200 border-blue-900/60' },
 } as const
 
+function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const isUser = m.role === 'user'
+  const role = m.role !== 'user' ? ROLE_STYLE[m.role] : null
+
+  const copy = () => {
+    if (!m.content) return
+    navigator.clipboard.writeText(m.content).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+      <div className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
+        {!isUser && role && (
+          <span className={`font-mono text-xs mr-2 mt-1.5 shrink-0 w-4 text-center ${role.color}`}>
+            {role.avatar}
+          </span>
+        )}
+        <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed border select-text ${
+          isUser
+            ? 'bg-slate-800 text-slate-100 rounded-tr-sm border-slate-700'
+            : `${role!.bubble} rounded-tl-sm`
+        }`}>
+          {m.content}
+          {streaming && m.role === 'lila' && (
+            <span className="inline-block w-1.5 h-3.5 bg-emerald-500 ml-0.5 animate-pulse align-middle" />
+          )}
+        </div>
+      </div>
+      {/* Copy affordance — always visible once the bubble has content */}
+      {m.content && !streaming && (
+        <button
+          onClick={copy}
+          className={`text-[9px] font-mono mt-1 px-1 tracking-wider uppercase transition-colors ${
+            copied ? 'text-emerald-400' : 'text-slate-700 active:text-slate-500'
+          } ${isUser ? 'mr-1' : 'ml-6'}`}
+        >
+          {copied ? '✓ copied' : 'copy'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ChatTab({ visible }: { visible: boolean }) {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'lila', content: 'Online. Direct line. What do you need.' },
@@ -280,29 +327,13 @@ function ChatTab({ visible }: { visible: boolean }) {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {messages.map((m, i) => {
-          const isUser = m.role === 'user'
-          const role = m.role !== 'user' ? ROLE_STYLE[m.role] : null
-          return (
-            <div key={m.id ?? i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-              {!isUser && role && (
-                <span className={`font-mono text-xs mr-2 mt-1.5 shrink-0 w-4 text-center ${role.color}`}>
-                  {role.avatar}
-                </span>
-              )}
-              <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed border ${
-                isUser
-                  ? 'bg-slate-800 text-slate-100 rounded-tr-sm border-slate-700'
-                  : `${role!.bubble} rounded-tl-sm`
-              }`}>
-                {m.content}
-                {streaming && i === messages.length - 1 && m.role === 'lila' && (
-                  <span className="inline-block w-1.5 h-3.5 bg-emerald-500 ml-0.5 animate-pulse align-middle" />
-                )}
-              </div>
-            </div>
-          )
-        })}
+        {messages.map((m, i) => (
+          <ChatMessage
+            key={m.id ?? i}
+            m={m}
+            streaming={streaming && i === messages.length - 1}
+          />
+        ))}
         <div ref={bottomRef} />
       </div>
 
