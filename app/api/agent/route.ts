@@ -53,18 +53,6 @@ async function maybeCreateSkill(db: PoolClient) {
   }
 }
 
-// ── Fallback idle logs (used when no real bounties + LLM unavailable) ─────────
-
-const IDLE_LOGS: [string, string][] = [
-  ['Scan cycle complete. Board clear.', 'info'],
-  ['Rate limit hit. Holding 30s.', 'warn'],
-  ['Dependency resolved. Pipeline unblocked.', 'info'],
-  ['Response header anomaly flagged. Logged.', 'warn'],
-  ['No qualifying bounties found. Rescanning.', 'info'],
-  ['Heartbeat confirmed. Still here.', 'info'],
-]
-
-function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)] }
 
 export async function GET() {
   if (!process.env.DATABASE_URL) {
@@ -135,23 +123,13 @@ export async function GET() {
           activeTasks = [...activeTasks, result.title].slice(-3)
         }
       } else if (result.action === 'idle' && liveBounties.length === 0) {
-        // No platforms configured — LLM idle log
-        if (ai) {
-          try {
-            const r = await ai.chat.completions.create({
-              model: 'deepseek-chat',
-              messages: [
-                { role: 'system', content: 'You are Lila. Autonomous bounty agent. Terse, past tense, no fluff. One sentence.' },
-                { role: 'user', content: 'Write one status log entry.' },
-              ],
-              max_tokens: 60, temperature: 0.85,
-            })
-            const content = r.choices[0]?.message?.content?.trim()
-            if (content) { logMessage = content; logType = 'info' }
-          } catch { ;[logMessage, logType] = pick(IDLE_LOGS) }
-        } else {
-          ;[logMessage, logType] = pick(IDLE_LOGS)
-        }
+        // No platforms configured — report the actual problem
+        const missing = ['SUPERTEAM_API_KEY', 'NEYNAR_API_KEY', 'CLAWTASKS_API_KEY']
+          .filter(k => !process.env[k])
+        logMessage = missing.length
+          ? `No platforms connected. Missing env vars: ${missing.join(', ')}.`
+          : 'All platforms returned empty. Check API keys or platform availability.'
+        logType = 'warn'
       }
     }
 
