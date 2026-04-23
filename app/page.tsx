@@ -374,6 +374,83 @@ function SetupCard() {
   )
 }
 
+// ─── Portfolio Card ───────────────────────────────────────────────────────────
+
+interface AlpacaPosition { symbol: string; qty: string; current_price: string; unrealized_pl: string; unrealized_plpc: string }
+interface AlpacaAccount { equity: string; buying_power: string; cash: string }
+
+function PortfolioCard() {
+  const [account, setAccount] = useState<AlpacaAccount | null>(null)
+  const [positions, setPositions] = useState<AlpacaPosition[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/analyst')
+      .then(r => r.json())
+      .then(d => { setAccount(d.account); setPositions(d.positions ?? []) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return null
+  if (!account) return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Portfolio</p>
+      <p className="text-xs font-mono text-slate-600">Add ALPACA_API_KEY to Railway to enable trading.</p>
+    </div>
+  )
+
+  const equity = parseFloat(account.equity)
+  const buyingPower = parseFloat(account.buying_power)
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Portfolio · Alpaca</p>
+        <span className="text-[9px] font-mono text-slate-600 border border-slate-800 rounded px-1.5 py-0.5">
+          {process.env.ALPACA_PAPER !== 'false' ? 'PAPER' : 'LIVE'}
+        </span>
+      </div>
+
+      <div className="flex gap-4">
+        <div>
+          <p className="text-2xl font-bold font-mono text-white tabular-nums">${equity.toFixed(2)}</p>
+          <p className="text-[10px] font-mono text-slate-600">equity</p>
+        </div>
+        <div className="border-l border-slate-800 pl-4">
+          <p className="text-sm font-mono text-slate-400 tabular-nums">${buyingPower.toFixed(2)}</p>
+          <p className="text-[10px] font-mono text-slate-600">buying power</p>
+        </div>
+      </div>
+
+      {positions.length > 0 && (
+        <div className="space-y-2 pt-1">
+          {positions.map(p => {
+            const pl = parseFloat(p.unrealized_pl)
+            const plPct = parseFloat(p.unrealized_plpc) * 100
+            const pos = pl >= 0
+            return (
+              <div key={p.symbol} className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-mono text-slate-200 font-semibold">{p.symbol}</span>
+                  <span className="text-[10px] font-mono text-slate-600 ml-2">{p.qty} sh @ ${parseFloat(p.current_price).toFixed(2)}</span>
+                </div>
+                <span className={`text-xs font-mono tabular-nums ${pos ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {pos ? '+' : ''}{pl.toFixed(2)} ({plPct.toFixed(1)}%)
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {positions.length === 0 && (
+        <p className="text-xs font-mono text-slate-600">No open positions. Analyst queuing picks.</p>
+      )}
+    </div>
+  )
+}
+
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 
 function DashTab({ data, flash, visible }: { data: AgentData | null; flash: boolean; visible: boolean }) {
@@ -431,6 +508,8 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
             <p className="text-[10px] text-slate-600 font-mono mt-0.5">Lila is running. You don't need to do anything.</p>
           </div>
         </div>
+
+        <PortfolioCard />
 
         <SetupCard />
       </div>

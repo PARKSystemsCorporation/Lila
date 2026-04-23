@@ -3,6 +3,8 @@ import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import { getPool, ensureSchema } from '@/lib/db'
 import { BountyEngine } from '@/lib/bounty-engine'
+import { TradingEngine } from '@/lib/trading-engine'
+import { Analyst } from '@/lib/analyst'
 
 const ai = process.env.DEEPSEEK_API_KEY
   ? new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })
@@ -12,7 +14,7 @@ const ai = process.env.DEEPSEEK_API_KEY
 
 const HERMES_PROMPT = `You are Lila's Hermes synthesis module. Your job is autonomous skill creation.
 
-Based on Lila's work in software bounty hunting, define one new skill she should acquire to become more effective.
+Based on Lila's work in software bounty hunting and trading, define one new skill she should acquire.
 
 Respond with ONLY valid JSON — no markdown fences, no explanation:
 {
@@ -22,7 +24,7 @@ Respond with ONLY valid JSON — no markdown fences, no explanation:
   "code": "async function name(target: string): Promise<Result> {\\n  // Step 1: ...\\n  // Step 2: ...\\n  // Step 3: ...\\n  return result\\n}"
 }
 
-Be specific and practical. Focus on: web scraping, API testing, static analysis, contract auditing, recon, fuzzing.`
+Be specific and practical. Focus on: web scraping, API testing, static analysis, contract auditing, recon, fuzzing, market analysis.`
 
 async function maybeCreateSkill(db: PoolClient) {
   if (!ai) return null
@@ -52,7 +54,6 @@ async function maybeCreateSkill(db: PoolClient) {
     return null
   }
 }
-
 
 export async function GET() {
   if (!process.env.DATABASE_URL) {
@@ -85,7 +86,11 @@ export async function GET() {
     let logMessage: string
     let logType: string
 
-    // Every 6th tick — Hermes synthesizes a new skill
+    // ── Trading engine runs every tick (position monitoring + execution) ───────
+    const trader = new TradingEngine()
+    const tradeResult = await trader.tick(db).catch(() => null)
+
+    // ── Every 6th tick: Hermes skill synthesis ────────────────────────────────
     if (tickCount % 6 === 0) {
       const skillName = await maybeCreateSkill(db)
       logMessage = skillName
@@ -93,8 +98,23 @@ export async function GET() {
         : 'Hermes synthesis attempted. No viable skill identified.'
       logType = skillName ? 'success' : 'info'
 
+    // ── Every 12th tick: Analyst runs fresh market analysis ───────────────────
+    } else if (tickCount % 12 === 0) {
+      try {
+        const analyst = new Analyst()
+        const picks = await analyst.analyze()
+        await analyst.savePicks(db, picks)
+        logMessage = picks.length
+          ? `Analyst report: ${picks.length} pick${picks.length > 1 ? 's' : ''} queued — ${picks.map(p => p.symbol).join(', ')}.`
+          : 'Analyst scanned markets. No qualifying setups today.'
+        logType = picks.length ? 'success' : 'info'
+      } catch {
+        logMessage = 'Analyst scan failed. Will retry next cycle.'
+        logType = 'warn'
+      }
+
+    // ── Other ticks: bounty work ───────────────────────────────────────────────
     } else {
-      // Fetch live bounties from all platforms
       let liveBounties: import('@/app/api/bounties/route').UnifiedBounty[] = []
       try {
         const baseUrl = process.env.NEXT_PUBLIC_URL ?? 'http://localhost:3000'
@@ -103,7 +123,7 @@ export async function GET() {
           const data = await res.json()
           liveBounties = data.bounties ?? []
         }
-      } catch { /* platforms may be slow — engine handles empty list gracefully */ }
+      } catch { /* platforms may be slow */ }
 
       const engine = new BountyEngine()
       const result = await engine.tick(assignedBounty, liveBounties)
@@ -114,7 +134,6 @@ export async function GET() {
         totalEarned = parseFloat((totalEarned + result.reward).toFixed(2))
         lastBounty = { name: result.title, value: result.reward, time: Date.now() }
         activeTasks = activeTasks.filter(t => t !== result.title)
-        // Clear operator assignment once submitted
         if (assignedBounty?.title === result.title) {
           await db.query('UPDATE lila_state SET assigned_bounty = NULL WHERE id = 1')
         }
@@ -123,17 +142,20 @@ export async function GET() {
           activeTasks = [...activeTasks, result.title].slice(-3)
         }
       } else if (result.action === 'idle' && liveBounties.length === 0) {
-        // No platforms configured — report the actual problem
         const missing = ['SUPERTEAM_API_KEY', 'NEYNAR_API_KEY', 'CLAWTASKS_API_KEY']
           .filter(k => !process.env[k])
         logMessage = missing.length
-          ? `No platforms connected. Missing env vars: ${missing.join(', ')}.`
+          ? `No bounty platforms connected. Missing: ${missing.join(', ')}.`
           : 'All platforms returned empty. Check API keys or platform availability.'
         logType = 'warn'
       }
     }
 
-    // Persist state
+    // If trading did something notable, log it instead (it's more actionable)
+    if (tradeResult && (tradeResult.action === 'bought' || tradeResult.action === 'sold')) {
+      await db.query('INSERT INTO lila_log (message, type) VALUES ($1, $2)', [tradeResult.logMessage, tradeResult.logType])
+    }
+
     await db.query(
       `UPDATE lila_state
        SET total_earned=$1, active_tasks=$2, last_bounty=$3, tick_count=$4, updated_at=NOW()

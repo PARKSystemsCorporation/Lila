@@ -48,6 +48,36 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       use_count   INTEGER     NOT NULL DEFAULT 0,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS analyst_picks (
+      id          SERIAL        PRIMARY KEY,
+      symbol      TEXT          NOT NULL,
+      direction   TEXT          NOT NULL,
+      entry_price NUMERIC(12,4),
+      target_price NUMERIC(12,4),
+      stop_loss   NUMERIC(12,4),
+      confidence  NUMERIC(3,2),
+      risk_level  TEXT,
+      reason      TEXT,
+      asset_class TEXT          NOT NULL DEFAULT 'stock',
+      status      TEXT          NOT NULL DEFAULT 'pending',
+      created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS lila_positions (
+      id           SERIAL        PRIMARY KEY,
+      symbol       TEXT          NOT NULL,
+      direction    TEXT          NOT NULL,
+      entry_price  NUMERIC(12,4),
+      target_price NUMERIC(12,4),
+      stop_loss    NUMERIC(12,4),
+      platform     TEXT          NOT NULL DEFAULT 'alpaca',
+      pick_id      INTEGER,
+      status       TEXT          NOT NULL DEFAULT 'open',
+      pnl          NUMERIC(12,2),
+      opened_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      closed_at    TIMESTAMPTZ
+    );
   `)
   schemaReady = true
 }
