@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 import * as Bluesky from './channels/bluesky'
+import * as Telegram from './channels/telegram'
 
 // ── Broadcast loop ───────────────────────────────────────────────────────────
 //
@@ -54,9 +55,12 @@ export class BroadcastLoop {
       : null
   }
 
-  // Channels that have credentials configured right now. Bluesky-only for now.
+  // Channels that have credentials configured right now.
   static enabledChannels(): string[] {
-    return Bluesky.isConfigured() ? ['bluesky'] : []
+    const out: string[] = []
+    if (Bluesky.isConfigured())  out.push('bluesky')
+    if (Telegram.isConfigured()) out.push('telegram')
+    return out
   }
 
   async run(): Promise<BroadcastResult | null> {
@@ -261,6 +265,12 @@ export class BroadcastLoop {
       if (ch === 'bluesky') {
         const r = await Bluesky.postSkeet(text)
         return { channel: 'bluesky', ok: r.ok, id: r.uri, error: r.error }
+      }
+      if (ch === 'telegram') {
+        // Broadcasts go out as plain text — no Markdown so stray * or _
+        // in a generated post can't trip Telegram's strict parser.
+        const r = await Telegram.sendMessage(`🤖 Lila update\n\n${text}`)
+        return { channel: 'telegram', ok: r.ok, error: r.error }
       }
       return { channel: ch, ok: false, error: 'unknown channel' }
     })

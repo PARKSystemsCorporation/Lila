@@ -199,13 +199,31 @@ export class AnalystLoop {
     await this.chat('analyst', msg)
     await this.note(`analyst/picks/${today()}-c${cycle + 1}.md`, `# Picks Report\n${msg}`)
 
-    // Mirror new picks to Telegram (event-driven, fire-and-forget).
+    // Mirror new picks to Telegram. Log success AND failure so the
+    // operator can see what happened from the Activity log on Dash.
     if (queuedPicks.length > 0 && Telegram.isConfigured()) {
       const body = queuedPicks.map(p =>
         `• *${p.symbol}* @ $${p.entry.toFixed(2)} — tgt $${p.target.toFixed(2)} · stop $${p.stop.toFixed(2)} · conf ${Math.round(p.confidence * 100)}%\n  ${p.reason}`
       ).join('\n\n')
       const tgText = `📊 *Analyst picks* (cycle ${cycle + 1})\n\n${body}\n\n_Tight stops. Long only._`
-      Telegram.sendMessage(tgText, { parseMode: 'Markdown' }).catch(() => {})
+      const res = await Telegram.sendMessage(tgText, { parseMode: 'Markdown' })
+      if (res.ok) {
+        await this.db.query(
+          'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
+          [`Telegram: pushed ${queuedPicks.length} pick${queuedPicks.length > 1 ? 's' : ''} to your chat.`, 'success']
+        )
+      } else {
+        await this.db.query(
+          'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
+          [`Telegram push failed: ${res.error ?? 'unknown'}`, 'warn']
+        )
+      }
+    } else if (queuedPicks.length > 0) {
+      // Picks were ready to share but Telegram isn't configured — noise-free info.
+      await this.db.query(
+        'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
+        [`Telegram not configured — ${queuedPicks.length} pick${queuedPicks.length > 1 ? 's' : ''} stayed internal.`, 'info']
+      )
     }
 
     return msg

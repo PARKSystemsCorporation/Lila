@@ -17,6 +17,9 @@ export function isConfigured(): boolean {
   return !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID)
 }
 
+// parseMode defaults to *none* now — callers opt-in to Markdown/HTML. This
+// means arbitrary text (e.g. broadcast posts) can't trip Telegram's strict
+// parser with stray underscores or asterisks.
 export async function sendMessage(
   text: string,
   opts: { parseMode?: 'Markdown' | 'MarkdownV2' | 'HTML' } = {},
@@ -25,22 +28,24 @@ export async function sendMessage(
   const chatId = process.env.TELEGRAM_CHAT_ID
   if (!token || !chatId) return { ok: false, error: 'Telegram not configured' }
 
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    // Cap at Telegram's 4096-char message limit, leave margin for safety.
+    text: text.slice(0, 4000),
+    disable_web_page_preview: true,
+  }
+  if (opts.parseMode) body.parse_mode = opts.parseMode
+
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        // Cap at Telegram's 4096-char message limit, leave margin for safety.
-        text: text.slice(0, 4000),
-        parse_mode: opts.parseMode ?? 'Markdown',
-        disable_web_page_preview: true,
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      return { ok: false, error: `Telegram ${res.status}: ${body.slice(0, 300)}` }
+      const respBody = await res.text().catch(() => '')
+      return { ok: false, error: `Telegram ${res.status}: ${respBody.slice(0, 300)}` }
     }
     return { ok: true }
   } catch (e) {
