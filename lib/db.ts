@@ -205,6 +205,34 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     INSERT INTO broadcast_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 
+    -- Watchlist: protocols we've spotted via DefiLlama / GitHub / etc that
+    -- Tasker might want to research later. Separate from research_targets
+    -- (active work) — this is the speculative pipeline.
+    CREATE TABLE IF NOT EXISTS watch_targets (
+      id             SERIAL        PRIMARY KEY,
+      source         TEXT          NOT NULL,            -- 'defillama' | 'github' | ...
+      external_id    TEXT          NOT NULL,            -- source-specific id/slug/repo
+      name           TEXT          NOT NULL,
+      url            TEXT,
+      chain          TEXT,
+      tvl            NUMERIC(16,2),                     -- defillama
+      stars          INTEGER,                           -- github
+      listed_at      TIMESTAMPTZ,                       -- source-reported creation/listing
+      scope          TEXT,                              -- short blurb for later triage
+      status         TEXT          NOT NULL DEFAULT 'watching',  -- watching|promoted|dismissed
+      first_seen_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      UNIQUE (source, external_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_watch_targets_status ON watch_targets(status, first_seen_at DESC);
+
+    CREATE TABLE IF NOT EXISTS discovery_state (
+      id          INTEGER     PRIMARY KEY DEFAULT 1,
+      last_run_at TIMESTAMPTZ,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO discovery_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
     -- Legacy tables removed: lila_skills (Hermes synth, unused).
     DROP TABLE IF EXISTS lila_skills;
   `)

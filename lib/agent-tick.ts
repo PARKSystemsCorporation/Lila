@@ -5,6 +5,7 @@ import { AnalystLoop } from './analyst-loop'
 import { TaskerLoop } from './tasker-loop'
 import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
+import { DiscoveryLoop } from './discovery-loop'
 import { cfg } from './config'
 
 // Single entry point for an autonomy tick. Called from /api/agent (UI poll)
@@ -99,7 +100,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(mgmtResult.logMessage)
     }
 
-    // 5. Broadcast loop — hourly public post, skips silent hours.
+    // 5. Discovery — daily scan for new protocols / Solidity repos.
+    const discovery = new DiscoveryLoop(db)
+    const discoveryResult = await discovery.run().catch((e: unknown) => ({
+      inserted: 0, skipped: 0, sources: [] as string[],
+      logMessage: `Discovery error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (discoveryResult) {
+      await logEvent(db, discoveryResult.logMessage, discoveryResult.logType)
+      logs.push(discoveryResult.logMessage)
+    }
+
+    // 6. Broadcast loop — hourly public post, skips silent hours.
     const broadcast = new BroadcastLoop(db)
     const broadcastResult = await broadcast.run().catch((e: unknown) => ({
       logMessage: `Broadcast error: ${String(e)}`,

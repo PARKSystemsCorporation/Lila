@@ -845,6 +845,272 @@ function BroadcastCard() {
   )
 }
 
+// ─── Discovery watchlist ─────────────────────────────────────────────────────
+
+interface WatchItem {
+  id: number
+  source: string
+  external_id: string
+  name: string
+  url: string | null
+  chain: string | null
+  tvl: number | null
+  stars: number | null
+  scope: string
+  status: 'watching' | 'promoted' | 'dismissed'
+  first_seen_ts: number | null
+  listed_ts: number | null
+}
+
+interface WatchlistData {
+  items: WatchItem[]
+  last_run_at: number | null
+  counts: { watching: number; promoted: number; dismissed: number }
+}
+
+const SOURCE_STYLE: Record<string, string> = {
+  defillama: 'bg-purple-950 text-purple-300 border-purple-900',
+  github:    'bg-slate-800 text-slate-300 border-slate-700',
+}
+
+function DiscoveryCard() {
+  const [data, setData] = useState<WatchlistData | null>(null)
+  const [busy, setBusy] = useState<'refresh' | number | null>(null)
+  const [expanded, setExpanded] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/watchlist')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 60_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  const refresh = async () => {
+    setBusy('refresh')
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'refresh' }),
+      })
+      await load()
+    } finally { setBusy(null) }
+  }
+
+  const act = async (id: number, action: 'promote' | 'dismiss' | 'restore') => {
+    setBusy(id)
+    try {
+      await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, action }),
+      })
+      await load()
+    } finally { setBusy(null) }
+  }
+
+  if (!data) return null
+
+  const watching = data.items.filter(i => i.status === 'watching')
+  const topN = expanded ? watching : watching.slice(0, 3)
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Watchlist · Discovery</p>
+        <button
+          onClick={refresh}
+          disabled={busy === 'refresh'}
+          className="text-[9px] font-mono text-slate-400 border border-slate-700 rounded px-2 py-0.5 active:bg-slate-800 disabled:opacity-40"
+        >
+          {busy === 'refresh' ? 'Scanning…' : 'Refresh'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <p className="text-lg font-bold font-mono text-emerald-400 tabular-nums">{data.counts.watching}</p>
+          <p className="text-[10px] font-mono text-slate-600">watching</p>
+        </div>
+        <div>
+          <p className="text-lg font-bold font-mono text-blue-400 tabular-nums">{data.counts.promoted}</p>
+          <p className="text-[10px] font-mono text-slate-600">promoted</p>
+        </div>
+        <div>
+          <p className="text-lg font-bold font-mono text-slate-500 tabular-nums">{data.counts.dismissed}</p>
+          <p className="text-[10px] font-mono text-slate-600">dismissed</p>
+        </div>
+      </div>
+
+      <p className="text-[10px] font-mono text-slate-600">
+        {data.last_run_at ? `Last scan: ${fmtAge(data.last_run_at)}` : 'No scan yet.'} · Sources: DefiLlama + GitHub
+      </p>
+
+      {watching.length === 0 ? (
+        <p className="text-xs font-mono text-slate-600 text-center py-3">Queue is empty. Hit Refresh to scan now.</p>
+      ) : (
+        <div className="space-y-2 pt-1 border-t border-slate-800">
+          {topN.map(item => (
+            <div key={item.id} className="py-1">
+              <div className="flex items-start gap-2">
+                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${SOURCE_STYLE[item.source] ?? 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                  {item.source.toUpperCase()}
+                </span>
+                <div className="min-w-0 flex-1">
+                  {item.url ? (
+                    <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-slate-200 break-all underline">
+                      {item.name}
+                    </a>
+                  ) : (
+                    <span className="text-[11px] font-mono text-slate-200 break-all">{item.name}</span>
+                  )}
+                  <p className="text-[9px] font-mono text-slate-600 mt-0.5">
+                    {item.tvl != null ? `TVL $${(item.tvl / 1_000_000).toFixed(2)}M` : item.stars != null ? `${item.stars}★` : ''}
+                    {item.chain ? ` · ${item.chain}` : ''}
+                    {item.listed_ts ? ` · created ${fmtAge(item.listed_ts)}` : ''}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-1.5 ml-12">
+                <button
+                  onClick={() => act(item.id, 'promote')}
+                  disabled={busy === item.id}
+                  className="text-[9px] font-mono text-emerald-400 border border-emerald-900 rounded px-2 py-0.5 active:bg-emerald-950 disabled:opacity-40"
+                >
+                  Promote
+                </button>
+                <button
+                  onClick={() => act(item.id, 'dismiss')}
+                  disabled={busy === item.id}
+                  className="text-[9px] font-mono text-slate-500 border border-slate-800 rounded px-2 py-0.5 active:bg-slate-800 disabled:opacity-40"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {watching.length > 3 && (
+            <button
+              onClick={() => setExpanded(e => !e)}
+              className="w-full text-[10px] font-mono text-slate-500 pt-2 active:text-slate-400"
+            >
+              {expanded ? `Show less ▴` : `Show all ${watching.length} ▾`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Retainer pitch ──────────────────────────────────────────────────────────
+
+function PitchCard() {
+  const [content, setContent] = useState<string | null>(null)
+  const [createdAt, setCreatedAt] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pitches/retainer')
+      if (res.ok) {
+        const d = await res.json()
+        setContent(d.content)
+        setCreatedAt(d.created_at ?? null)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const generate = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/pitches/retainer', { method: 'POST' })
+      const d = await res.json()
+      if (!res.ok) {
+        setError(d.error ?? 'Generation failed')
+      } else {
+        setContent(d.content)
+        setCreatedAt(d.created_at ?? Date.now())
+        setExpanded(true)
+      }
+    } finally { setBusy(false) }
+  }
+
+  const copy = () => {
+    if (!content) return
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Retainer Pitch</p>
+          <p className="text-[10px] font-mono text-slate-600 mt-0.5">
+            One-pager grounded in Lila's live numbers
+          </p>
+        </div>
+        <button
+          onClick={generate}
+          disabled={busy}
+          className="text-[10px] font-mono bg-emerald-700 text-white rounded-lg px-3 py-1.5 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
+        >
+          {busy ? 'Generating…' : content ? 'Regenerate' : 'Generate'}
+        </button>
+      </div>
+
+      {error && <p className="text-[11px] font-mono text-red-400">{error}</p>}
+
+      {content ? (
+        <>
+          <div className="flex items-center justify-between text-[10px] font-mono text-slate-600">
+            <span>{createdAt ? `Drafted ${fmtAge(createdAt)}` : 'Draft'}</span>
+            <div className="flex gap-2">
+              <button
+                onClick={copy}
+                className="text-[10px] font-mono text-slate-300 border border-slate-700 rounded px-2 py-0.5 active:bg-slate-800"
+              >
+                {copied ? '✓ copied' : 'Copy MD'}
+              </button>
+              <button
+                onClick={() => setExpanded(e => !e)}
+                className="text-[10px] font-mono text-slate-500 border border-slate-800 rounded px-2 py-0.5 active:bg-slate-800"
+              >
+                {expanded ? 'Hide' : 'View'}
+              </button>
+            </div>
+          </div>
+          {expanded && (
+            <pre className="text-[10px] font-mono text-slate-300 leading-relaxed bg-slate-950 rounded-xl p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-96 overflow-y-auto select-text">
+              {content}
+            </pre>
+          )}
+        </>
+      ) : (
+        <p className="text-xs font-mono text-slate-600">
+          No pitch drafted yet. Hit Generate to produce one from Lila's current performance numbers.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function TargetCard() {
   const [current, setCurrent] = useState<ResearchTarget | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1071,6 +1337,10 @@ function DashTab({ data, flash, visible, financials }: {
         <BroadcastCard />
 
         <TargetCard />
+
+        <DiscoveryCard />
+
+        <PitchCard />
 
         <PortfolioCard />
 
