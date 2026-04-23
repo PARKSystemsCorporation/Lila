@@ -7,10 +7,11 @@ const AUTH_HASH = createHash('sha256').update('58132133').digest('hex')
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Let auth endpoints, static assets, and PWA files through unconditionally
+  // Let auth endpoints, static assets, PWA files, and health check through
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/login') ||
+    pathname.startsWith('/api/health') ||
     pathname.startsWith('/_next') ||
     pathname === '/manifest.json' ||
     pathname === '/sw.js' ||
