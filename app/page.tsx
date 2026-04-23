@@ -267,6 +267,113 @@ function LogTab({ log, visible }: { log: LogEntry[]; visible: boolean }) {
   )
 }
 
+// ─── Setup Card ───────────────────────────────────────────────────────────────
+
+interface SetupResult {
+  success: boolean
+  apiKey?: string
+  claimCode?: string
+  claimUrl?: string
+  error?: string
+}
+
+function SetupCard() {
+  const [st, setSt] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [result, setResult] = useState<SetupResult | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const register = async () => {
+    setSt('loading')
+    try {
+      const res = await fetch('/api/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: 'superteam' }),
+      })
+      const data = await res.json()
+      const r = data.superteam as SetupResult
+      setResult(r)
+      setSt(r?.success ? 'done' : 'error')
+    } catch {
+      setSt('error')
+      setResult({ success: false, error: 'Network error.' })
+    }
+  }
+
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Platform Setup</p>
+          <p className="text-xs font-mono text-slate-400 mt-0.5">Register Lila on Superteam Earn</p>
+        </div>
+        {st === 'idle' && (
+          <button
+            onClick={register}
+            className="text-[10px] font-mono bg-emerald-700 text-white rounded-lg px-3 py-1.5 active:bg-emerald-600"
+          >
+            Register
+          </button>
+        )}
+        {st === 'loading' && (
+          <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
+        )}
+      </div>
+
+      {st === 'done' && result?.success && (
+        <div className="space-y-2.5 pt-1">
+          {/* API Key */}
+          <div className="bg-slate-950 rounded-xl p-3">
+            <p className="text-[9px] font-mono text-slate-600 uppercase tracking-widest mb-1">API Key — copy to Railway</p>
+            <div className="flex items-center gap-2">
+              <p className="text-[11px] font-mono text-emerald-400 break-all flex-1">{result.apiKey}</p>
+              <button
+                onClick={() => copy(result.apiKey!)}
+                className="shrink-0 text-[9px] font-mono text-slate-400 border border-slate-700 rounded px-2 py-1 active:bg-slate-800"
+              >
+                {copied ? '✓' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          {/* Claim URL */}
+          {result.claimUrl && (
+            <div className="bg-slate-950 rounded-xl p-3">
+              <p className="text-[9px] font-mono text-slate-600 uppercase tracking-widest mb-1">Claim link — tap to link payouts to you</p>
+              <a
+                href={result.claimUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] font-mono text-blue-400 break-all underline"
+              >
+                {result.claimUrl}
+              </a>
+            </div>
+          )}
+
+          <div className="bg-amber-950/40 border border-amber-900/50 rounded-xl p-3">
+            <p className="text-[10px] font-mono text-amber-400 leading-relaxed">
+              1. Copy the API key above → add <span className="text-white">SUPERTEAM_API_KEY</span> in Railway → redeploy{'\n'}
+              2. Tap the claim link to connect Lila&apos;s winnings to your Superteam account
+            </p>
+          </div>
+        </div>
+      )}
+
+      {st === 'error' && (
+        <p className="text-[11px] font-mono text-red-400">{result?.error ?? 'Registration failed. Try again.'}</p>
+      )}
+    </div>
+  )
+}
+
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 
 function DashTab({ data, flash, visible }: { data: AgentData | null; flash: boolean; visible: boolean }) {
@@ -324,6 +431,8 @@ function DashTab({ data, flash, visible }: { data: AgentData | null; flash: bool
             <p className="text-[10px] text-slate-600 font-mono mt-0.5">Lila is running. You don't need to do anything.</p>
           </div>
         </div>
+
+        <SetupCard />
       </div>
     </div>
   )
