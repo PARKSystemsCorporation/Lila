@@ -5,6 +5,7 @@ import { TradingEngine } from './trading-engine'
 import { AnalystLoop } from './analyst-loop'
 import { TaskerLoop } from './tasker-loop'
 import { ManagementLoop } from './management-loop'
+import { BroadcastLoop } from './broadcast-loop'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 
@@ -151,7 +152,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(mgmtResult.logMessage)
     }
 
-    // 5. Hermes cadence — every N-th server tick (cfg.HERMES_EVERY_N).
+    // 5. Broadcast loop — hourly public post, skips silent hours.
+    const broadcast = new BroadcastLoop(db)
+    const broadcastResult = await broadcast.run().catch((e: unknown) => ({
+      logMessage: `Broadcast error: ${String(e)}`,
+      logType: 'warn' as const,
+      posted: false,
+    }))
+    if (broadcastResult) {
+      await db.query('INSERT INTO lila_log (message, type) VALUES ($1,$2)', [broadcastResult.logMessage, broadcastResult.logType])
+      logs.push(broadcastResult.logMessage)
+    }
+
+    // 6. Hermes cadence — every N-th server tick (cfg.HERMES_EVERY_N).
     if (cfg.ENABLE_HERMES && cfg.HERMES_EVERY_N > 0 && tickCount % cfg.HERMES_EVERY_N === 0) {
       const name = await maybeHermes(db)
       const msg = name ? `Hermes: new skill — ${name}.` : 'Hermes synthesis attempted. No viable skill.'

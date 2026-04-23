@@ -195,6 +195,25 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_llm_usage_module ON llm_usage(module, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS broadcasts (
+      id          SERIAL      PRIMARY KEY,
+      channel     TEXT        NOT NULL,
+      content     TEXT        NOT NULL,
+      status      TEXT        NOT NULL,
+      external_id TEXT,
+      error       TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_broadcasts_created ON broadcasts(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS broadcast_state (
+      id                INTEGER     PRIMARY KEY DEFAULT 1,
+      last_broadcast_at TIMESTAMPTZ,
+      last_signal_key   TEXT,
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO broadcast_state (id) VALUES (1) ON CONFLICT DO NOTHING;
   `)
   schemaReady = true
 }

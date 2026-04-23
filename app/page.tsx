@@ -687,6 +687,143 @@ function CostCard() {
   )
 }
 
+interface BroadcastRow {
+  id: number
+  channel: string
+  content: string
+  status: 'posted' | 'failed' | string
+  external_id: string | null
+  error: string | null
+  ts: number
+}
+
+interface BroadcastData {
+  channels: string[]
+  interval_min: number
+  enabled: boolean
+  recent: BroadcastRow[]
+  last_broadcast_at: number | null
+}
+
+function fmtAgo(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000)
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+const CHANNEL_STYLE: Record<string, string> = {
+  x:         'bg-slate-800 text-slate-300 border-slate-700',
+  farcaster: 'bg-purple-950 text-purple-300 border-purple-900',
+  bluesky:   'bg-blue-950 text-blue-300 border-blue-900',
+}
+
+function BroadcastCard() {
+  const [data, setData] = useState<BroadcastData | null>(null)
+  const [posting, setPosting] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/broadcasts')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  const postNow = async () => {
+    setPosting(true)
+    try {
+      await fetch('/api/broadcasts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      await load()
+    } finally { setPosting(false) }
+  }
+
+  if (!data) return null
+
+  const nextDue = data.last_broadcast_at
+    ? new Date(data.last_broadcast_at + data.interval_min * 60_000)
+    : null
+  const overdue = nextDue ? nextDue.getTime() <= Date.now() : true
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Broadcasts</p>
+        <span className="text-[9px] font-mono text-slate-600 border border-slate-800 rounded px-1.5 py-0.5">
+          every {data.interval_min}m
+        </span>
+      </div>
+
+      {data.channels.length === 0 ? (
+        <p className="text-xs font-mono text-slate-600">
+          No channels configured. Set X_API_KEY+X_API_SECRET+X_ACCESS_TOKEN+X_ACCESS_TOKEN_SECRET, or NEYNAR_SIGNER_UUID, or BSKY_HANDLE+BSKY_APP_PASSWORD on Railway to enable.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            {data.channels.map(ch => (
+              <span
+                key={ch}
+                className={`text-[9px] font-mono px-2 py-0.5 rounded border ${CHANNEL_STYLE[ch] ?? 'bg-slate-800 text-slate-400 border-slate-700'}`}
+              >
+                {ch.toUpperCase()}
+              </span>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-mono text-slate-600">
+              {data.last_broadcast_at
+                ? `Last: ${fmtAgo(data.last_broadcast_at)}${nextDue ? ` · next ${overdue ? 'due' : `in ~${Math.max(1, Math.round((nextDue.getTime() - Date.now()) / 60_000))}m`}` : ''}`
+                : 'Never posted.'}
+            </p>
+            <button
+              onClick={postNow}
+              disabled={posting}
+              className="text-[9px] font-mono bg-emerald-700 text-white rounded px-2 py-1 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
+            >
+              {posting ? 'Posting…' : 'Post now'}
+            </button>
+          </div>
+
+          {data.recent.length > 0 && (
+            <div className="space-y-2 pt-1 border-t border-slate-800">
+              {data.recent.slice(0, 3).map(r => (
+                <div key={r.id} className="flex items-start gap-2">
+                  <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${CHANNEL_STYLE[r.channel] ?? 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                    {r.channel.toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-[11px] font-mono leading-snug ${r.status === 'posted' ? 'text-slate-300' : 'text-red-400'}`}>
+                      {r.content}
+                    </p>
+                    <p className="text-[9px] font-mono text-slate-600 mt-0.5">
+                      {r.status === 'posted' ? '✓' : '✗'} {fmtAgo(r.ts)}
+                      {r.status === 'failed' && r.error ? ` · ${r.error.slice(0, 60)}` : ''}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function TargetCard() {
   const [current, setCurrent] = useState<ResearchTarget | null>(null)
   const [loading, setLoading] = useState(true)
@@ -921,6 +1058,8 @@ function DashTab({ data, flash, visible, financials }: {
         </div>
 
         <CostCard />
+
+        <BroadcastCard />
 
         <TargetCard />
 
