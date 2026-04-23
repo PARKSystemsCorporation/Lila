@@ -1,13 +1,23 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { createHash } from 'crypto'
 
-const AUTH_HASH = createHash('sha256').update(process.env.AUTH_PASSWORD ?? '').digest('hex')
+const PASSWORD = process.env.AUTH_PASSWORD ?? ''
 
-export function middleware(request: NextRequest) {
+async function sha256Hex(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input)
+  const buf = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+let authHashPromise: Promise<string> | null = null
+function getAuthHash() {
+  if (!authHashPromise) authHashPromise = sha256Hex(PASSWORD)
+  return authHashPromise
+}
+
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Let auth endpoints, static assets, PWA files, and health check through
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/login') ||
@@ -21,7 +31,8 @@ export function middleware(request: NextRequest) {
   }
 
   const cookie = request.cookies.get('lila_auth')
-  if (cookie?.value === AUTH_HASH) {
+  const authHash = await getAuthHash()
+  if (cookie?.value === authHash) {
     return NextResponse.next()
   }
 
