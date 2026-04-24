@@ -239,6 +239,21 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
 
     -- Legacy tables removed: lila_skills (Hermes synth, unused).
     DROP TABLE IF EXISTS lila_skills;
+
+    -- Articles: technical deep-dives Lila drafts from completed research.
+    -- Operator publishes manually (Substack / mirror.xyz / personal site)
+    -- and pastes the URL back via the Articles card.
+    CREATE TABLE IF NOT EXISTS articles (
+      id           SERIAL      PRIMARY KEY,
+      title        TEXT        NOT NULL,
+      content      TEXT        NOT NULL,
+      source       TEXT,
+      status       TEXT        NOT NULL DEFAULT 'draft',
+      external_url TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status, created_at DESC);
   `)
   schemaReady = true
 }

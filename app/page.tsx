@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'reports' | 'notes'
+type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'reports' | 'notes' | 'terminal'
 
 interface UnifiedBounty {
   id: string
@@ -127,6 +127,14 @@ const IconNotes = () => (
   </svg>
 )
 
+const IconTerminal = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <polyline points="7 10 10 12 7 14" />
+    <line x1="13" y1="14" x2="17" y2="14" />
+  </svg>
+)
+
 const IconBounties = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
     <circle cx="12" cy="12" r="10" />
@@ -143,6 +151,7 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
   { key: 'reports',  label: 'Reports', Icon: IconReports  },
   { key: 'notes',    label: 'Notes',   Icon: IconNotes    },
+  { key: 'terminal', label: 'Term',    Icon: IconTerminal },
 ]
 
 function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
@@ -1531,6 +1540,219 @@ function DiscoveryCard() {
   )
 }
 
+// ─── Articles (technical deep-dives → Substack/mirror.xyz) ───────────────────
+
+interface ArticleRow {
+  id: number
+  title: string
+  content: string
+  source: string | null
+  status: 'draft' | 'published' | 'dismissed'
+  external_url: string | null
+  created_ts: number
+  updated_ts: number
+}
+
+interface ArticlesData {
+  articles: ArticleRow[]
+  counts: { draft: number; published: number; dismissed: number }
+}
+
+const ARTICLE_STATUS_STYLE: Record<string, string> = {
+  draft:     'bg-amber-950 text-amber-300 border-amber-900',
+  published: 'bg-emerald-950 text-emerald-300 border-emerald-900',
+  dismissed: 'bg-slate-800 text-slate-500 border-slate-700',
+}
+
+function ArticlesCard() {
+  const [data, setData] = useState<ArticlesData | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<number | null>(null)
+  const [openContent, setOpenContent] = useState<Record<number, string>>({})
+  const [urlInput, setUrlInput] = useState<Record<number, string>>({})
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/articles')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  const generate = async () => {
+    setBusy(true); setError(null)
+    try {
+      const res = await fetch('/api/articles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'generate' }),
+      })
+      const d = await res.json()
+      if (!res.ok) {
+        setError(d.error ?? 'Generation failed')
+      } else {
+        await load()
+        setOpenId(d.id)
+        setOpenContent(prev => ({ ...prev, [d.id]: d.content }))
+      }
+    } finally { setBusy(false) }
+  }
+
+  const markPublished = async (id: number) => {
+    const url = (urlInput[id] ?? '').trim() || undefined
+    await fetch('/api/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'mark_published', id, external_url: url }),
+    })
+    await load()
+  }
+
+  const dismiss = async (id: number) => {
+    if (!confirm('Dismiss this draft?')) return
+    await fetch('/api/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'dismiss', id }),
+    })
+    if (openId === id) setOpenId(null)
+    await load()
+  }
+
+  const copy = (text: string) => navigator.clipboard.writeText(text)
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Articles</p>
+          <p className="text-[10px] font-mono text-slate-600 mt-0.5">
+            Technical deep-dives from completed research · affiliate-linked
+          </p>
+        </div>
+        <button
+          onClick={generate}
+          disabled={busy}
+          className="text-[10px] font-mono bg-emerald-700 text-white rounded-lg px-3 py-1.5 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
+        >
+          {busy ? 'Drafting…' : 'Draft from latest research'}
+        </button>
+      </div>
+
+      {error && <p className="text-[11px] font-mono text-red-400">{error}</p>}
+
+      {data && (
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <p className="text-lg font-bold font-mono text-amber-300 tabular-nums">{data.counts.draft}</p>
+            <p className="text-[10px] font-mono text-slate-600">drafts</p>
+          </div>
+          <div>
+            <p className="text-lg font-bold font-mono text-emerald-300 tabular-nums">{data.counts.published}</p>
+            <p className="text-[10px] font-mono text-slate-600">published</p>
+          </div>
+          <div>
+            <p className="text-lg font-bold font-mono text-slate-500 tabular-nums">{data.counts.dismissed}</p>
+            <p className="text-[10px] font-mono text-slate-600">dismissed</p>
+          </div>
+        </div>
+      )}
+
+      {data && data.articles.length === 0 ? (
+        <p className="text-xs font-mono text-slate-600">
+          No drafts yet. Tap above to draft from a finished research target.
+        </p>
+      ) : (
+        <div className="space-y-2 pt-1 border-t border-slate-800">
+          {data?.articles.slice(0, 6).map(a => {
+            const open = openId === a.id
+            return (
+              <div key={a.id} className="space-y-1.5 py-1">
+                <button
+                  onClick={() => {
+                    setOpenId(open ? null : a.id)
+                    if (!open && !openContent[a.id]) setOpenContent(p => ({ ...p, [a.id]: a.content }))
+                  }}
+                  className="w-full text-left flex items-start gap-2"
+                >
+                  <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${ARTICLE_STATUS_STYLE[a.status] ?? 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                    {a.status.toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-mono text-slate-200 leading-snug truncate">{a.title}</p>
+                    <p className="text-[9px] font-mono text-slate-600 mt-0.5">
+                      {fmtAge(a.created_ts)}{a.source ? ` · ${a.source}` : ''}
+                      {a.external_url ? ' · live' : ''}
+                    </p>
+                  </div>
+                  <span className={`text-slate-600 text-xs font-mono shrink-0 mt-0.5 transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+
+                {open && (
+                  <div className="space-y-2 pl-2">
+                    <pre className="text-[10px] font-mono text-slate-300 leading-relaxed bg-slate-950 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-80 overflow-y-auto select-text">
+                      {openContent[a.id] ?? a.content}
+                    </pre>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => copy(openContent[a.id] ?? a.content)}
+                        className="flex-1 text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-1.5 active:bg-slate-800"
+                      >
+                        Copy MD
+                      </button>
+                      {a.status === 'draft' && (
+                        <button
+                          onClick={() => dismiss(a.id)}
+                          className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-1.5 active:opacity-70"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                    {a.status === 'draft' && (
+                      <div className="flex gap-2">
+                        <input
+                          type="url"
+                          value={urlInput[a.id] ?? ''}
+                          onChange={e => setUrlInput(p => ({ ...p, [a.id]: e.target.value }))}
+                          placeholder="https://your-substack-url (optional)"
+                          className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[10px] font-mono text-slate-300 placeholder:text-slate-700 focus:outline-none focus:border-emerald-800"
+                        />
+                        <button
+                          onClick={() => markPublished(a.id)}
+                          className="text-[10px] font-mono bg-emerald-700 text-white rounded-lg px-3 py-1.5 active:bg-emerald-600"
+                        >
+                          Mark live
+                        </button>
+                      </div>
+                    )}
+                    {a.external_url && (
+                      <a
+                        href={a.external_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-[10px] font-mono text-blue-400 break-all underline"
+                      >
+                        {a.external_url}
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Retainer pitch ──────────────────────────────────────────────────────────
 
 function PitchCard() {
@@ -1893,6 +2115,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
         </Section>
 
         <Section label="Assets" defaultOpen={false}>
+          <ArticlesCard />
           <PitchCard />
         </Section>
 
@@ -2613,6 +2836,242 @@ function NoteRow({ note, expanded, content, loadingContent, onToggle, onDelete }
   )
 }
 
+// ─── Terminal Tab ─────────────────────────────────────────────────────────────
+//
+// A persistent command-line shell for the operator. Each command hits an
+// existing API and renders structured output; nothing here calls an LLM
+// directly so it stays fast and free.
+
+interface TermLine {
+  id: number
+  prompt: string                  // what the operator typed
+  output: string                  // rendered result (mono)
+  status: 'ok' | 'warn' | 'err'
+}
+
+const TERM_HELP = [
+  'Commands:',
+  '  status              team snapshot (earnings, target, queue)',
+  '  kpis                docs / audit funnel + flag',
+  '  loops               last-fired timestamps for every loop',
+  '  post                fire a broadcast NOW (skips hourly gate)',
+  '  verify bluesky      auth check (post + auto-delete)',
+  '  verify telegram     auth check (sends a test message)',
+  '  pitch retainer      regenerate the retainer one-pager',
+  '  article             draft an article from latest finished research',
+  '  watchlist refresh   force discovery scan now',
+  '  say <text>          post <text> to Bluesky + Telegram immediately',
+  '  clear               wipe scrollback',
+  '  help                this list',
+].join('\n')
+
+function TerminalTab({ visible }: { visible: boolean }) {
+  const [history, setHistory] = useState<TermLine[]>([])
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const counterRef = useRef(0)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: 'smooth' })
+  }, [history])
+
+  const append = (prompt: string, output: string, status: TermLine['status'] = 'ok') => {
+    counterRef.current += 1
+    setHistory(h => [...h, { id: counterRef.current, prompt, output, status }])
+  }
+
+  const run = useCallback(async (raw: string) => {
+    const cmd = raw.trim()
+    if (!cmd) return
+    setBusy(true)
+    try {
+      const lower = cmd.toLowerCase()
+      const args = cmd.split(/\s+/)
+
+      if (lower === 'help' || lower === '?') {
+        append(cmd, TERM_HELP)
+      } else if (lower === 'clear' || lower === 'cls') {
+        setHistory([])
+      } else if (lower === 'status') {
+        const [agentRes, researchRes] = await Promise.all([
+          fetch('/api/agent'), fetch('/api/research'),
+        ])
+        const a = agentRes.ok ? await agentRes.json() : null
+        const r = researchRes.ok ? await researchRes.json() : null
+        const out = [
+          `earned (paid + closed P&L): $${(a?.totalEarned ?? 0).toFixed(2)}`,
+          `bounty mode: ${a?.bountyMode ?? '—'}`,
+          `tasks: ${(a?.activeTasks ?? []).length} active`,
+          r?.current
+            ? `research: "${r.current.title}" · cycle ${r.current.cycles} · phase ${r.current.phase}`
+            : 'research: no target pinned',
+        ].join('\n')
+        append(cmd, out)
+      } else if (lower === 'kpis') {
+        const res = await fetch('/api/kpis')
+        const d = res.ok ? await res.json() : null
+        if (!d) { append(cmd, 'kpis: no data', 'warn'); return }
+        const fmt = (label: string, k: typeof d.docs) =>
+          `${label.padEnd(8)} attempts ${k.attempts}  paid ${k.paid}  paid$ $${k.paid_total.toFixed(2)}  pending$ $${k.max_pending.toFixed(2)}  flag ${k.flag}`
+        append(cmd, [fmt('docs', d.docs), fmt('audit', d.security), fmt('code', d.code)].join('\n'))
+      } else if (lower === 'loops') {
+        const res = await fetch('/api/loops')
+        const d = res.ok ? await res.json() : null
+        if (!d?.loops) { append(cmd, 'loops: no data', 'warn'); return }
+        const now = d.now ?? Date.now()
+        const out = d.loops.map((l: LoopRow) => {
+          if (!l.last_at) return `  ${l.label.padEnd(20)} never`
+          const ago = Math.floor((now - l.last_at) / 1000)
+          return `  ${l.label.padEnd(20)} ${ago}s ago`
+        }).join('\n')
+        append(cmd, out)
+      } else if (lower === 'post') {
+        const res = await fetch('/api/broadcasts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        })
+        const d = await res.json().catch(() => ({}))
+        append(cmd, d.logMessage ?? `broadcast ${res.status}`, d.posted ? 'ok' : 'warn')
+      } else if (lower.startsWith('say ')) {
+        const text = cmd.slice(4).trim()
+        if (!text) { append(cmd, 'say: text required', 'warn'); return }
+        const res = await fetch('/api/broadcasts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ override: text }),
+        })
+        const d = await res.json().catch(() => ({}))
+        append(cmd, d.logMessage ?? `say ${res.status}`, d.posted ? 'ok' : 'warn')
+      } else if (lower === 'verify bluesky' || lower === 'verify bsky') {
+        const res = await fetch('/api/bluesky/test', { method: 'POST' })
+        const d = await res.json().catch(() => ({}))
+        append(cmd,
+          d.ok ? (d.error ? `OK: ${d.error}` : 'OK · post + auto-delete succeeded')
+               : `FAIL: ${d.error ?? res.status}`,
+          d.ok ? 'ok' : 'err'
+        )
+      } else if (lower === 'verify telegram' || lower === 'verify tg') {
+        const res = await fetch('/api/telegram/test', { method: 'POST' })
+        const d = await res.json().catch(() => ({}))
+        append(cmd,
+          d.ok ? 'OK · check Telegram'
+               : `FAIL: ${d.error ?? res.status}`,
+          d.ok ? 'ok' : 'err'
+        )
+      } else if (lower === 'pitch retainer') {
+        const res = await fetch('/api/pitches/retainer', { method: 'POST' })
+        const d = await res.json().catch(() => ({}))
+        append(cmd, res.ok ? 'OK · pitch refreshed (open Dash → Assets to read)' : `FAIL: ${d.error ?? res.status}`, res.ok ? 'ok' : 'err')
+      } else if (lower === 'article') {
+        const res = await fetch('/api/articles', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'generate' }),
+        })
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok) { append(cmd, `FAIL: ${d.error ?? res.status}`, 'err'); return }
+        append(cmd, `OK · drafted "${d.title}" (id ${d.id}). Open Dash → Assets → Articles.`)
+      } else if (lower === 'watchlist refresh' || lower === 'discover') {
+        const res = await fetch('/api/watchlist', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'refresh' }),
+        })
+        const d = await res.json().catch(() => ({}))
+        append(cmd, res.ok ? `OK · +${d.inserted ?? 0} new, ${d.skipped ?? 0} skipped` : `FAIL: ${res.status}`, res.ok ? 'ok' : 'err')
+      } else if (args[0]?.toLowerCase() === 'target' && args[1]) {
+        // Unhide for future: assigning a research target by id is non-trivial
+        // since we'd need a bounty payload. Tell the operator to use Board.
+        append(cmd, 'target: assign via Board tab (tap a bounty → Assign to Lila).', 'warn')
+      } else if (lower === 'unpin') {
+        const res = await fetch('/api/bounties', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bounty: null }),
+        })
+        append(cmd, res.ok ? 'OK · assignment cleared' : `FAIL: ${res.status}`, res.ok ? 'ok' : 'err')
+      } else {
+        append(cmd, `unknown command: ${cmd}\nType 'help' for a list.`, 'warn')
+      }
+    } catch (e) {
+      append(cmd, `error: ${String(e)}`, 'err')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  const submit = () => {
+    const t = input
+    setInput('')
+    run(t)
+  }
+
+  // Quick-tap chips for common commands (mobile is a pain to type in)
+  const QUICK = ['status', 'kpis', 'loops', 'post', 'article', 'verify bluesky', 'verify telegram', 'help']
+
+  return (
+    <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
+      {/* Header */}
+      <div className="shrink-0 px-4 pt-3 pb-2 border-b border-slate-800/60">
+        <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">▓ Terminal</p>
+        <p className="text-[9px] font-mono text-slate-600">type 'help' or tap a chip · clear with 'clear'</p>
+      </div>
+
+      {/* Scrollback */}
+      <div ref={scrollerRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3 font-mono text-[11px]">
+        {history.length === 0 ? (
+          <pre className="text-slate-600 text-[10px] leading-relaxed whitespace-pre-wrap select-text">{TERM_HELP}</pre>
+        ) : history.map(line => (
+          <div key={line.id} className="space-y-0.5">
+            <p className="text-emerald-500">
+              <span className="text-slate-700">{'>'}</span> {line.prompt}
+            </p>
+            <pre className={`whitespace-pre-wrap break-words leading-snug select-text ${
+              line.status === 'err'  ? 'text-red-400'  :
+              line.status === 'warn' ? 'text-amber-400' :
+              'text-slate-300'
+            }`}>{line.output}</pre>
+          </div>
+        ))}
+      </div>
+
+      {/* Quick chips */}
+      <div className="shrink-0 px-4 pb-2 flex gap-1.5 flex-wrap">
+        {QUICK.map(c => (
+          <button
+            key={c}
+            disabled={busy}
+            onClick={() => run(c)}
+            className="text-[9px] font-mono px-2 py-1 rounded border border-slate-800 text-slate-500 active:bg-slate-800 disabled:opacity-40"
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      {/* Input */}
+      <div className="shrink-0 px-4 py-3 border-t border-slate-800 bg-slate-950 flex items-center gap-2">
+        <span className="text-emerald-500 font-mono">{'>'}</span>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') submit() }}
+          placeholder="command..."
+          disabled={busy}
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="flex-1 bg-transparent border-0 text-sm text-slate-100 font-mono placeholder:text-slate-700 focus:outline-none disabled:opacity-40"
+        />
+        <button
+          onClick={submit}
+          disabled={!input.trim() || busy}
+          className="text-[10px] font-mono text-emerald-400 border border-emerald-900 rounded px-2 py-1 active:bg-emerald-950 disabled:opacity-40"
+        >
+          run
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
 
 function ReportsTab({ reports, loading, visible, onAction, onNavigate }: {
@@ -3184,6 +3643,7 @@ export default function Home() {
           onNavigate={navigate}
         />
         <NotesTab visible={tab === 'notes'} filter={notesFilter} onFilterChange={setNotesFilter} />
+        <TerminalTab visible={tab === 'terminal'} />
       </main>
 
       <BottomNav tab={tab} onTab={setTab} />
