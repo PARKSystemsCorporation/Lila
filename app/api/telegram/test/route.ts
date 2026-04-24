@@ -29,8 +29,11 @@ export async function POST() {
   }
 
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19)
-  const text = `🧪 *Lila · Telegram test*\nOperator triggered at ${stamp} UTC.\nIf you see this, the bot + chat_id are wired correctly.`
-  const result = await Telegram.sendMessage(text, { parseMode: 'Markdown' })
+  // Plain text, no parse_mode. Any stray underscore / asterisk would
+  // otherwise trip Telegram's strict entity parser (e.g. "chat_id" as
+  // italic with no closing delimiter → 400).
+  const text = `Lila · Telegram test\nOperator triggered at ${stamp} UTC.\nIf you see this, the bot + chat_id are wired correctly.`
+  const result = await Telegram.sendMessage(text)
 
   // Best-effort log so the operator can see results even from the Log panel.
   if (process.env.DATABASE_URL) {

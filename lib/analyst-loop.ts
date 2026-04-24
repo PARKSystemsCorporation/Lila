@@ -202,11 +202,13 @@ export class AnalystLoop {
     // Mirror new picks to Telegram. Log success AND failure so the
     // operator can see what happened from the Activity log on Dash.
     if (queuedPicks.length > 0 && Telegram.isConfigured()) {
+      // Plain text only — reason strings from the LLM might contain
+      // underscores or asterisks that would break Markdown parsing.
       const body = queuedPicks.map(p =>
-        `• *${p.symbol}* @ $${p.entry.toFixed(2)} — tgt $${p.target.toFixed(2)} · stop $${p.stop.toFixed(2)} · conf ${Math.round(p.confidence * 100)}%\n  ${p.reason}`
+        `• ${p.symbol}  @ $${p.entry.toFixed(2)}  →  tgt $${p.target.toFixed(2)}  ·  stop $${p.stop.toFixed(2)}  ·  conf ${Math.round(p.confidence * 100)}%\n  ${p.reason}`
       ).join('\n\n')
-      const tgText = `📊 *Analyst picks* (cycle ${cycle + 1})\n\n${body}\n\n_Tight stops. Long only._`
-      const res = await Telegram.sendMessage(tgText, { parseMode: 'Markdown' })
+      const tgText = `📊 Analyst picks — cycle ${cycle + 1}\n\n${body}\n\nTight stops. Long only.`
+      const res = await Telegram.sendMessage(tgText)
       if (res.ok) {
         await this.db.query(
           'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
