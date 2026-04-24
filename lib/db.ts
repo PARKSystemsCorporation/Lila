@@ -106,15 +106,17 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     INSERT INTO lila_loop_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 
     CREATE TABLE IF NOT EXISTS management_state (
-      id             INTEGER       PRIMARY KEY DEFAULT 1,
-      last_check_at  TIMESTAMPTZ,
-      last_trade_at  TIMESTAMPTZ,
-      last_earned    NUMERIC(12,2) NOT NULL DEFAULT 0,
-      last_error_cnt INTEGER       NOT NULL DEFAULT 0,
-      updated_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+      id                INTEGER       PRIMARY KEY DEFAULT 1,
+      last_check_at     TIMESTAMPTZ,
+      last_trade_at     TIMESTAMPTZ,
+      last_retention_at TIMESTAMPTZ,
+      last_earned       NUMERIC(12,2) NOT NULL DEFAULT 0,
+      last_error_cnt    INTEGER       NOT NULL DEFAULT 0,
+      updated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     INSERT INTO management_state (id) VALUES (1) ON CONFLICT DO NOTHING;
-    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_trade_at TIMESTAMPTZ;
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_trade_at     TIMESTAMPTZ;
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_retention_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS security_reports (
       id             SERIAL        PRIMARY KEY,

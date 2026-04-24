@@ -67,7 +67,6 @@ export async function postSkeet(text: string): Promise<{ ok: boolean; uri?: stri
     })
     if (!res.ok) {
       const err = await res.text().catch(() => '')
-      // 401 probably means the cached JWT expired; invalidate so next try re-auths.
       if (res.status === 401) cache = null
       return { ok: false, error: `Bluesky ${res.status}: ${err.slice(0, 300)}` }
     }
@@ -76,4 +75,56 @@ export async function postSkeet(text: string): Promise<{ ok: boolean; uri?: stri
   } catch (e) {
     return { ok: false, error: `Bluesky network: ${String(e)}` }
   }
+}
+
+// Delete a post we created. URI looks like:
+//   at://did:plc:abc/app.bsky.feed.post/3kldl1f2g3h
+// rkey is the last path segment.
+export async function deleteSkeet(uri: string): Promise<{ ok: boolean; error?: string }> {
+  const s = await getSession()
+  if (!s) return { ok: false, error: 'Bluesky credentials missing or auth failed' }
+  const host = process.env.BSKY_PDS ?? PDS_DEFAULT
+  const rkey = uri.split('/').pop()
+  if (!rkey) return { ok: false, error: 'Bad URI' }
+
+  try {
+    const res = await fetch(`${host}/xrpc/com.atproto.repo.deleteRecord`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${s.jwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        repo: s.did,
+        collection: 'app.bsky.feed.post',
+        rkey,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) {
+      const err = await res.text().catch(() => '')
+      if (res.status === 401) cache = null
+      return { ok: false, error: `Bluesky delete ${res.status}: ${err.slice(0, 300)}` }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: `Bluesky network: ${String(e)}` }
+  }
+}
+
+// Post + auto-delete, so we can verify auth without leaving a stray test
+// skeet on the operator's public timeline.
+export async function verifyAuth(): Promise<{ ok: boolean; error?: string }> {
+  const posted = await postSkeet(`Lila connectivity check · ${new Date().toISOString().slice(0, 19)}Z · auto-deletes.`)
+  if (!posted.ok) return { ok: false, error: posted.error }
+  if (!posted.uri) return { ok: true }
+  // Best-effort cleanup; we still return ok even if delete hiccups.
+  const del = await deleteSkeet(posted.uri)
+  if (!del.ok) {
+    return {
+      ok: true,
+      error: `Posted but couldn't auto-delete: ${del.error}. Remove it from Bluesky manually.`,
+    }
+  }
+  return { ok: true }
 }

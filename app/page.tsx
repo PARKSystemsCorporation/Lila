@@ -460,6 +460,104 @@ function ChatTab({ visible }: { visible: boolean }) {
 const LOG_COLOR = { info: 'text-slate-400', success: 'text-emerald-400', warn: 'text-amber-400' }
 const LOG_PREFIX = { info: '›', success: '✓', warn: '⚠' }
 
+// ─── Loop health card ─────────────────────────────────────────────────────────
+
+interface LoopRow {
+  key: string
+  label: string
+  last_at: number | null
+  interval_sec: number
+  next_at: number | null
+}
+
+function LoopsCard() {
+  const [loops, setLoops] = useState<LoopRow[] | null>(null)
+  const [now, setNow] = useState(Date.now())
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/loops')
+      if (res.ok) {
+        const d = await res.json()
+        setLoops(d.loops ?? [])
+        setNow(Number(d.now ?? Date.now()))
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 15_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  // Local tick so countdowns update visually between polls.
+  useEffect(() => {
+    const id = setInterval(() => setNow(n => n + 1000), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!loops) return null
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Loop health</p>
+      <div className="space-y-2">
+        {loops.map(l => {
+          if (!l.last_at) {
+            return (
+              <div key={l.key} className="flex items-baseline justify-between text-[11px] font-mono">
+                <span className="text-slate-300">{l.label}</span>
+                <span className="text-slate-600">never</span>
+              </div>
+            )
+          }
+          const sinceMs = now - l.last_at
+          const untilMs = (l.next_at ?? l.last_at) - now
+          const intervalMs = l.interval_sec * 1000
+          // "Overdue" = we're more than 2x the interval past expected next.
+          const overdue = -untilMs > intervalMs
+
+          const dot =
+            overdue ? 'bg-red-500'
+              : untilMs < 0 ? 'bg-amber-500'
+              : 'bg-emerald-500'
+
+          return (
+            <div key={l.key} className="flex items-baseline justify-between gap-2 text-[11px] font-mono">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+                <span className="text-slate-300 truncate">{l.label}</span>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-slate-500">{fmtSince(sinceMs)} ago</span>
+                <span className="text-slate-700 mx-1">·</span>
+                <span className={overdue ? 'text-red-400' : untilMs < 0 ? 'text-amber-400' : 'text-slate-500'}>
+                  {untilMs <= 0 ? 'due' : `in ${fmtUntil(untilMs)}`}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function fmtSince(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h`
+  return `${Math.floor(h / 24)}d`
+}
+
+function fmtUntil(ms: number): string {
+  return fmtSince(ms)
+}
+
 // Recent activity — shown as a collapsible card on Dash (replaces the
 // old Log tab). Defaults collapsed to keep Dash short.
 function ActivityLog({ log }: { log: LogEntry[] }) {
@@ -937,6 +1035,97 @@ function TelegramCard() {
       {status?.configured && !result && (
         <p className="text-[10px] font-mono text-slate-600 leading-relaxed">
           Analyst fires picks on F0 cycles; Broadcast mirrors hourly status. Tap test if you&apos;ve just added the keys.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ─── Bluesky card — test auth without leaving a public skeet ──────────────────
+
+interface BlueskyStatus {
+  configured: boolean
+  missing: string[]
+}
+
+function BlueskyCard() {
+  const [status, setStatus] = useState<BlueskyStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/bluesky/test')
+      if (res.ok) setStatus(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const runTest = async () => {
+    setBusy(true)
+    setResult(null)
+    try {
+      const res = await fetch('/api/bluesky/test', { method: 'POST' })
+      const d = await res.json().catch(() => ({}))
+      if (res.ok && d.ok) {
+        setResult({
+          ok: true,
+          msg: d.error
+            ? d.error
+            : 'Auth verified. Test skeet posted and auto-deleted.',
+        })
+      } else {
+        setResult({ ok: false, msg: d.error ?? `HTTP ${res.status}` })
+      }
+    } catch (e) {
+      setResult({ ok: false, msg: String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Bluesky</p>
+          <p className="text-[10px] font-mono text-slate-600 mt-0.5">
+            Public hourly broadcasts
+          </p>
+        </div>
+        <span className={`text-[9px] font-mono px-2 py-0.5 rounded border ${
+          status?.configured
+            ? 'bg-emerald-950 text-emerald-400 border-emerald-900'
+            : 'bg-slate-800 text-slate-500 border-slate-700'
+        }`}>
+          {status?.configured ? 'CONNECTED' : 'NOT SET'}
+        </span>
+      </div>
+
+      {status && !status.configured && status.missing.length > 0 && (
+        <p className="text-[10px] font-mono text-slate-600 leading-relaxed">
+          Set on Railway: {status.missing.join(' + ')}. App password is created in the Bluesky app → Settings → Privacy and security → App Passwords. Not your main login password.
+        </p>
+      )}
+
+      <button
+        onClick={runTest}
+        disabled={busy || !status?.configured}
+        className="w-full text-[10px] font-mono bg-emerald-700 text-white rounded-lg py-2 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
+      >
+        {busy ? 'Verifying…' : 'Verify auth (post + auto-delete)'}
+      </button>
+
+      {result && (
+        <p className={`text-[10px] font-mono leading-relaxed ${result.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+          {result.ok ? '✓ ' : '✗ '}{result.msg}
+        </p>
+      )}
+
+      {status?.configured && !result && (
+        <p className="text-[10px] font-mono text-slate-600 leading-relaxed">
+          Test posts a throwaway skeet then deletes it. If it fails here, the hourly broadcast will fail too.
         </p>
       )}
     </div>
@@ -1554,6 +1743,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
 
         <Section label="Ops">
           <BroadcastCard />
+          <BlueskyCard />
           <TelegramCard />
           <TargetCard onNavigate={onNavigate} />
           <DiscoveryCard />
@@ -1564,6 +1754,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
         </Section>
 
         <Section label="Activity" defaultOpen={false}>
+          <LoopsCard />
           <ActivityLog log={data?.log ?? []} />
         </Section>
 

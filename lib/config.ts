@@ -45,4 +45,9 @@ export const cfg = Object.freeze({
   // ── Switches ─────────────────────────────────────────────────────────────
   ENABLE_AUTONOMY_TICKER: bool('ENABLE_AUTONOMY_TICKER', true),
   ENABLE_BROADCAST:       bool('ENABLE_BROADCAST', true),
+  // Daily DELETE of stale log / token-usage / chat / broadcast / hypothesis
+  // rows so Postgres doesn't grow forever. Financial tables (security_reports,
+  // lila_positions, analyst_picks, watch_targets, research_targets) are never
+  // touched.
+  ENABLE_RETENTION:       bool('ENABLE_RETENTION', true),
 })

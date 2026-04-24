@@ -6,6 +6,7 @@ import { TaskerLoop } from './tasker-loop'
 import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
+import { runRetention } from './retention'
 import { cfg } from './config'
 
 // Single entry point for an autonomy tick. Called from /api/agent (UI poll)
@@ -122,6 +123,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (broadcastResult) {
       await logEvent(db, broadcastResult.logMessage, broadcastResult.logType)
       logs.push(broadcastResult.logMessage)
+    }
+
+    // 7. Retention — once per 24h, trims stale log/usage/chat/broadcast rows.
+    const retentionResult = await runRetention(db).catch((e: unknown) => ({
+      ran: true,
+      deleted: {},
+      logMessage: `Retention error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (retentionResult) {
+      await logEvent(db, retentionResult.logMessage, retentionResult.logType)
+      logs.push(retentionResult.logMessage)
     }
 
     return { ran: true, logs }
