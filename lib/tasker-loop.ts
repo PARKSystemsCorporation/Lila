@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
-import { BountyEngine, pickSecurityCandidates } from './bounty-engine'
+import { BountyEngine, pickSecurityCandidates, pickDocsCandidates } from './bounty-engine'
 import { fetchAllBounties, type UnifiedBounty } from './bounties-fetch'
 import { ResearchEngine } from './research-engine'
 import { llmCall, LLMBudgetExceeded } from './llm'
@@ -129,40 +129,114 @@ export class TaskerLoop {
     let liveBounties: UnifiedBounty[] = []
     try { liveBounties = await fetchAllBounties() } catch { /* platforms slow */ }
 
-    // ── Security: target-pinned deep research (persistent memory) ────────────
-    // This is where big-money findings come from — weeks on one codebase.
-
-    const research = new ResearchEngine(this.db)
-    const securityCandidates = pickSecurityCandidates(liveBounties)
-
-    // Operator assignment trumps auto-selection: pin whatever they assigned.
-    const { rows: [lilaState] } = await this.db.query(
-      'SELECT assigned_bounty FROM lila_state WHERE id=1'
+    // ── Alternation: docs (even turn) ⇄ security (odd turn) ─────────────────
+    // Per operator plan: cycle A docs, cycle B security, cycle C docs, …
+    // The turn only advances when a cycle "completes" — a docs draft is
+    // filed or a security target hits found/exhausted. Security work that
+    // spans many Tasker ticks stays on the same turn until terminal.
+    const { rows: [ls] } = await this.db.query(
+      'SELECT assigned_bounty, bounty_turn FROM lila_state WHERE id=1'
     )
-    const assigned: UnifiedBounty | null = lilaState?.assigned_bounty ?? null
+    const assigned: UnifiedBounty | null = ls?.assigned_bounty ?? null
+    const turn: number = ls?.bounty_turn ?? 0
+    const docsTurn = turn % 2 === 0   // even turns = docs
 
-    // If operator assigned a security bounty, pin it.
+    const securityCandidates = pickSecurityCandidates(liveBounties)
+    const docsCandidates     = pickDocsCandidates(liveBounties)
+
     const assignedIsSecurity = assigned && securityCandidates.some(b => b.id === assigned.id)
-    const candidates = assignedIsSecurity ? [assigned!, ...securityCandidates] : securityCandidates
+    const assignedIsDocs     = assigned && docsCandidates.some(b => b.id === assigned.id)
+
+    // Operator assignment always wins — run whichever mode fits the assigned
+    // bounty regardless of the turn counter.
+    if (assignedIsDocs) {
+      return this.runDocsCycle(liveBounties, assigned)
+    }
+    if (assignedIsSecurity) {
+      return this.runSecurityCycle(liveBounties, assigned, securityCandidates)
+    }
+
+    // ── Docs turn ────────────────────────────────────────────────────────────
+    if (docsTurn) {
+      if (docsCandidates.length > 0) {
+        return this.runDocsCycle(liveBounties, null)
+      }
+      // No docs bounty visible — fall through to security rather than idle.
+      // We still count this as "docs consumed" so next turn goes security
+      // naturally. But don't advance the turn on empty fallthrough, or we'd
+      // skip docs two-in-a-row.
+    }
+
+    // ── Security turn (or docs fallthrough) ─────────────────────────────────
+    return this.runSecurityCycle(liveBounties, assigned, securityCandidates)
+  }
+
+  // Full docs cycle: pick highest-scoring docs bounty, generate draft, hand
+  // to Lila for review. Advances bounty_turn on success so the next tick
+  // flips to security.
+  private async runDocsCycle(
+    liveBounties: UnifiedBounty[],
+    assigned: UnifiedBounty | null,
+  ): Promise<{ logMessage: string; logType: LogType }> {
+    const engine = new BountyEngine()
+    // Filter to docs-only so the scorer doesn't pick a security/code bounty
+    // for this turn.
+    const docsIds = new Set(pickDocsCandidates(liveBounties).map(b => b.id))
+    const docsOnly = liveBounties.filter(b => docsIds.has(b.id))
+    const result = await engine.tick(
+      assigned && docsIds.has(assigned.id) ? assigned : null,
+      docsOnly,
+      this.db,
+      'docs',
+    )
+
+    if (result.action === 'drafted') {
+      await this.mergeTasks([`Review docs draft: ${result.title}`])
+      await this.advanceTurn()
+      return {
+        logMessage: `Docs cycle complete: ${result.logMessage} Next turn → security.`,
+        logType: result.logType,
+      }
+    }
+
+    // Docs scored but nothing above threshold, or no docs to work. Stay on
+    // the docs turn and let security fallthrough handle this tick.
+    if (result.action === 'idle') {
+      return {
+        logMessage: `Docs turn: ${result.logMessage}`,
+        logType: 'info',
+      }
+    }
+
+    return { logMessage: result.logMessage, logType: result.logType }
+  }
+
+  private async runSecurityCycle(
+    liveBounties: UnifiedBounty[],
+    assigned: UnifiedBounty | null,
+    securityCandidates: UnifiedBounty[],
+  ): Promise<{ logMessage: string; logType: LogType }> {
+    const research = new ResearchEngine(this.db)
+    const candidates = assigned && securityCandidates.some(b => b.id === assigned.id)
+      ? [assigned, ...securityCandidates]
+      : securityCandidates
 
     const target = await research.pinOrGetCurrent(candidates)
 
-    // Tiered cadence: don't burn a research cycle on every Tasker tick. Cycles
-    // on the same target are expensive (prompt includes accumulated notes); a
-    // 3-minute default gate lets cheap code-work bounties run in between.
+    // Research cycle gate: cheap code-work bounties get worked while the
+    // pinned target is cooling down between research cycles.
     if (target) {
       const last = await this.lastResearchAt(target.id)
       const tooRecent = last && (Date.now() - last.getTime()) / 1000 < cfg.RESEARCH_CYCLE_SEC
       if (tooRecent) {
-        // Fall through to code-work path with security bounties filtered out —
-        // the research target is already claimed, and we'll hit it next window.
         const securityIds = new Set(securityCandidates.map(b => b.id))
         const codeOnly = liveBounties.filter(b => !securityIds.has(b.id))
         const engine = new BountyEngine()
         const result = await engine.tick(
           assigned && !securityIds.has(assigned.id) ? assigned : null,
           codeOnly,
-          this.db
+          this.db,
+          'code',
         )
         return {
           logMessage: `Researching "${target.title}" (next cycle ${this.untilNext(last)}). Meanwhile: ${result.logMessage}`,
@@ -175,7 +249,6 @@ export class TaskerLoop {
       const cycle = await research.runCycle(target)
 
       if (cycle.action === 'finding' && cycle.reportContent) {
-        // File the finding as a security report; Lila reviews before operator.
         await this.db.query(
           `INSERT INTO security_reports
              (bounty_id, platform, platform_label, title, reward, chain, url,
@@ -190,15 +263,17 @@ export class TaskerLoop {
           ]
         )
         await this.mergeTasks([`Draft filed (Lila reviewing): ${target.title}`])
+        await this.advanceTurn()
         return {
-          logMessage: `Finding on "${target.title}" after ${target.cycles + 1} cycle${target.cycles ? 's' : ''}. Report filed for Lila's review.`,
+          logMessage: `Finding on "${target.title}" after ${target.cycles + 1} cycle${target.cycles ? 's' : ''}. Report filed. Next turn → docs.`,
           logType: 'success',
         }
       }
 
       if (cycle.action === 'exhausted') {
+        await this.advanceTurn()
         return {
-          logMessage: `"${target.title}" exhausted after ${target.cycles + 1} cycles. Rotating.`,
+          logMessage: `"${target.title}" exhausted after ${target.cycles + 1} cycles. Rotating. Next turn → docs.`,
           logType: 'warn',
         }
       }
@@ -209,10 +284,10 @@ export class TaskerLoop {
       }
     }
 
-    // ── Code work: one-shot (unchanged) ──────────────────────────────────────
-    // Only runs if there are no security targets to work.
+    // No pinned target and no security candidates. Run the one-shot code
+    // bounty path.
     const engine = new BountyEngine()
-    const result = await engine.tick(assigned, liveBounties, this.db)
+    const result = await engine.tick(assigned, liveBounties, this.db, 'code')
 
     if (result.action === 'submitted' && result.title) {
       // DO NOT credit total_earned here. Acceptance by the platform API is
@@ -319,5 +394,11 @@ export class TaskerLoop {
     const current: string[] = s?.active_tasks ?? []
     const merged = Array.from(new Set([...current, ...incoming])).slice(-8)
     await this.db.query('UPDATE lila_state SET active_tasks=$1 WHERE id=1', [JSON.stringify(merged)])
+  }
+
+  private async advanceTurn(): Promise<void> {
+    await this.db.query(
+      'UPDATE lila_state SET bounty_turn = bounty_turn + 1 WHERE id=1'
+    )
   }
 }

@@ -39,7 +39,7 @@ interface SecurityReport {
   content: string
   confidence: number
   status: 'pending_review' | 'approved' | 'rejected' | 'submitted' | 'paid' | 'dismissed'
-  kind?: 'security' | 'code'
+  kind?: 'security' | 'code' | 'docs'
   review_notes?: string | null
   payout?: number | string | null  // confirmed dollars the operator received
   submitted_at?: string | null
@@ -57,6 +57,7 @@ interface LogEntry {
 interface AgentData {
   totalEarned: number
   activeTasks: string[]
+  bountyMode?: 'docs' | 'security'
   log: LogEntry[]
 }
 
@@ -1703,13 +1704,24 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
           )}
         </div>
 
-        {/* Active Tasks */}
+        {/* Active Tasks + current bounty mode */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Active Tasks</p>
-            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${(data?.activeTasks.length ?? 0) > 0 ? 'bg-emerald-950 text-emerald-400 border-emerald-900' : 'bg-slate-800 text-slate-600 border-slate-700'}`}>
-              {data?.activeTasks.length ?? 0} running
-            </span>
+            <div className="flex items-center gap-2">
+              {data?.bountyMode && (
+                <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full border ${
+                  data.bountyMode === 'docs'
+                    ? 'bg-purple-950 text-purple-300 border-purple-900'
+                    : 'bg-emerald-950 text-emerald-400 border-emerald-900'
+                }`}>
+                  {data.bountyMode === 'docs' ? 'DOCS TURN' : 'AUDIT TURN'}
+                </span>
+              )}
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${(data?.activeTasks.length ?? 0) > 0 ? 'bg-emerald-950 text-emerald-400 border-emerald-900' : 'bg-slate-800 text-slate-600 border-slate-700'}`}>
+                {data?.activeTasks.length ?? 0} running
+              </span>
+            </div>
           </div>
           {!data?.activeTasks.length ? (
             <p className="text-sm text-slate-600 font-mono">Queue empty. Scanning.</p>
@@ -2583,10 +2595,19 @@ function ReportCard({ report, onAction, onNavigate }: {
   return (
     <div className="border border-slate-800 rounded-2xl bg-slate-900 overflow-hidden">
       <button className="w-full p-4 text-left" onClick={() => setExpanded(e => !e)}>
-        <div className="flex items-start gap-2 mb-2">
+        <div className="flex items-start gap-2 mb-2 flex-wrap">
           <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${statusCls}`}>
             {REPORT_STATUS_LABEL[report.status] ?? report.status.toUpperCase()}
           </span>
+          {report.kind && report.kind !== 'security' && (
+            <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${
+              report.kind === 'docs'
+                ? 'bg-purple-950 text-purple-300 border-purple-900'
+                : 'bg-slate-800 text-slate-400 border-slate-700'
+            }`}>
+              {report.kind.toUpperCase()}
+            </span>
+          )}
           <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 bg-slate-800 text-slate-400 border-slate-700">
             {report.platform_label.toUpperCase()}
           </span>

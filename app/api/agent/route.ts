@@ -24,10 +24,13 @@ export async function GET() {
     await ensureSchema(db)
 
     const { rows: [s] } = await db.query(
-      'SELECT total_earned, active_tasks FROM lila_state WHERE id=1'
+      'SELECT total_earned, active_tasks, bounty_turn FROM lila_state WHERE id=1'
     )
     const totalEarned = parseFloat(s?.total_earned ?? '0')
     const activeTasks: string[] = s?.active_tasks ?? []
+    // Even turn → docs next; odd → security next. Used by the UI to show
+    // the alternation indicator.
+    const bountyMode = (s?.bounty_turn ?? 0) % 2 === 0 ? 'docs' : 'security'
 
     const { rows: logRows } = await db.query(
       `SELECT id, message, type, (EXTRACT(EPOCH FROM created_at)*1000)::bigint AS timestamp
@@ -37,6 +40,7 @@ export async function GET() {
     return NextResponse.json({
       totalEarned,
       activeTasks,
+      bountyMode,
       log: logRows.map(r => ({
         id: Number(r.id),
         message: r.message,

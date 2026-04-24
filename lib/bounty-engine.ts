@@ -30,6 +30,19 @@ export function pickSecurityCandidates(bounties: UnifiedBounty[]): UnifiedBounty
     .sort((a, b) => b.reward - a.reward)
 }
 
+// Documentation / technical-writing candidates. Low-friction payouts while
+// Tasker alternates away from deep security cycles.
+export function pickDocsCandidates(bounties: UnifiedBounty[]): UnifiedBounty[] {
+  return bounties
+    .filter(b => b.reward >= 50)
+    .filter(b => {
+      const blob = `${b.title} ${b.description}`.toLowerCase()
+      return DOCS_KEYWORDS.some(k => blob.includes(k))
+        && !OFF_TOPIC_KEYWORDS.some(k => blob.includes(k))
+    })
+    .sort((a, b) => b.reward - a.reward)
+}
+
 const WALLET = process.env.WALLET_ADDRESS ?? ''
 
 // Security focus: anything matching these tags gets top priority. Content /
@@ -41,32 +54,45 @@ const SECURITY_KEYWORDS = [
   'fuzz', 'static analysis', 'formal verif', 'invariant',
 ]
 
+const DOCS_KEYWORDS = [
+  'documentation', 'docs', 'readme', 'api docs', 'api reference',
+  'technical writing', 'technical writer', 'tech writing',
+  'tutorial', 'integration guide', 'quickstart', 'quick start',
+  'developer docs', 'dev docs', 'getting started', 'onboarding guide',
+  'whitepaper', 'explainer', 'write up', 'write-up', 'changelog',
+]
+
 // Explicit drop list — Tasker will not even score these.
 const OFF_TOPIC_KEYWORDS = [
   'video', 'logo', 'design', 'meme', 'twitter thread', 'marketing',
   'social media', 'community manager', 'illustration', 'graphic',
 ]
 
-function classify(b: UnifiedBounty): 'security' | 'code' | 'offtopic' | 'other' {
+function classify(b: UnifiedBounty): 'security' | 'docs' | 'code' | 'offtopic' | 'other' {
   const blob = `${b.title} ${b.description}`.toLowerCase()
   if (OFF_TOPIC_KEYWORDS.some(k => blob.includes(k))) return 'offtopic'
   if (SECURITY_KEYWORDS.some(k => blob.includes(k))) return 'security'
+  if (DOCS_KEYWORDS.some(k => blob.includes(k))) return 'docs'
   if (/\b(code|script|smart[- ]?contract|backend|api|sdk|integration|refactor|bug)\b/.test(blob)) return 'code'
   return 'other'
 }
 
-const SCORE_PROMPT = `You are Tasker's triage module. Decide if this bounty is a security/audit/code-review task Tasker can complete autonomously using static analysis, reading source code, and writing a report or code output.
+const SCORE_PROMPT = `You are Tasker's triage module. Decide if this bounty is a task Tasker can complete autonomously.
 
 Respond with ONLY valid JSON:
 {
   "canComplete": true/false,
   "confidence": 0.0–1.0,
   "reason": "one sentence",
-  "mode": "security_report" | "code_work" | "skip"
+  "mode": "security_report" | "docs_work" | "code_work" | "skip"
 }
 
-Tasks you CAN do: smart-contract audits, code review, vulnerability writeups, static analysis reports, bug writeups with PoC pseudocode, security checklists, invariant documentation.
-Tasks you CANNOT: tasks requiring running exploits on live chains, KYC, video/audio creation, social posts, design.`
+Modes:
+- security_report — smart-contract audits, vulnerability writeups, code-review security reports, invariant documentation.
+- docs_work       — README rewrites, API reference, integration guides, quickstarts, technical writing.
+- code_work       — non-security code tasks, SDK integrations, scripts, technical problem solving.
+
+Tasks you CANNOT: running live exploits, KYC/identity verification, video / audio / image generation, marketing posts, visual design, community moderation.`
 
 const SECURITY_REPORT_PROMPT = `You are Tasker, filing a security vulnerability report on a bug bounty program. Target the ACTUAL published bounty brief below and write a report in the standard format reviewers expect.
 
@@ -105,6 +131,24 @@ Requirements: {DESCRIPTION}
 
 Output the full deliverable now. Markdown if it's a report, raw code if it's code. No preamble.`
 
+const DOCS_WORK_PROMPT = `You are Tasker completing a paid documentation bounty. Write publishable-quality technical documentation.
+
+Bounty: {TITLE}
+Scope: {DESCRIPTION}
+
+Output a complete, polished markdown document. Rules:
+- Write for developers, not marketers. No fluff.
+- Lead with the most important thing (quick start, key function, primary use case).
+- Code blocks must be syntactically valid and minimal.
+- Section hierarchy: # top, ## subsections, ### sparingly.
+- Tables for parameter / return / response references.
+- Prefer concrete examples over prose.
+- Stay inside the scope the brief requests. Don't bolt on sections that weren't asked for.
+- No apologies, no meta commentary, no "I hope this helps".
+
+If the brief lacks enough context to write useful docs, emit ONLY:
+  INSUFFICIENT_SCOPE: <one-sentence why>`
+
 export class BountyEngine {
   private ai: OpenAI
 
@@ -118,18 +162,23 @@ export class BountyEngine {
   // ── Score a list of bounties with DeepSeek ─────────────────────────────
 
   async scoreBounties(
-    bounties: UnifiedBounty[]
-  ): Promise<(UnifiedBounty & { confidence: number; rawScore: number; mode: 'security_report' | 'code_work' })[]> {
-    // Pre-filter: drop explicit off-topic, prefer security/code.
+    bounties: UnifiedBounty[],
+    // When set, gives that category a score bonus so the alternation turn
+    // preference sticks even if raw confidence is comparable.
+    preferCategory?: 'security' | 'docs' | 'code',
+  ): Promise<(UnifiedBounty & { confidence: number; rawScore: number; mode: 'security_report' | 'docs_work' | 'code_work' })[]> {
+    // Pre-filter: drop explicit off-topic; keep security, docs, and code.
     const candidates = bounties
       .filter(b => b.reward >= 50)
       .map(b => ({ b, cat: classify(b) }))
       .filter(({ cat }) => cat !== 'offtopic')
       .sort((a, b) => {
-        const prio = (c: string) => (c === 'security' ? 0 : c === 'code' ? 1 : 2)
+        const prio = (c: string) => (
+          c === 'security' ? 0 : c === 'docs' ? 1 : c === 'code' ? 2 : 3
+        )
         return prio(a.cat) - prio(b.cat)
       })
-      .slice(0, 6)
+      .slice(0, 8)
       .map(({ b }) => b)
 
     const scored = await Promise.all(candidates.map(async b => {
@@ -149,9 +198,20 @@ export class BountyEngine {
           return { ...b, confidence: 0, rawScore: 0, mode: 'code_work' as const }
         }
         const confidence = Number(score.confidence) || 0
-        const mode: 'security_report' | 'code_work' =
-          score.mode === 'security_report' ? 'security_report' : 'code_work'
-        const weight = mode === 'security_report' ? 1.2 : 1.0
+        const mode: 'security_report' | 'docs_work' | 'code_work' =
+          score.mode === 'security_report' ? 'security_report' :
+          score.mode === 'docs_work'       ? 'docs_work'       : 'code_work'
+        // Base weights: security gets the biggest ceiling, docs are
+        // low-friction so we score them close to security, code trails.
+        const baseWeight = mode === 'security_report' ? 1.2 : mode === 'docs_work' ? 1.1 : 1.0
+        // Alternation nudge: preferCategory gets +20% rawScore so the
+        // current turn's mode actually wins ties.
+        const prefBonus = preferCategory && (
+          (preferCategory === 'security' && mode === 'security_report') ||
+          (preferCategory === 'docs'     && mode === 'docs_work') ||
+          (preferCategory === 'code'     && mode === 'code_work')
+        ) ? 1.2 : 1.0
+        const weight = baseWeight * prefBonus
         return { ...b, confidence, rawScore: b.reward * confidence * weight, mode }
       } catch (e) {
         if (e instanceof LLMBudgetExceeded) throw e
@@ -166,12 +226,17 @@ export class BountyEngine {
 
   async executeWork(
     bounty: UnifiedBounty,
-    mode: 'security_report' | 'code_work'
+    mode: 'security_report' | 'docs_work' | 'code_work'
   ): Promise<{ content: string; hasFinding: boolean }> {
-    const prompt = mode === 'security_report' ? SECURITY_REPORT_PROMPT : CODE_WORK_PROMPT
+    const prompt =
+      mode === 'security_report' ? SECURITY_REPORT_PROMPT :
+      mode === 'docs_work'       ? DOCS_WORK_PROMPT       : CODE_WORK_PROMPT
+    const moduleName =
+      mode === 'security_report' ? 'bounty.work.security' :
+      mode === 'docs_work'       ? 'bounty.work.docs'     : 'bounty.work.code'
     const { content: resContent } = await llmCall({
       ai: this.ai,
-      module: mode === 'security_report' ? 'bounty.work.security' : 'bounty.work.code',
+      module: moduleName,
       messages: [{
         role: 'user',
         content: prompt
@@ -182,9 +247,12 @@ export class BountyEngine {
       temperature: 0.4,
     })
     const content = resContent.trim()
-    const hasFinding = mode === 'security_report'
-      ? !content.startsWith('NO_FINDING')
-      : content.length > 100
+    // security: NO_FINDING = skip. docs: INSUFFICIENT_SCOPE = skip.
+    // code: any non-trivial output counts.
+    const hasFinding =
+      mode === 'security_report' ? !content.startsWith('NO_FINDING') :
+      mode === 'docs_work'       ? !content.startsWith('INSUFFICIENT_SCOPE') && content.length > 200 :
+                                   content.length > 100
     return { content, hasFinding }
   }
 
@@ -220,7 +288,7 @@ export class BountyEngine {
     bounty: UnifiedBounty,
     content: string,
     confidence: number,
-    kind: 'security' | 'code',
+    kind: 'security' | 'code' | 'docs',
     status: 'pending_review' | 'submitted',
   ): Promise<number | null> {
     try {
@@ -259,7 +327,8 @@ export class BountyEngine {
   async tick(
     assignedBounty: UnifiedBounty | null,
     liveBounties: UnifiedBounty[],
-    db?: PoolClient
+    db?: PoolClient,
+    preferCategory?: 'security' | 'docs' | 'code',
   ): Promise<EngineResult> {
     const workQueue = assignedBounty
       ? [assignedBounty, ...liveBounties.filter(b => b.id !== assignedBounty.id)]
@@ -269,7 +338,7 @@ export class BountyEngine {
       return { action: 'idle', logMessage: 'No bounties on the board right now.', logType: 'info' }
     }
 
-    const scored = await this.scoreBounties(workQueue)
+    const scored = await this.scoreBounties(workQueue, preferCategory)
     const best = (assignedBounty && scored.find(b => b.id === assignedBounty.id && b.confidence > 0.4))
       ?? scored.find(b => b.confidence > 0.6)
 
@@ -298,16 +367,13 @@ export class BountyEngine {
       }
     }
 
-    // Security report mode:
-    // 1. Always save a draft report for operator review.
-    // 2. Auto-submit only on non-read-only platforms where a draft goes to triage,
-    //    not directly to payout (keeps noise down).
+    // Security report mode: always save a draft for Lila's review queue.
+    // Immunefi is read-only, and on writable platforms we still vet before
+    // auto-submit to keep noise down.
     if (best.mode === 'security_report') {
       if (db) {
         await this.saveDraftReport(db, best, output.content, best.confidence)
       }
-      // All security reports go to Lila's review queue. Immunefi is read-only
-      // anyway, and even on writable platforms Lila vets before auto-submit.
       return {
         action: 'drafted',
         bountyId: best.id,
@@ -315,6 +381,24 @@ export class BountyEngine {
         reward: best.reward,
         platform: best.platformLabel,
         logMessage: `Draft report filed: "${best.title}" — $${best.reward} on ${best.platformLabel}. Lila reviewing.`,
+        logType: 'success',
+      }
+    }
+
+    // Docs mode: same review gate as security. Lila vets the writing quality
+    // before the operator sees it, then the operator submits to the platform
+    // (or opens the PR on GitHub if the bounty requires it).
+    if (best.mode === 'docs_work') {
+      if (db) {
+        await this.saveSubmission(db, best, output.content, best.confidence, 'docs', 'pending_review')
+      }
+      return {
+        action: 'drafted',
+        bountyId: best.id,
+        title: best.title,
+        reward: best.reward,
+        platform: best.platformLabel,
+        logMessage: `Draft docs filed: "${best.title}" — $${best.reward} on ${best.platformLabel}. Lila reviewing.`,
         logType: 'success',
       }
     }

@@ -27,11 +27,13 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       tick_count        INTEGER       NOT NULL DEFAULT 0,
       assigned_bounty   JSONB         DEFAULT NULL,
       current_target_id INTEGER,
+      bounty_turn       INTEGER       NOT NULL DEFAULT 0,
       updated_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()
     );
     INSERT INTO lila_state (id) VALUES (1) ON CONFLICT DO NOTHING;
-    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS assigned_bounty JSONB DEFAULT NULL;
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS assigned_bounty   JSONB   DEFAULT NULL;
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_target_id INTEGER;
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS bounty_turn       INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE lila_state DROP COLUMN IF EXISTS last_bounty;
 
     CREATE TABLE IF NOT EXISTS lila_log (

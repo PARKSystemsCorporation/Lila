@@ -50,7 +50,7 @@ Notable event: {EVENT}
 
 Write ONE short message (1-2 sentences) — morale note to the team or heads-up to the operator, whichever fits. Direct, dry.`
 
-const REVIEW_PROMPT = `You are Lila reviewing a security-bug report Tasker just drafted. Before it reaches the operator it passes through you. Your job is to catch fabrication, overreach, and unjustified severity.
+const SECURITY_REVIEW_PROMPT = `You are Lila reviewing a security-bug report Tasker just drafted. Before it reaches the operator it passes through you. Your job is to catch fabrication, overreach, and unjustified severity.
 
 Bounty: {TITLE} · ${'${REWARD}'} on {PLATFORM}
 
@@ -64,6 +64,30 @@ Evaluate:
 2. Is severity justified? Critical/High needs a direct asset-loss path.
 3. Is the PoC plausible? Obvious hand-waving or "this could potentially allow" language is a red flag.
 4. Any obvious fabrication (invented function names, invented code)?
+
+Respond with ONLY valid JSON:
+{
+  "decision": "approve" | "reject",
+  "confidence": 0.0-1.0,
+  "notes": "one sentence for the operator"
+}
+
+Approve only if you'd submit this yourself. Reject with the actual reason. No "looks good" — give a reason either way.`
+
+const DOCS_REVIEW_PROMPT = `You are Lila reviewing technical documentation Tasker just drafted for a paid bounty. Before it reaches the operator it passes through you.
+
+Bounty: {TITLE} · ${'${REWARD}'} on {PLATFORM}
+
+Tasker's draft:
+---
+{REPORT}
+---
+
+Evaluate:
+1. Does it actually answer what the bounty asked for, or did Tasker invent scope?
+2. Are code samples syntactically valid and minimal? No hallucinated APIs, no broken imports.
+3. Is it publishable quality — clear structure, developer tone, no fluff/marketing language?
+4. Tables / examples used where they belong instead of prose?
 
 Respond with ONLY valid JSON:
 {
@@ -172,7 +196,7 @@ export class ManagementLoop {
 
   private async reviewOne(): Promise<ManagementResult | null> {
     const { rows } = await this.db.query(
-      `SELECT id, title, reward, platform_label, content
+      `SELECT id, title, reward, platform_label, content, kind
        FROM security_reports
        WHERE status='pending_review'
        ORDER BY created_at ASC LIMIT 1`
@@ -180,9 +204,16 @@ export class ManagementLoop {
     if (!rows.length) return null
 
     const r = rows[0]
+    const kind = (r.kind ?? 'security') as 'security' | 'code' | 'docs'
+
+    // Kind-aware review prompt — docs get writing-quality checks, not
+    // vulnerability-severity checks.
+    const promptTemplate = kind === 'docs' ? DOCS_REVIEW_PROMPT : SECURITY_REVIEW_PROMPT
+    const reviewModule = kind === 'docs' ? 'lila.review.docs' : 'lila.review.security'
+
     const raw = await this.llm(
-      'lila.review',
-      REVIEW_PROMPT
+      reviewModule,
+      promptTemplate
         .replace('{TITLE}', r.title)
         .replace('{REWARD}', String(r.reward))
         .replace('{PLATFORM}', r.platform_label)
@@ -203,20 +234,21 @@ export class ManagementLoop {
       [newStatus, notes, Math.min(Math.max(parsed.confidence ?? 0, 0), 1), r.id]
     )
 
+    const label = kind === 'docs' ? 'docs draft' : 'report'
     if (newStatus === 'approved') {
       await this.chat(
         'lila',
-        `Approved report: "${r.title}" — $${r.reward} on ${r.platform_label}. ${notes} Ready in the Reports tab.`
+        `Approved ${label}: "${r.title}" — $${r.reward} on ${r.platform_label}. ${notes} Ready in the Reports tab.`
       )
     } else {
       await this.chat(
         'lila',
-        `Rejected Tasker's draft on "${r.title}". ${notes}`
+        `Rejected Tasker's ${label} on "${r.title}". ${notes}`
       )
     }
 
     return {
-      logMessage: `Lila ${newStatus} "${r.title}" — ${notes.slice(0, 80)}`,
+      logMessage: `Lila ${newStatus} ${kind} "${r.title}" — ${notes.slice(0, 80)}`,
       logType: newStatus === 'approved' ? 'success' : 'warn',
       posted: true,
     }
