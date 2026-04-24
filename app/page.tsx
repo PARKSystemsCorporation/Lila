@@ -471,6 +471,136 @@ interface LoopRow {
   next_at: number | null
 }
 
+// ─── KPI funnel card ──────────────────────────────────────────────────────────
+
+interface KpiRow {
+  attempts: number
+  reviewing: number
+  approved: number
+  submitted: number
+  paid: number
+  rejected: number
+  dismissed: number
+  paid_total: number
+  max_pending: number
+  paid_ratio: number
+  flag: 'ok' | 'no-payouts' | 'low-conversion' | 'new'
+}
+
+interface KpiData {
+  docs: KpiRow
+  security: KpiRow
+  code: KpiRow
+}
+
+const FLAG_TONE: Record<KpiRow['flag'], { pill: string; tag: string; message?: string }> = {
+  ok:              { pill: 'bg-emerald-950 text-emerald-400 border-emerald-900', tag: 'ON TRACK' },
+  'new':           { pill: 'bg-slate-800 text-slate-500 border-slate-700',       tag: 'NO DATA' },
+  'no-payouts':    {
+    pill: 'bg-red-950 text-red-300 border-red-900',
+    tag: 'NO PAYOUTS',
+    message: '3+ attempts filed, zero paid. Per the alternation plan, consider going heavier on the other lane until at least one pays.',
+  },
+  'low-conversion': {
+    pill: 'bg-amber-950 text-amber-300 border-amber-900',
+    tag: 'LOW CONVERSION',
+    message: 'Below 15% payout rate after 5+ attempts. The thesis is weakening — tune the prompt or raise the reward floor.',
+  },
+}
+
+function KpiCard() {
+  const [data, setData] = useState<KpiData | null>(null)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/kpis')
+        if (res.ok) setData(await res.json())
+      } catch { /* ignore */ }
+    }
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!data) return null
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">
+        Pipeline KPIs
+      </p>
+
+      <div className="grid grid-cols-2 gap-3">
+        <KpiBlock label="Docs" accent="text-purple-300" row={data.docs} />
+        <KpiBlock label="Audit" accent="text-emerald-300" row={data.security} />
+      </div>
+
+      {/* Flag narrative for docs only — that's what the operator asked us
+          to track mechanically. Security has a higher natural variance. */}
+      {data.docs.flag !== 'ok' && data.docs.flag !== 'new' && FLAG_TONE[data.docs.flag].message && (
+        <p className={`text-[11px] font-mono leading-relaxed border-l-2 pl-3 ${
+          data.docs.flag === 'no-payouts'
+            ? 'border-red-700 text-red-300'
+            : 'border-amber-700 text-amber-300'
+        }`}>
+          Docs · {FLAG_TONE[data.docs.flag].message}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function KpiBlock({ label, accent, row }: { label: string; accent: string; row: KpiRow }) {
+  const tone = FLAG_TONE[row.flag]
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 space-y-2">
+      <div className="flex items-baseline justify-between">
+        <span className={`text-[11px] font-mono font-semibold ${accent}`}>{label}</span>
+        <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded border ${tone.pill}`}>
+          {tone.tag}
+        </span>
+      </div>
+
+      {/* Big number = paid $, little number = attempts total */}
+      <div>
+        <p className="text-xl font-bold font-mono text-emerald-400 tabular-nums">
+          ${row.paid_total.toFixed(0)}
+        </p>
+        <p className="text-[9px] font-mono text-slate-600">paid · {row.paid} of {row.attempts}</p>
+      </div>
+
+      {/* Funnel breakdown */}
+      <div className="space-y-1 text-[10px] font-mono text-slate-500">
+        {row.reviewing > 0 && (
+          <div className="flex justify-between"><span>reviewing</span><span className="tabular-nums">{row.reviewing}</span></div>
+        )}
+        {row.approved > 0 && (
+          <div className="flex justify-between"><span>approved</span><span className="tabular-nums text-amber-400">{row.approved}</span></div>
+        )}
+        {row.submitted > 0 && (
+          <div className="flex justify-between"><span>submitted</span><span className="tabular-nums text-blue-400">{row.submitted}</span></div>
+        )}
+        {row.rejected > 0 && (
+          <div className="flex justify-between"><span>rejected</span><span className="tabular-nums text-red-400">{row.rejected}</span></div>
+        )}
+        {row.max_pending > 0 && (
+          <div className="flex justify-between pt-1 border-t border-slate-800">
+            <span>max pending</span>
+            <span className="tabular-nums text-slate-400">${row.max_pending.toFixed(0)}</span>
+          </div>
+        )}
+      </div>
+
+      {row.attempts > 0 && (
+        <p className="text-[9px] font-mono text-slate-600">
+          payout rate: {(row.paid_ratio * 100).toFixed(0)}%
+        </p>
+      )}
+    </div>
+  )
+}
+
 function LoopsCard() {
   const [loops, setLoops] = useState<LoopRow[] | null>(null)
   const [now, setNow] = useState(Date.now())
@@ -1750,6 +1880,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
 
         <Section label="Financials">
           <CostCard />
+          <KpiCard />
           <PortfolioCard />
         </Section>
 

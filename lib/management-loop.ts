@@ -400,6 +400,23 @@ export class ManagementLoop {
     )
     const approvedCount = Number(approved[0]?.n ?? 0)
 
+    // Docs KPI flag: after 3+ attempts with zero paid, we want Lila to
+    // surface it once (not repeatedly). We stash the flag state on
+    // management_state.last_error_cnt... no — that's taken. Use a
+    // simple count-based gate: only fire when a NEW unpaid attempt has
+    // been added since the last check.
+    const { rows: [docs] } = await this.db.query(
+      `SELECT
+         COUNT(*)                                AS attempts,
+         COUNT(*) FILTER (WHERE status='paid')   AS paid
+       FROM security_reports WHERE kind='docs'`
+    )
+    const docsAttempts = Number(docs?.attempts ?? 0)
+    const docsPaid     = Number(docs?.paid ?? 0)
+    const docsUnderperforming =
+      (docsAttempts >= 3 && docsPaid === 0) ||
+      (docsAttempts >= 5 && docsPaid / docsAttempts < 0.15)
+
     // Count reports newly paid this window — that's a REAL win.
     const { rows: paidWindow } = await this.db.query(
       `SELECT COUNT(*) AS n, COALESCE(SUM(payout), 0) AS total
@@ -422,6 +439,8 @@ export class ManagementLoop {
       event = `Trading P&L up $${delta.toFixed(2)} since last check (closed position).`
     } else if (errors >= ERROR_THRESHOLD) {
       event = `${errors} warnings in the last 30 minutes. Tasker may be stuck.`
+    } else if (docsUnderperforming) {
+      event = `Docs KPI flag: ${docsAttempts} attempts filed, ${docsPaid} paid (ratio ${(docsPaid / Math.max(docsAttempts, 1) * 100).toFixed(0)}%). Per the alternation plan, I should recommend weighting audit over docs until a payout lands. Tell the operator and suggest the call.`
     } else if (approvedCount > 0) {
       event = `${approvedCount} approved report${approvedCount > 1 ? 's' : ''} ready for operator to submit. Still unpaid — not earnings yet.`
     } else if (delta === 0 && totalEarned > 0) {
