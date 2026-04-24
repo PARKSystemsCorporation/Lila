@@ -30,6 +30,10 @@ export const cfg = Object.freeze({
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).
   BROADCAST_INTERVAL_MIN: num('BROADCAST_INTERVAL_MIN', 60),
+  // Grace window between composing a broadcast and actually posting it.
+  // The preview is logged so the operator can Cancel or Publish Now from
+  // Dash before it hits the feed. 0 = publish immediately (no preview).
+  BROADCAST_PREVIEW_WINDOW_MIN: num('BROADCAST_PREVIEW_WINDOW_MIN', 5),
   // Server autonomy ticker interval (ms).
   AUTONOMY_TICK_MS:       num('AUTONOMY_TICK_MS', 30_000),
 

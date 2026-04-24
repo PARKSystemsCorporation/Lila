@@ -191,15 +191,18 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_llm_usage_module     ON llm_usage(module, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS broadcasts (
-      id          SERIAL      PRIMARY KEY,
-      channel     TEXT        NOT NULL,
-      content     TEXT        NOT NULL,
-      status      TEXT        NOT NULL,
-      external_id TEXT,
-      error       TEXT,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id                   SERIAL      PRIMARY KEY,
+      channel              TEXT        NOT NULL,
+      content              TEXT        NOT NULL,
+      status               TEXT        NOT NULL,
+      external_id          TEXT,
+      error                TEXT,
+      scheduled_publish_at TIMESTAMPTZ,
+      created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS scheduled_publish_at TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS idx_broadcasts_created ON broadcasts(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_broadcasts_pending ON broadcasts(status, scheduled_publish_at) WHERE status = 'pending_publish';
 
     CREATE TABLE IF NOT EXISTS broadcast_state (
       id                INTEGER     PRIMARY KEY DEFAULT 1,

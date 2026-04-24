@@ -154,18 +154,30 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'terminal', label: 'Term',    Icon: IconTerminal },
 ]
 
-function BottomNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+function BottomNav({ tab, onTab, badges }: {
+  tab: Tab
+  onTab: (t: Tab) => void
+  badges?: Partial<Record<Tab, number>>
+}) {
   return (
     <nav className="shrink-0 flex border-t border-slate-800 bg-slate-950" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {TABS.map(({ key, label, Icon }) => {
         const active = tab === key
+        const count = badges?.[key] ?? 0
         return (
           <button
             key={key}
             onClick={() => onTab(key)}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors relative ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
           >
-            <Icon />
+            <div className="relative">
+              <Icon />
+              {count > 0 && (
+                <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] px-1 rounded-full bg-emerald-500 text-slate-950 text-[9px] font-mono font-bold flex items-center justify-center">
+                  {count > 9 ? '9+' : count}
+                </span>
+              )}
+            </div>
             <span className={`text-[8px] font-mono tracking-wider uppercase ${active ? 'text-emerald-400' : 'text-slate-700'}`}>
               {label}
             </span>
@@ -1076,17 +1088,20 @@ interface BroadcastRow {
   id: number
   channel: string
   content: string
-  status: 'posted' | 'failed' | string
+  status: 'posted' | 'failed' | 'cancelled' | 'pending_publish' | string
   external_id: string | null
   error: string | null
-  ts: number
+  ts: number | null
+  scheduled_ts: number | null
 }
 
 interface BroadcastData {
   channels: string[]
   interval_min: number
+  preview_window_min: number
   enabled: boolean
   recent: BroadcastRow[]
+  pending: BroadcastRow[]
   last_broadcast_at: number | null
 }
 
@@ -1272,6 +1287,147 @@ function BlueskyCard() {
   )
 }
 
+// ─── Pending broadcasts (preview window) ────────────────────────────────────
+// Groups pending rows by content so the operator sees one preview per
+// composed post (not one row per channel). Countdown ticks locally.
+
+function PendingBroadcastCard() {
+  const [data, setData] = useState<BroadcastData | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [now, setNow] = useState(Date.now())
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/broadcasts')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 10_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(n => n + 1000), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  if (!data || data.pending.length === 0) return null
+
+  // Group pending by content so we show one card per composed post.
+  const groups = new Map<string, BroadcastRow[]>()
+  for (const row of data.pending) {
+    const arr = groups.get(row.content) ?? []
+    arr.push(row)
+    groups.set(row.content, arr)
+  }
+
+  const cancelGroup = async (text: string) => {
+    const key = `c:${text.slice(0, 20)}`
+    setBusy(key)
+    try {
+      await fetch('/api/broadcasts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel_text', content: text }),
+      })
+      await load()
+    } finally { setBusy(null) }
+  }
+
+  const publishGroup = async (rows: BroadcastRow[]) => {
+    const key = `p:${rows.map(r => r.id).join(',')}`
+    setBusy(key)
+    try {
+      await Promise.all(rows.map(r =>
+        fetch('/api/broadcasts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'publish_now', id: r.id }),
+        })
+      ))
+      await load()
+    } finally { setBusy(null) }
+  }
+
+  return (
+    <div className="rounded-2xl border-2 border-amber-900/70 bg-amber-950/20 p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-mono text-amber-400 uppercase tracking-widest">Preview · About to post</p>
+          <p className="text-[10px] font-mono text-slate-600 mt-0.5">
+            Countdown runs {data.preview_window_min}m after compose. Tap to override.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {Array.from(groups.entries()).map(([text, rows]) => {
+          const earliest = Math.min(...rows.map(r => r.scheduled_ts ?? Infinity))
+          const remainingMs = earliest === Infinity ? null : earliest - now
+          const dueSoon = remainingMs != null && remainingMs <= 30_000
+
+          const publishKey = `p:${rows.map(r => r.id).join(',')}`
+          const cancelKey  = `c:${text.slice(0, 20)}`
+
+          return (
+            <div key={rows[0].id} className="rounded-xl border border-slate-800 bg-slate-950 p-3 space-y-3">
+              <pre className="text-[12px] font-mono text-slate-200 leading-relaxed whitespace-pre-wrap break-words select-text">
+                {text}
+              </pre>
+
+              <div className="flex items-center justify-between text-[10px] font-mono">
+                <div className="flex flex-wrap gap-1">
+                  {rows.map(r => (
+                    <span
+                      key={r.id}
+                      className={`px-1.5 py-0.5 rounded border ${CHANNEL_STYLE[r.channel] ?? 'bg-slate-800 text-slate-400 border-slate-700'}`}
+                    >
+                      {r.channel.toUpperCase()}
+                    </span>
+                  ))}
+                </div>
+                {remainingMs != null && (
+                  <span className={dueSoon ? 'text-amber-400' : 'text-slate-500'}>
+                    {remainingMs <= 0 ? 'publishing…' : `in ${fmtRemaining(remainingMs)}`}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => cancelGroup(text)}
+                  disabled={busy === cancelKey}
+                  className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70 disabled:opacity-40"
+                >
+                  {busy === cancelKey ? 'Cancelling…' : 'Cancel'}
+                </button>
+                <button
+                  onClick={() => publishGroup(rows)}
+                  disabled={busy === publishKey}
+                  className="flex-1 text-[10px] font-mono bg-emerald-700 text-white rounded-lg py-2 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
+                >
+                  {busy === publishKey ? 'Publishing…' : 'Publish now'}
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function fmtRemaining(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rem = s % 60
+  return rem === 0 ? `${m}m` : `${m}m ${rem}s`
+}
+
 function BroadcastCard() {
   const [data, setData] = useState<BroadcastData | null>(null)
   const [posting, setPosting] = useState(false)
@@ -1361,7 +1517,7 @@ function BroadcastCard() {
                       {r.content}
                     </p>
                     <p className="text-[9px] font-mono text-slate-600 mt-0.5">
-                      {r.status === 'posted' ? '✓' : '✗'} {fmtAge(r.ts)}
+                      {r.status === 'posted' ? '✓' : '✗'} {r.ts ? fmtAge(r.ts) : 'just now'}
                       {r.status === 'failed' && r.error ? ` · ${r.error.slice(0, 60)}` : ''}
                     </p>
                   </div>
@@ -2107,6 +2263,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
         </Section>
 
         <Section label="Ops">
+          <PendingBroadcastCard />
           <BroadcastCard />
           <BlueskyCard />
           <TelegramCard />
@@ -3512,7 +3669,16 @@ export default function Home() {
   // Pre-filter the Notes tab when the operator deep-links from elsewhere
   // (TargetCard → Tasker plans, ReportCard → Tasker, etc).
   const [notesFilter, setNotesFilter] = useState<NoteFilter>('all')
+  // Badge count for unread chat messages (since the operator last opened
+  // the Chat tab). Reset when they switch back to Chat.
+  const [chatSeenId, setChatSeenId] = useState(0)
+  const [chatLatestId, setChatLatestId] = useState(0)
   const prevEarned = useRef<number | null>(null)
+
+  const setTabWithSeen = useCallback((t: Tab) => {
+    if (t === 'chat') setChatSeenId(chatLatestId)
+    setTab(t)
+  }, [chatLatestId])
 
   const navigate: NavigateFn = useCallback((to) => {
     if (to.notesFilter) setNotesFilter(to.notesFilter)
@@ -3558,6 +3724,38 @@ export default function Home() {
     }
     poll()
     const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Chat unread tracker: poll latest message id and compare to lastSeen.
+  // Also load reports continuously so the Reports-tab badge counts
+  // approved items even when the operator never opens that tab.
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/chat/messages?after=0')
+        if (!res.ok) return
+        const { messages }: { messages: { id: number }[] } = await res.json()
+        const maxId = messages.reduce((m, x) => Math.max(m, x.id), 0)
+        setChatLatestId(maxId)
+        if (tab === 'chat') setChatSeenId(maxId)
+      } catch { /* ignore */ }
+    }
+    poll()
+    const id = setInterval(poll, 10_000)
+    return () => clearInterval(id)
+  }, [tab])
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      // Reuse the same endpoint the Reports tab uses; Home already lets
+      // loadReports run on the reports tab. This keeps the badge live
+      // without blocking on tab switch.
+      fetch('/api/reports')
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (Array.isArray(d)) setReports(d) })
+        .catch(() => {})
+    }, 30_000)
     return () => clearInterval(id)
   }, [])
 
@@ -3646,7 +3844,14 @@ export default function Home() {
         <TerminalTab visible={tab === 'terminal'} />
       </main>
 
-      <BottomNav tab={tab} onTab={setTab} />
+      <BottomNav
+        tab={tab}
+        onTab={setTabWithSeen}
+        badges={{
+          chat: tab === 'chat' ? 0 : Math.max(0, chatLatestId - chatSeenId),
+          reports: reports.filter(r => r.status === 'approved').length,
+        }}
+      />
     </div>
   )
 }
