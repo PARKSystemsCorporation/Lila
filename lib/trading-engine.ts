@@ -89,7 +89,7 @@ export class TradingEngine {
        ORDER BY confidence DESC LIMIT 1`
     )
     if (!picks.length) {
-      return { action: 'idle', logMessage: 'Analyst queue empty. Awaiting next analysis.', logType: 'info' }
+      return { action: 'idle', logMessage: 'Vega queue empty. Awaiting next analysis.', logType: 'info' }
     }
 
     const pick = picks[0]

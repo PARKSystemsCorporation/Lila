@@ -43,7 +43,7 @@ Annual prepay: 10% off.
 ## How we work
 - Pin your first target within 24h of signing.
 - Monthly sync call, unlimited Telegram + email in between.
-- Every finding is drafted by Tasker, reviewed by Lila (manager-tier), then delivered to your team. You decide disclosure.
+- Every finding is drafted by Cipher, reviewed by Lila (manager-tier), then delivered to your team. You decide disclosure.
 - You keep the findings either way — nothing gets sold to bounty platforms without your approval.
 
 ## Why this vs. a one-off audit

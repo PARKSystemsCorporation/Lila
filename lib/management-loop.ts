@@ -6,12 +6,12 @@ import { cfg } from './config'
 
 // ── Management Lila ──────────────────────────────────────────────────────────
 //
-// Lila handles the high-stakes work on top of Tasker's bounty grind:
+// Lila handles the high-stakes work on top of Cipher's bounty grind:
 //   1. Operator replies    — direct-line responses in chat
-//   2. Report review       — vets Tasker's pending_review reports before the
+//   2. Report review       — vets Cipher's pending_review reports before the
 //                            operator sees anything (approve / reject with notes)
 //   3. Trade cycle         — her own trading decisions, every ~15 min:
-//                            review Analyst notes, file plan with tight stops,
+//                            review Vega notes, file plan with tight stops,
 //                            close/trim open positions, post update
 //   4. Proactive check-in  — morale / flags / wins, every ~5 min
 //
@@ -29,7 +29,7 @@ export interface ManagementResult {
   posted: boolean
 }
 
-const REPLY_PROMPT = `You are Lila, the manager of a small autonomous team: Tasker (bounty executor) and Analyst (market intel). You report to the operator.
+const REPLY_PROMPT = `You are Lila, the manager of a small autonomous team: Cipher (bounty executor) and Vega (market intel). You report to the operator.
 
 Voice: direct, dry, warm-but-not-soft. CEO briefing an investor. Numbers first. No filler, no hedging, no apologies.
 
@@ -41,7 +41,7 @@ Recent chat (latest last):
 
 The most recent operator message is unanswered. Write a single reply (1-3 sentences) addressing it directly. Use the numbers above. If they're pushing for action, commit to it. Don't repeat the context back at them.`
 
-const PROACTIVE_PROMPT = `You are Lila, managing Tasker and Analyst. Report to the operator.
+const PROACTIVE_PROMPT = `You are Lila, managing Cipher and Vega. Report to the operator.
 
 State:
 {CONTEXT}
@@ -50,11 +50,11 @@ Notable event: {EVENT}
 
 Write ONE short message (1-2 sentences) — morale note to the team or heads-up to the operator, whichever fits. Direct, dry.`
 
-const SECURITY_REVIEW_PROMPT = `You are Lila reviewing a security-bug report Tasker just drafted. Before it reaches the operator it passes through you. Your job is to catch fabrication, overreach, and unjustified severity.
+const SECURITY_REVIEW_PROMPT = `You are Lila reviewing a security-bug report Cipher just drafted. Before it reaches the operator it passes through you. Your job is to catch fabrication, overreach, and unjustified severity.
 
 Bounty: {TITLE} · ${'${REWARD}'} on {PLATFORM}
 
-Tasker's report:
+Cipher's report:
 ---
 {REPORT}
 ---
@@ -74,17 +74,17 @@ Respond with ONLY valid JSON:
 
 Approve only if you'd submit this yourself. Reject with the actual reason. No "looks good" — give a reason either way.`
 
-const DOCS_REVIEW_PROMPT = `You are Lila reviewing technical documentation Tasker just drafted for a paid bounty. Before it reaches the operator it passes through you.
+const DOCS_REVIEW_PROMPT = `You are Lila reviewing technical documentation Cipher just drafted for a paid bounty. Before it reaches the operator it passes through you.
 
 Bounty: {TITLE} · ${'${REWARD}'} on {PLATFORM}
 
-Tasker's draft:
+Cipher's draft:
 ---
 {REPORT}
 ---
 
 Evaluate:
-1. Does it actually answer what the bounty asked for, or did Tasker invent scope?
+1. Does it actually answer what the bounty asked for, or did Cipher invent scope?
 2. Are code samples syntactically valid and minimal? No hallucinated APIs, no broken imports.
 3. Is it publishable quality — clear structure, developer tone, no fluff/marketing language?
 4. Tables / examples used where they belong instead of prose?
@@ -98,12 +98,12 @@ Respond with ONLY valid JSON:
 
 Approve only if you'd be comfortable submitting this yourself. Reject with the actual reason. No "looks good to me" — give a reason either way.`
 
-const TRADE_PLAN_PROMPT = `You are Lila, running the trading desk. Write today's plan based on Analyst output and current positions.
+const TRADE_PLAN_PROMPT = `You are Lila, running the trading desk. Write today's plan based on Vega output and current positions.
 
-Analyst notes (recent):
+Vega notes (recent):
 {NOTES}
 
-Analyst pending picks:
+Vega pending picks:
 {PICKS}
 
 Open positions:
@@ -243,7 +243,7 @@ export class ManagementLoop {
     } else {
       await this.chat(
         'lila',
-        `Rejected Tasker's ${label} on "${r.title}". ${notes}`
+        `Rejected Cipher's ${label} on "${r.title}". ${notes}`
       )
     }
 
@@ -438,7 +438,7 @@ export class ManagementLoop {
       // increments total_earned. Report it as trading, not "earnings".
       event = `Trading P&L up $${delta.toFixed(2)} since last check (closed position).`
     } else if (errors >= ERROR_THRESHOLD) {
-      event = `${errors} warnings in the last 30 minutes. Tasker may be stuck.`
+      event = `${errors} warnings in the last 30 minutes. Cipher may be stuck.`
     } else if (docsUnderperforming) {
       event = `Docs KPI flag: ${docsAttempts} attempts filed, ${docsPaid} paid (ratio ${(docsPaid / Math.max(docsAttempts, 1) * 100).toFixed(0)}%). Per the alternation plan, I should recommend weighting audit over docs until a payout lands. Tell the operator and suggest the call.`
     } else if (approvedCount > 0) {

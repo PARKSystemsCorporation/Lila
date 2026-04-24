@@ -16,7 +16,7 @@ function bool(key: string, fallback: boolean): boolean {
 
 export const cfg = Object.freeze({
   // ── Cadence (seconds unless noted) ───────────────────────────────────────
-  // Minimum spacing between Tasker step advances.
+  // Minimum spacing between Cipher step advances.
   TASKER_STEP_SEC:        num('TASKER_STEP_SEC', 30),
   // Minimum spacing between research cycles on the SAME pinned target.
   // Bigger = fewer deep-research burns, more room for cheap bounty work.
@@ -25,7 +25,7 @@ export const cfg = Object.freeze({
   MANAGEMENT_CHECK_SEC:   num('MANAGEMENT_CHECK_SEC', 300),
   // Trade cycle interval (Lila).
   MANAGEMENT_TRADE_SEC:   num('MANAGEMENT_TRADE_SEC', 900),
-  // Analyst step interval (minutes).
+  // Vega step interval (minutes).
   ANALYST_STEP_MIN:       num('ANALYST_STEP_MIN', 2),
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).

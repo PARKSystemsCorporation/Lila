@@ -17,7 +17,7 @@ export interface EngineResult {
   logType: 'info' | 'success' | 'warn'
 }
 
-// Security bounties are surfaced separately so Tasker can route them into the
+// Security bounties are surfaced separately so Cipher can route them into the
 // target-pinned ResearchEngine loop instead of a one-shot LLM pass.
 export function pickSecurityCandidates(bounties: UnifiedBounty[]): UnifiedBounty[] {
   return bounties
@@ -31,7 +31,7 @@ export function pickSecurityCandidates(bounties: UnifiedBounty[]): UnifiedBounty
 }
 
 // Documentation / technical-writing candidates. Low-friction payouts while
-// Tasker alternates away from deep security cycles.
+// Cipher alternates away from deep security cycles.
 export function pickDocsCandidates(bounties: UnifiedBounty[]): UnifiedBounty[] {
   return bounties
     .filter(b => b.reward >= 50)
@@ -46,7 +46,7 @@ export function pickDocsCandidates(bounties: UnifiedBounty[]): UnifiedBounty[] {
 const WALLET = process.env.WALLET_ADDRESS ?? ''
 
 // Security focus: anything matching these tags gets top priority. Content /
-// marketing / design bounties are skipped — Tasker's edge is code, not copy.
+// marketing / design bounties are skipped — Cipher's edge is code, not copy.
 const SECURITY_KEYWORDS = [
   'audit', 'security', 'vuln', 'vulnerab', 'exploit', 'bug bounty',
   'smart contract', 'contract review', 'code review', 'pentest',
@@ -62,7 +62,7 @@ const DOCS_KEYWORDS = [
   'whitepaper', 'explainer', 'write up', 'write-up', 'changelog',
 ]
 
-// Explicit drop list — Tasker will not even score these.
+// Explicit drop list — Cipher will not even score these.
 const OFF_TOPIC_KEYWORDS = [
   'video', 'logo', 'design', 'meme', 'twitter thread', 'marketing',
   'social media', 'community manager', 'illustration', 'graphic',
@@ -77,7 +77,7 @@ function classify(b: UnifiedBounty): 'security' | 'docs' | 'code' | 'offtopic' |
   return 'other'
 }
 
-const SCORE_PROMPT = `You are Tasker's triage module. Decide if this bounty is a task Tasker can complete autonomously.
+const SCORE_PROMPT = `You are Cipher's triage module. Decide if this bounty is a task Cipher can complete autonomously.
 
 Respond with ONLY valid JSON:
 {
@@ -94,7 +94,7 @@ Modes:
 
 Tasks you CANNOT: running live exploits, KYC/identity verification, video / audio / image generation, marketing posts, visual design, community moderation.`
 
-const SECURITY_REPORT_PROMPT = `You are Tasker, filing a security vulnerability report on a bug bounty program. Target the ACTUAL published bounty brief below and write a report in the standard format reviewers expect.
+const SECURITY_REPORT_PROMPT = `You are Cipher, filing a security vulnerability report on a bug bounty program. Target the ACTUAL published bounty brief below and write a report in the standard format reviewers expect.
 
 Bounty: {TITLE}
 Scope: {DESCRIPTION}
@@ -124,14 +124,14 @@ Rules:
 - Do NOT include preamble, greetings, or meta commentary.
 - Severity must be justified. "High" or above needs a direct asset-loss path.`
 
-const CODE_WORK_PROMPT = `You are Tasker completing a paid code / audit bounty. Deliver the real work, not an outline.
+const CODE_WORK_PROMPT = `You are Cipher completing a paid code / audit bounty. Deliver the real work, not an outline.
 
 Bounty: {TITLE}
 Requirements: {DESCRIPTION}
 
 Output the full deliverable now. Markdown if it's a report, raw code if it's code. No preamble.`
 
-const DOCS_WORK_PROMPT = `You are Tasker completing a paid documentation bounty. Write publishable-quality technical documentation.
+const DOCS_WORK_PROMPT = `You are Cipher completing a paid documentation bounty. Write publishable-quality technical documentation.
 
 Bounty: {TITLE}
 Scope: {DESCRIPTION}

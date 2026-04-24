@@ -188,12 +188,12 @@ function BottomNav({ tab, onTab, badges }: {
   )
 }
 
-// ─── Chat Tab (group: you + Lila + Analyst) ───────────────────────────────────
+// ─── Chat Tab (group: you + Lila + Vega) ───────────────────────────────────
 
 const ROLE_STYLE = {
   lila:    { avatar: 'L', color: 'text-emerald-400', ring: 'bg-emerald-900 border-emerald-700', bubble: 'bg-slate-900 text-slate-200 border-slate-800' },
-  tasker:  { avatar: 'T', color: 'text-amber-400',   ring: 'bg-amber-950 border-amber-800',     bubble: 'bg-amber-950/40 text-amber-200 border-amber-900/60' },
-  analyst: { avatar: 'A', color: 'text-blue-400',    ring: 'bg-blue-900 border-blue-700',       bubble: 'bg-blue-950/60 text-blue-200 border-blue-900/60' },
+  tasker:  { avatar: 'C', color: 'text-amber-400',   ring: 'bg-amber-950 border-amber-800',     bubble: 'bg-amber-950/40 text-amber-200 border-amber-900/60' },
+  analyst: { avatar: 'V', color: 'text-blue-400',    ring: 'bg-blue-900 border-blue-700',       bubble: 'bg-blue-950/60 text-blue-200 border-blue-900/60' },
 } as const
 
 // ─── Shared UI primitives ─────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
 
 // Cross-tab navigation. Children call `onNavigate({ tab, notesFilter? })` to
 // jump to a tab and pre-set a filter — e.g. TargetCard sends you to Notes
-// pre-filtered to Tasker's plans.
+// pre-filtered to Cipher's plans.
 type NavigateFn = (to: { tab: Tab; notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'pitches' | 'other' }) => void
 
 function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
@@ -324,7 +324,7 @@ function ChatTab({ visible }: { visible: boolean }) {
     setNearBottom(dist < 60)
   }, [])
 
-  // Poll for Tasker/Lila/Analyst messages every 5s
+  // Poll for Cipher/Lila/Vega messages every 5s
   useEffect(() => {
     if (!visible) return
     const poll = async () => {
@@ -423,7 +423,7 @@ function ChatTab({ visible }: { visible: boolean }) {
         </div>
         <div className="min-w-0">
           <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">Direct line · Lila</p>
-          <p className="text-[9px] font-mono text-slate-600">Tasker & Analyst post status here</p>
+          <p className="text-[9px] font-mono text-slate-600">Cipher & Vega post status here</p>
         </div>
       </div>
 
@@ -1155,7 +1155,7 @@ function TelegramCard() {
         <div>
           <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Telegram</p>
           <p className="text-[10px] font-mono text-slate-600 mt-0.5">
-            Analyst picks + broadcast mirror
+            Vega picks + broadcast mirror
           </p>
         </div>
         <span className={`text-[9px] font-mono px-2 py-0.5 rounded border ${
@@ -1189,7 +1189,7 @@ function TelegramCard() {
 
       {status?.configured && !result && (
         <p className="text-[10px] font-mono text-slate-600 leading-relaxed">
-          Analyst fires picks on F0 cycles; Broadcast mirrors hourly status. Tap test if you&apos;ve just added the keys.
+          Vega fires picks on F0 cycles; Broadcast mirrors hourly status. Tap test if you&apos;ve just added the keys.
         </p>
       )}
     </div>
@@ -2033,7 +2033,7 @@ function TargetCard({ onNavigate }: { onNavigate?: NavigateFn }) {
   if (!current) return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-2">
       <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Current Target</p>
-      <p className="text-xs font-mono text-slate-600">No target pinned. Tasker will pin one next cycle.</p>
+      <p className="text-xs font-mono text-slate-600">No target pinned. Cipher will pin one next cycle.</p>
     </div>
   )
 
@@ -2098,7 +2098,7 @@ function TargetCard({ onNavigate }: { onNavigate?: NavigateFn }) {
           onClick={() => onNavigate({ tab: 'notes', notesFilter: 'tasker' })}
           className="w-full text-[10px] font-mono text-slate-400 border border-slate-800 rounded-lg py-2 active:bg-slate-800 mt-1"
         >
-          View Tasker plans →
+          View Cipher plans →
         </button>
       )}
     </div>
@@ -2171,7 +2171,7 @@ function PortfolioCard() {
       )}
 
       {positions.length === 0 && (
-        <p className="text-xs font-mono text-slate-600">No open positions. Analyst queuing picks.</p>
+        <p className="text-xs font-mono text-slate-600">No open positions. Vega queuing picks.</p>
       )}
     </div>
   )
@@ -2839,9 +2839,9 @@ function NotesTab({ visible, filter, onFilterChange }: {
 
   const pills: { key: NoteFilter; label: string; count: number }[] = data ? [
     { key: 'all',     label: 'ALL',     count: data.counts.total   },
-    { key: 'analyst', label: 'ANALYST', count: data.counts.analyst },
+    { key: 'analyst', label: 'VEGA',    count: data.counts.analyst },
     { key: 'lila',    label: 'LILA',    count: data.counts.lila    },
-    { key: 'tasker',  label: 'TASKER',  count: data.counts.tasker  },
+    { key: 'tasker',  label: 'CIPHER',  count: data.counts.tasker  },
     { key: 'pitches', label: 'PITCH',   count: data.counts.pitches },
     ...(data.counts.other > 0 ? [{ key: 'other' as const, label: 'OTHER', count: data.counts.other }] : []),
   ] : []
@@ -2854,7 +2854,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
           <div>
             <p className="text-xs font-mono text-slate-300 font-semibold">Notes Library</p>
             <p className="text-[10px] font-mono text-slate-600">
-              Everything Analyst / Lila / Tasker has written down
+              Everything Vega / Lila / Cipher has written down
             </p>
           </div>
         </div>
@@ -2896,7 +2896,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
         ) : filtered.length === 0 ? (
           <EmptyState
             title="Nothing here yet."
-            subtitle="Analyst, Lila, and Tasker write notes as they work. They'll show up here."
+            subtitle="Vega, Lila, and Cipher write notes as they work. They'll show up here."
           />
         ) : (
           <div className="space-y-2">
@@ -3254,7 +3254,7 @@ function ReportsTab({ reports, loading, visible, onAction, onNavigate }: {
           <span className="text-emerald-500"><IconReports /></span>
           <div>
             <p className="text-xs font-mono text-slate-300 font-semibold">Bounty Pipeline</p>
-            <p className="text-[10px] font-mono text-slate-600">Tasker files → Lila reviews → you submit → mark paid when money lands</p>
+            <p className="text-[10px] font-mono text-slate-600">Cipher files → Lila reviews → you submit → mark paid when money lands</p>
           </div>
         </div>
 
@@ -3280,7 +3280,7 @@ function ReportsTab({ reports, loading, visible, onAction, onNavigate }: {
         ) : reports.length === 0 ? (
           <EmptyState
             title="No reports yet."
-            subtitle="Tasker files drafts on security bounties automatically."
+            subtitle="Cipher files drafts on security bounties automatically."
           />
         ) : (
           <>
@@ -3667,7 +3667,7 @@ export default function Home() {
   const [bountiesLoading, setBountiesLoading] = useState(false)
   const [financials, setFinancials] = useState<{ paidMtd: number; pendingMax: number; pendingCount: number } | null>(null)
   // Pre-filter the Notes tab when the operator deep-links from elsewhere
-  // (TargetCard → Tasker plans, ReportCard → Tasker, etc).
+  // (TargetCard → Cipher plans, ReportCard → Cipher, etc).
   const [notesFilter, setNotesFilter] = useState<NoteFilter>('all')
   // Badge count for unread chat messages (since the operator last opened
   // the Chat tab). Reset when they switch back to Chat.

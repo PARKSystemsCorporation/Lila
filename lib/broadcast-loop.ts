@@ -303,10 +303,8 @@ export class BroadcastLoop {
 
   // ── failure chat alert with dedup ─────────────────────────────────────────
   //
-  // When a channel fails, post a chat message as 'lila' with the exact
-  // error so the operator sees it in the direct line. Dedup window is
-  // 60 min per (channel + error-prefix) so a persistent failure doesn't
-  // spam chat every tick.
+  // Dedup on channel alone. Error text often varies run-to-run (timestamps,
+  // request IDs), which would defeat dedup and spam chat every tick.
 
   private async maybeAlertOnFailures(
     results: Array<{ channel: string; ok: boolean; error?: string }>,
@@ -315,17 +313,16 @@ export class BroadcastLoop {
     if (failures.length === 0) return
 
     for (const f of failures) {
-      const key = `broadcast:${f.channel}:${(f.error ?? 'unknown').slice(0, 80)}`
-      // Look for a matching lila message in the last 60 minutes.
+      const key = `broadcast:${f.channel}`
       const { rows } = await this.db.query(
         `SELECT 1 FROM chat_messages
          WHERE sender = 'lila'
            AND content LIKE $1
            AND created_at > NOW() - INTERVAL '60 minutes'
          LIMIT 1`,
-        [`%${key}%`]
+        [`%[${key}]%`]
       )
-      if (rows.length > 0) continue  // already alerted
+      if (rows.length > 0) continue
 
       const msg = `⚠ Broadcast failed — ${f.channel}: ${(f.error ?? 'unknown error').slice(0, 280)}\n[${key}]`
       await this.db.query(

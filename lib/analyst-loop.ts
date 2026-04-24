@@ -5,7 +5,7 @@ import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 import * as Telegram from './channels/telegram'
 
-// ── Analyst watchlist ─────────────────────────────────────────────────────────
+// ── Vega watchlist ─────────────────────────────────────────────────────────
 // No biotech, no retail. Commodity ETFs + leveraged index + global macro only.
 
 const WATCHLIST = {
@@ -59,14 +59,14 @@ export class AnalystLoop {
         default:   result = 'State reset.';             next = 'T0'
       }
     } catch (e) {
-      return { logMessage: `Analyst ${step} error: ${String(e)}`, logType: 'warn' }
+      return { logMessage: `Vega ${step} error: ${String(e)}`, logType: 'warn' }
     }
 
     await this.db.query(
       'UPDATE analyst_state SET step=$1, cycle=$2, last_step_at=NOW(), updated_at=NOW() WHERE id=1',
       [next, nextCycle]
     )
-    return { logMessage: `Analyst ${step}: ${result}`, logType: step === 'F0' || step === 'M1' ? 'success' : 'info' }
+    return { logMessage: `Vega ${step}: ${result}`, logType: step === 'F0' || step === 'M1' ? 'success' : 'info' }
   }
 
   // ── T+0: Check group chat ──────────────────────────────────────────────────
@@ -85,7 +85,7 @@ export class AnalystLoop {
 
     const res = await this.llm(
       'analyst.t0',
-      `You are the Analyst in a group chat with Lila (COO) and the operator. Review recent chat:\n\n${transcript}\n\nDo any messages require your response or a task? JSON only: { "action": true/false, "task": "one sentence or null", "response": "one sentence or null" }`,
+      `You are Vega, in a group chat with Lila (COO) and the operator. Review recent chat:\n\n${transcript}\n\nDo any messages require your response or a task? JSON only: { "action": true/false, "task": "one sentence or null", "response": "one sentence or null" }`,
       120
     )
     const d = this.parse(res, { action: false, task: null, response: null })
@@ -107,7 +107,7 @@ export class AnalystLoop {
     const headlines = news.map(n => `- ${n.headline} (${n.symbols?.join(',') ?? ''})`).join('\n')
     const res = await this.llm(
       'analyst.t1',
-      `Analyst reviewing macro/commodity/ETF news. No biotech, no retail.\n\n${headlines}\n\nBreaking thesis? JSON: { "thesis": true/false, "summary": "one sentence" }`,
+      `Vega reviewing macro/commodity/ETF news. No biotech, no retail.\n\n${headlines}\n\nBreaking thesis? JSON: { "thesis": true/false, "summary": "one sentence" }`,
       100
     )
     const d = this.parse(res, { thesis: false, summary: 'No strong signal.' })
@@ -129,7 +129,7 @@ export class AnalystLoop {
 
     const res = await this.llm(
       'analyst.t2',
-      `Analyst scanning commodity ETFs, leveraged S&P/NQ, global macro. Long only, no biotech, no retail.\n\n${data}\n\nAny thesis? JSON: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"reason":"one sentence"}], "summary": "one sentence" }`,
+      `Vega scanning commodity ETFs, leveraged S&P/NQ, global macro. Long only, no biotech, no retail.\n\n${data}\n\nAny thesis? JSON: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"reason":"one sentence"}], "summary": "one sentence" }`,
       250
     )
     const d = this.parse(res, { thesis: false, picks: [], summary: 'No setup.' })
@@ -152,7 +152,7 @@ export class AnalystLoop {
   private async t3(): Promise<string> {
     const res = await this.llm(
       'analyst.t3',
-      'You are the Analyst. No trade setup today. Write 3-5 bullet research notes: what to watch next and why. Focus on commodity ETFs, leveraged indices, global macro.',
+      'You are Vega. No trade setup today. Write 3-5 bullet research notes: what to watch next and why. Focus on commodity ETFs, leveraged indices, global macro.',
       180
     )
     const date = today()
@@ -207,7 +207,7 @@ export class AnalystLoop {
       const body = queuedPicks.map(p =>
         `• ${p.symbol}  @ $${p.entry.toFixed(2)}  →  tgt $${p.target.toFixed(2)}  ·  stop $${p.stop.toFixed(2)}  ·  conf ${Math.round(p.confidence * 100)}%\n  ${p.reason}`
       ).join('\n\n')
-      const tgText = `📊 Analyst picks — cycle ${cycle + 1}\n\n${body}\n\nTight stops. Long only.`
+      const tgText = `📊 Vega picks — cycle ${cycle + 1}\n\n${body}\n\nTight stops. Long only.`
       const res = await Telegram.sendMessage(tgText)
       if (res.ok) {
         await this.db.query(
@@ -267,7 +267,7 @@ export class AnalystLoop {
 
     const analysis = await this.llm(
       'analyst.m1',
-      `Analyst P&L briefing for Lila (COO).\n\nPositions:\n${posStr}\n\nTrading P&L: $${totalPnl.toFixed(2)}\nBounty earnings: $${parseFloat(earned?.total_earned ?? '0').toFixed(2)}\n\nWrite 2-3 sentence analysis + recommendation.`,
+      `Vega P&L briefing for Lila (COO).\n\nPositions:\n${posStr}\n\nTrading P&L: $${totalPnl.toFixed(2)}\nBounty earnings: $${parseFloat(earned?.total_earned ?? '0').toFixed(2)}\n\nWrite 2-3 sentence analysis + recommendation.`,
       150
     )
     await this.note(`analyst/pnl/${today()}-analysis.md`, `# P&L ${today()}\n\n${analysis}\n\n## Positions\n${posStr}`)

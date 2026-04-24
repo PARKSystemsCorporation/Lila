@@ -8,7 +8,7 @@ const WATCHLIST = [
   'SPY', 'QQQ', 'SOFI', 'HOOD', 'MSTR',
 ]
 
-const PROMPT = `You are the Analyst — Lila's market intelligence officer. She is COO and you report directly to her.
+const PROMPT = `You are the Vega — Lila's market intelligence officer. She is COO and you report directly to her.
 
 Your job: surface the 1-3 best long opportunities right now based on this market data.
 
@@ -49,7 +49,7 @@ export interface AnalystPick {
   reason: string
 }
 
-export class Analyst {
+export class Vega {
   private ai: OpenAI
 
   constructor() {

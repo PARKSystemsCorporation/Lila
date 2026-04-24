@@ -6,9 +6,9 @@ import { ResearchEngine } from './research-engine'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 
-// ── Tasker autonomy loop ──────────────────────────────────────────────────────
+// ── Cipher autonomy loop ──────────────────────────────────────────────────────
 //
-// Tasker is the executor. Bounty cycle only, every step 30s-gated:
+// Cipher is the executor. Bounty cycle only, every step 30s-gated:
 //   BT0 — parse recent chat for operator/Lila-assigned tasks, queue them
 //   BH0 — on security bounties, run ONE research cycle on a pinned target
 //         (target persists across many ticks; findings file as security_reports
@@ -28,7 +28,7 @@ export interface TaskerStepResult {
   logType: LogType
 }
 
-const CHAT_PARSE_PROMPT = `You are Tasker, the executor on Lila's team. Read the recent chat transcript and extract any concrete tasks the operator or Lila has assigned.
+const CHAT_PARSE_PROMPT = `You are Cipher, the executor on Lila's team. Read the recent chat transcript and extract any concrete tasks the operator or Lila has assigned.
 
 Respond with ONLY valid JSON — no preamble:
 { "tasks": ["task 1", "task 2"] }
@@ -69,11 +69,11 @@ export class TaskerLoop {
       }
     } catch (e) {
       await this.advance(step)
-      return { step, logMessage: `Tasker ${step} error: ${String(e)}`, logType: 'warn' }
+      return { step, logMessage: `Cipher ${step} error: ${String(e)}`, logType: 'warn' }
     }
 
     await this.advance(next)
-    return { step, logMessage: `Tasker ${step}: ${result.logMessage}`, logType: result.logType }
+    return { step, logMessage: `Cipher ${step}: ${result.logMessage}`, logType: result.logType }
   }
 
   private async shouldRun(): Promise<boolean> {
@@ -133,7 +133,7 @@ export class TaskerLoop {
     // Per operator plan: cycle A docs, cycle B security, cycle C docs, …
     // The turn only advances when a cycle "completes" — a docs draft is
     // filed or a security target hits found/exhausted. Security work that
-    // spans many Tasker ticks stays on the same turn until terminal.
+    // spans many Cipher ticks stays on the same turn until terminal.
     const { rows: [ls] } = await this.db.query(
       'SELECT assigned_bounty, bounty_turn FROM lila_state WHERE id=1'
     )

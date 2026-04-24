@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
-import { Analyst } from '@/lib/analyst'
+import { Vega } from '@/lib/analyst'
 import * as Alpaca from '@/lib/platforms/alpaca'
 
 export async function GET() {
@@ -45,7 +45,7 @@ export async function POST() {
   const db = await pool.connect()
   try {
     await ensureSchema(db)
-    const analyst = new Analyst()
+    const analyst = new Vega()
     const picks = await analyst.analyze()
     await analyst.savePicks(db, picks)
     return NextResponse.json({ picks, count: picks.length })

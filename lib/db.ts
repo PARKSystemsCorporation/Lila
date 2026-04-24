@@ -147,7 +147,7 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS paid_at      TIMESTAMPTZ;
     UPDATE security_reports SET status='pending_review' WHERE status='draft';
 
-    -- Research targets: Tasker pins one bounty codebase and burns cycles on it.
+    -- Research targets: Cipher pins one bounty codebase and burns cycles on it.
     CREATE TABLE IF NOT EXISTS research_targets (
       id               SERIAL        PRIMARY KEY,
       bounty_id        TEXT          NOT NULL UNIQUE,
@@ -213,7 +213,7 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     INSERT INTO broadcast_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 
     -- Watchlist: protocols we've spotted via DefiLlama / GitHub / etc that
-    -- Tasker might want to research later. Separate from research_targets
+    -- Cipher might want to research later. Separate from research_targets
     -- (active work) — this is the speculative pipeline.
     CREATE TABLE IF NOT EXISTS watch_targets (
       id             SERIAL        PRIMARY KEY,

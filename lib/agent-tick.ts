@@ -69,7 +69,7 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(tradeResult.logMessage)
     }
 
-    // 2. Analyst loop — time-gated internally.
+    // 2. Vega loop — time-gated internally.
     const analyst = new AnalystLoop(db)
     const analystResult = await analyst.run().catch(() => null)
     if (analystResult) {
@@ -77,11 +77,11 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(analystResult.logMessage)
     }
 
-    // 3. Tasker loop — time-gated internally.
+    // 3. Cipher loop — time-gated internally.
     const tasker = new TaskerLoop(db)
     const taskerResult = await tasker.run().catch((e: unknown) => ({
       step: 'BT0' as const,
-      logMessage: `Tasker loop error: ${String(e)}`,
+      logMessage: `Cipher loop error: ${String(e)}`,
       logType: 'warn' as const,
     }))
     if (taskerResult) {

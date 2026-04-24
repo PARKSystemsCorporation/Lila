@@ -43,14 +43,14 @@ export async function GET() {
     const loops: LoopRow[] = [
       {
         key: 'tasker',
-        label: 'Tasker',
+        label: 'Cipher',
         last_at: tasker.rows[0]?.ts ? Number(tasker.rows[0].ts) : null,
         interval_sec: cfg.TASKER_STEP_SEC,
         next_at: nextAt(tasker.rows[0]?.ts, cfg.TASKER_STEP_SEC * 1000),
       },
       {
         key: 'analyst',
-        label: 'Analyst',
+        label: 'Vega',
         last_at: analyst.rows[0]?.ts ? Number(analyst.rows[0].ts) : null,
         interval_sec: cfg.ANALYST_STEP_MIN * 60,
         next_at: nextAt(analyst.rows[0]?.ts, cfg.ANALYST_STEP_MIN * 60_000),

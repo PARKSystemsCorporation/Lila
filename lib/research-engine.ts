@@ -10,7 +10,7 @@ import { llmCall, LLMBudgetExceeded } from './llm'
 // enumerating surfaces, deriving invariants, then hunting for violations.
 //
 // Each cycle on a target reads ALL prior notes and extends them. After N cycles
-// Tasker has a mental model of that one protocol that a cold pass cannot match.
+// Cipher has a mental model of that one protocol that a cold pass cannot match.
 //
 // Phase machine:
 //   map          — actors, contracts, money flow, privileged roles (cycle 1)
@@ -54,7 +54,7 @@ export interface CycleResult {
   confidence?: number
 }
 
-const MAP_PROMPT = `You are Tasker, beginning deep research on a bounty target. Read the brief and write an ARCHITECTURE map.
+const MAP_PROMPT = `You are Cipher, beginning deep research on a bounty target. Read the brief and write an ARCHITECTURE map.
 
 Target: {TITLE}
 Platform: {PLATFORM}
@@ -75,7 +75,7 @@ Oracles, price feeds, other protocols, bridges.
 
 Be specific to THIS target. Stub "unknown from brief" if the scope doesn't say. This is foundation for later cycles — be accurate, not speculative.`
 
-const SURFACES_PROMPT = `You are Tasker. You've mapped the architecture of {TITLE}. Now enumerate ATTACK SURFACES.
+const SURFACES_PROMPT = `You are Cipher. You've mapped the architecture of {TITLE}. Now enumerate ATTACK SURFACES.
 
 Prior architecture notes:
 {NOTES}
@@ -94,7 +94,7 @@ Proxies, delegatecalls, selfdestruct paths.
 
 Be specific. This is where attacks live.`
 
-const INVARIANTS_PROMPT = `You are Tasker. You have the architecture and surfaces of {TITLE}. Now derive INVARIANTS — properties that MUST always hold for this protocol to be correct and solvent.
+const INVARIANTS_PROMPT = `You are Cipher. You have the architecture and surfaces of {TITLE}. Now derive INVARIANTS — properties that MUST always hold for this protocol to be correct and solvent.
 
 Prior notes:
 {NOTES}
@@ -109,7 +109,7 @@ Frame each as a NEGATION ("X must NEVER be possible"). Number them. Think about:
 
 Output: numbered markdown list of invariants. 5-15 items. No hedging.`
 
-const HYPOTHESIZE_PROMPT = `You are Tasker. Given the invariants of {TITLE}, generate HYPOTHESES — specific, testable attack ideas that would violate each invariant.
+const HYPOTHESIZE_PROMPT = `You are Cipher. Given the invariants of {TITLE}, generate HYPOTHESES — specific, testable attack ideas that would violate each invariant.
 
 Prior notes:
 {NOTES}
@@ -129,7 +129,7 @@ Respond with ONLY valid JSON:
 
 Generate 3-8 hypotheses. No invented contracts or functions — ground them in prior notes.`
 
-const INVESTIGATE_PROMPT = `You are Tasker. Take hypothesis #{HID} and rigorously evaluate it.
+const INVESTIGATE_PROMPT = `You are Cipher. Take hypothesis #{HID} and rigorously evaluate it.
 
 Target: {TITLE}
 Hypothesis:

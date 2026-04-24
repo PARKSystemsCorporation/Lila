@@ -163,7 +163,7 @@ export async function POST(req: Request) {
     }
     if (!targetId) {
       return NextResponse.json(
-        { error: 'No completed research targets yet. Wait for Tasker to finish a target, or pass {targetId}.' },
+        { error: 'No completed research targets yet. Wait for Cipher to finish a target, or pass {targetId}.' },
         { status: 404 }
       )
     }
