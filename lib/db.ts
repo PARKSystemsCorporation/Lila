@@ -257,6 +257,43 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status, created_at DESC);
+
+    -- Ceelo: NFL handicapper. Posts picks; operator decides which to take and
+    -- marks W/L. Strictly informational — no auto-execution. Bankroll lives
+    -- entirely in operator-entered stake/payout amounts on each pick.
+    CREATE TABLE IF NOT EXISTS ceelo_picks (
+      id              SERIAL        PRIMARY KEY,
+      sport           TEXT          NOT NULL DEFAULT 'NFL',
+      game_label      TEXT          NOT NULL,           -- e.g. "KC @ BUF"
+      kickoff_at      TIMESTAMPTZ,                       -- best-effort
+      market          TEXT          NOT NULL,            -- 'spread' | 'moneyline' | 'total'
+      side            TEXT          NOT NULL,            -- e.g. "KC -3", "Over 47.5", "BUF ML"
+      model_prob      NUMERIC(4,3),                      -- Ceelo's modeled probability
+      fair_line       TEXT,                              -- Ceelo's fair-line estimate (string for flexibility)
+      min_odds        INTEGER,                           -- min American odds Ceelo wants
+      edge_pct        NUMERIC(5,2),                      -- edge vs implied @ min_odds (computed)
+      reasoning       TEXT          NOT NULL,            -- one-paragraph thesis
+      confidence      TEXT          NOT NULL DEFAULT 'medium',  -- low | medium | high
+      status          TEXT          NOT NULL DEFAULT 'open',
+                                    -- open | skipped | taken | won | lost | push | void
+      stake           NUMERIC(10,2),                     -- operator-entered when taken
+      taken_odds      INTEGER,                           -- American odds operator actually got
+      payout          NUMERIC(10,2),                     -- net P&L (stake-relative); push/void = 0
+      taken_at        TIMESTAMPTZ,
+      settled_at      TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_status ON ceelo_picks(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_kickoff ON ceelo_picks(kickoff_at);
+
+    CREATE TABLE IF NOT EXISTS ceelo_state (
+      id            INTEGER     PRIMARY KEY DEFAULT 1,
+      cycle         INTEGER     NOT NULL DEFAULT 0,
+      last_run_at   TIMESTAMPTZ,
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO ceelo_state (id) VALUES (1) ON CONFLICT DO NOTHING;
   `)
   schemaReady = true
 }

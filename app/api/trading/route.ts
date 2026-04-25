@@ -4,8 +4,14 @@ import * as Alpaca from '@/lib/platforms/alpaca'
 
 export const dynamic = 'force-dynamic'
 
+// Display-only paper bankroll. Alpaca paper accounts default to $100,000
+// which is meaningless for tracking — we treat $100 as the working
+// bankroll and grow/shrink it by realized P&L on the client.
+const PAPER_BANKROLL = 100
+
 export async function GET(req: Request) {
   const hasAlpaca = !!(process.env.ALPACA_API_KEY || process.env.APCA_API_KEY_ID)
+  const paper = process.env.ALPACA_PAPER !== 'false'
 
   // Optional period for the equity curve (?period=1M by default).
   const period = new URL(req.url).searchParams.get('period') ?? '1M'
@@ -93,5 +99,7 @@ export async function GET(req: Request) {
     period,
     timeframe,
     hasAlpaca,
+    paper,
+    paperBankroll: PAPER_BANKROLL,
   })
 }

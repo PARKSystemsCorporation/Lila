@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'reports' | 'notes' | 'terminal'
+type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'reports' | 'picks' | 'notes' | 'terminal'
 
 interface UnifiedBounty {
   id: string
@@ -142,6 +142,13 @@ const IconBounties = () => (
   </svg>
 )
 
+const IconPicks = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    <path d="M3 12l4-4 4 4 4-4 6 6" />
+    <path d="M14 8h7v7" />
+  </svg>
+)
+
 // ─── Bottom Nav ───────────────────────────────────────────────────────────────
 
 const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
@@ -150,6 +157,7 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
   { key: 'reports',  label: 'Reports', Icon: IconReports  },
+  { key: 'picks',    label: 'Picks',   Icon: IconPicks    },
   { key: 'notes',    label: 'Notes',   Icon: IconNotes    },
   { key: 'terminal', label: 'Term',    Icon: IconTerminal },
 ]
@@ -2361,6 +2369,8 @@ interface TradingData {
   dailyClosedPnl: DailyPnlRow[]
   period: string
   hasAlpaca: boolean
+  paper?: boolean
+  paperBankroll?: number
 }
 
 const PERIODS: { key: string; label: string }[] = [
@@ -2476,10 +2486,31 @@ function TradingTab({ visible }: { visible: boolean }) {
     return () => clearInterval(id)
   }, [visible, period])
 
-  const equity = data?.account ? parseFloat(data.account.equity) : 0
-  const lastEquity = data?.account?.last_equity ? parseFloat(data.account.last_equity) : equity
-  const dayPl = equity - lastEquity
-  const dayPlPct = lastEquity > 0 ? (dayPl / lastEquity) * 100 : 0
+  // In paper mode we use a fixed display bankroll ($100 by default) and grow
+  // / shrink it by realized P&L from our own positions table. Alpaca paper
+  // accounts default to $100k which makes the equity number meaningless for
+  // tracking. Day P&L is then today's realized P&L (sum of dailyClosedPnl
+  // entries dated today).
+  const todayKey = new Date().toISOString().slice(0, 10)
+  const todayRealized = data?.dailyClosedPnl?.find(d => d.date === todayKey)?.pnl ?? 0
+
+  const realEquity = data?.account ? parseFloat(data.account.equity) : 0
+  const realLast   = data?.account?.last_equity ? parseFloat(data.account.last_equity) : realEquity
+  const realDayPl  = realEquity - realLast
+  const realDayPct = realLast > 0 ? (realDayPl / realLast) * 100 : 0
+
+  const totalRealizedSoFar = useMemo(() => {
+    if (!data?.dailyClosedPnl?.length) return 0
+    return data.dailyClosedPnl.reduce((s, d) => s + d.pnl, 0)
+  }, [data?.dailyClosedPnl])
+
+  const paperBankroll = data?.paperBankroll ?? 100
+  const isPaper       = data?.paper !== false  // default true; route returns explicit boolean
+  const equity        = isPaper ? +(paperBankroll + totalRealizedSoFar).toFixed(2) : realEquity
+  const dayPl         = isPaper ? +todayRealized.toFixed(2) : realDayPl
+  const dayPlPct      = isPaper
+    ? (paperBankroll > 0 ? (dayPl / paperBankroll) * 100 : 0)
+    : realDayPct
 
   // Cumulative realized P&L from closed trades
   const cumulativePnl = useMemo(() => {
@@ -2539,15 +2570,21 @@ function TradingTab({ visible }: { visible: boolean }) {
                 <div className="grid grid-cols-2 gap-3 mt-4 pt-3 border-t border-slate-800">
                   <div>
                     <p className="text-sm font-mono text-slate-300 tabular-nums">
-                      ${parseFloat(data.account.buying_power).toFixed(2)}
+                      ${paperBankroll.toFixed(2)}
                     </p>
-                    <p className="text-[10px] font-mono text-slate-600">buying power</p>
+                    <p className="text-[10px] font-mono text-slate-600">
+                      {isPaper ? 'starting bankroll' : 'buying power'}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm font-mono text-slate-300 tabular-nums">
-                      ${parseFloat(data.account.cash).toFixed(2)}
+                      {isPaper
+                        ? `${totalRealizedSoFar >= 0 ? '+' : ''}$${totalRealizedSoFar.toFixed(2)}`
+                        : `$${parseFloat(data.account.cash).toFixed(2)}`}
                     </p>
-                    <p className="text-[10px] font-mono text-slate-600">cash</p>
+                    <p className="text-[10px] font-mono text-slate-600">
+                      {isPaper ? 'realized P&L' : 'cash'}
+                    </p>
                   </div>
                 </div>
               )}
@@ -2716,6 +2753,473 @@ function ClosedTradeRow({ t }: { t: ClosedTrade }) {
       <span className={`text-xs font-mono tabular-nums font-semibold ${pos ? 'text-emerald-400' : 'text-red-400'}`}>
         {pos ? '+' : ''}${pnl.toFixed(2)}
       </span>
+    </div>
+  )
+}
+
+// ─── Picks Tab (Ceelo's NFL handicapping) ─────────────────────────────────
+//
+// Ceelo posts picks; operator picks which to take and marks W/L. No
+// auto-execution — bankroll is operator-driven. UI groups by status:
+//   open    → Ceelo posted, awaiting operator decision (Take or Skip)
+//   taken   → operator placed; awaiting settle (Won / Lost / Push / Void)
+//   settled → won / lost / push / void with payout
+
+type PickStatus = 'open' | 'skipped' | 'taken' | 'won' | 'lost' | 'push' | 'void'
+
+interface PickRow {
+  id: number
+  game_label: string
+  kickoff_at: number | null
+  market: string
+  side: string
+  model_prob: number | null
+  fair_line: string | null
+  min_odds: number | null
+  edge_pct: number | null
+  reasoning: string
+  confidence: string
+  status: PickStatus
+  stake: number | null
+  taken_odds: number | null
+  payout: number | null
+  taken_at: number | null
+  settled_at: number | null
+  created_ts: number
+}
+
+interface PicksData {
+  picks: PickRow[]
+  summary: {
+    open: number
+    active: number
+    record: { wins: number; losses: number; pushes: number }
+    bankroll: { staked: number; returned: number; pnl: number; roi: number }
+  }
+}
+
+function fmtAmericanOdds(o: number | null): string {
+  if (o == null || !Number.isFinite(o)) return '—'
+  return o > 0 ? `+${o}` : `${o}`
+}
+
+function fmtKickoff(ts: number | null): string {
+  if (!ts) return 'TBD'
+  const d = new Date(ts)
+  const day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  return `${day} · ${time}`
+}
+
+function PicksTab({ visible }: { visible: boolean }) {
+  const [data, setData] = useState<PicksData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/picks')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (!visible) return
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [visible, load])
+
+  const post = useCallback(async (body: object) => {
+    await fetch('/api/picks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    await load()
+  }, [load])
+
+  const open    = useMemo(() => (data?.picks ?? []).filter(p => p.status === 'open'), [data])
+  const taken   = useMemo(() => (data?.picks ?? []).filter(p => p.status === 'taken'), [data])
+  const settled = useMemo(() => (data?.picks ?? []).filter(p => ['won','lost','push','void'].includes(p.status)), [data])
+  const skipped = useMemo(() => (data?.picks ?? []).filter(p => p.status === 'skipped'), [data])
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-emerald-500"><IconPicks /></span>
+          <div>
+            <p className="text-xs font-mono text-slate-300 font-semibold">
+              Ceelo &mdash; NFL Handicapper
+            </p>
+            <p className="text-[10px] font-mono text-slate-600">
+              Picks are informational. You decide what to take.
+            </p>
+          </div>
+        </div>
+
+        {/* Bankroll & record header */}
+        {data && <BankrollCard summary={data.summary} />}
+
+        {loading && !data ? (
+          <div className="flex items-center gap-2 py-10 justify-center">
+            <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
+            <p className="text-xs font-mono text-slate-600">Loading picks&hellip;</p>
+          </div>
+        ) : (
+          <>
+            <PickSection
+              label="Open"
+              hint="Ceelo's flagged edges. Take or skip."
+              picks={open}
+              expandedId={expandedId}
+              onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
+              onAction={(action, id, payload) => post({ action, id, ...(payload ?? {}) })}
+            />
+            <PickSection
+              label="Active"
+              hint="You took these. Mark when settled."
+              picks={taken}
+              expandedId={expandedId}
+              onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
+              onAction={(action, id, payload) => post({ action, id, ...(payload ?? {}) })}
+            />
+            <PickSection
+              label="Settled"
+              hint="History."
+              picks={settled}
+              expandedId={expandedId}
+              onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
+              onAction={(action, id, payload) => post({ action, id, ...(payload ?? {}) })}
+            />
+            {skipped.length > 0 && (
+              <PickSection
+                label="Skipped"
+                hint="Hidden. Tap to expand any to reopen."
+                picks={skipped}
+                expandedId={expandedId}
+                onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
+                onAction={(action, id, payload) => post({ action, id, ...(payload ?? {}) })}
+                collapsible
+              />
+            )}
+            {open.length === 0 && taken.length === 0 && settled.length === 0 && skipped.length === 0 && (
+              <EmptyState
+                title="No picks yet."
+                subtitle="Ceelo runs every 12h. Picks land here when an edge is flagged."
+              />
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BankrollCard({ summary }: { summary: PicksData['summary'] }) {
+  const { record, bankroll, open, active } = summary
+  const total = record.wins + record.losses
+  const winPct = total > 0 ? Math.round((record.wins / total) * 100) : null
+  const pnlColor = bankroll.pnl > 0 ? 'text-emerald-400'
+                 : bankroll.pnl < 0 ? 'text-red-400'
+                 : 'text-slate-400'
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900 p-3 space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <Stat label="P&amp;L" value={`${bankroll.pnl >= 0 ? '+' : ''}$${bankroll.pnl.toFixed(2)}`} valueClass={pnlColor} />
+        <Stat label="ROI"  value={`${bankroll.roi >= 0 ? '+' : ''}${bankroll.roi.toFixed(1)}%`} valueClass={pnlColor} />
+        <Stat label="Record" value={`${record.wins}-${record.losses}${record.pushes > 0 ? `-${record.pushes}` : ''}`} />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <Stat label="Win%"   value={winPct != null ? `${winPct}%` : '—'} />
+        <Stat label="Staked" value={`$${bankroll.staked.toFixed(2)}`} />
+        <Stat label="Open / Active" value={`${open} / ${active}`} />
+      </div>
+    </div>
+  )
+}
+
+function Stat({ label, value, valueClass = 'text-slate-200' }: {
+  label: string; value: string; valueClass?: string
+}) {
+  return (
+    <div className="text-center">
+      <p className={`text-sm font-mono font-semibold tabular-nums ${valueClass}`}>{value}</p>
+      <p className="text-[9px] font-mono text-slate-600 tracking-wider mt-0.5">{label}</p>
+    </div>
+  )
+}
+
+type PickAction = 'take' | 'skip' | 'settle' | 'reopen' | 'delete'
+type PickActionPayload = { stake?: number; taken_odds?: number; result?: 'won' | 'lost' | 'push' | 'void' }
+
+function PickSection({ label, hint, picks, expandedId, onToggle, onAction, collapsible }: {
+  label: string
+  hint: string
+  picks: PickRow[]
+  expandedId: number | null
+  onToggle: (id: number) => void
+  onAction: (action: PickAction, id: number, payload?: PickActionPayload) => void
+  collapsible?: boolean
+}) {
+  const [open, setOpen] = useState(!collapsible)
+  if (picks.length === 0) return null
+  return (
+    <div className="space-y-2">
+      <button
+        className="flex items-baseline justify-between w-full"
+        onClick={() => collapsible && setOpen(!open)}
+      >
+        <p className="text-[10px] font-mono text-slate-400 tracking-widest font-semibold">
+          {label.toUpperCase()} · {picks.length}
+        </p>
+        <p className="text-[9px] font-mono text-slate-600">
+          {collapsible ? (open ? '▾ hide' : '▸ show') : hint}
+        </p>
+      </button>
+      {open && (
+        <div className="space-y-2">
+          {picks.map(p => (
+            <PickCard
+              key={p.id}
+              pick={p}
+              expanded={expandedId === p.id}
+              onToggle={() => onToggle(p.id)}
+              onAction={onAction}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const CONF_STYLE: Record<string, string> = {
+  high:   'bg-emerald-950 text-emerald-300 border-emerald-900',
+  medium: 'bg-amber-950 text-amber-300 border-amber-900',
+  low:    'bg-slate-800 text-slate-400 border-slate-700',
+}
+
+function PickCard({ pick, expanded, onToggle, onAction }: {
+  pick: PickRow
+  expanded: boolean
+  onToggle: () => void
+  onAction: (action: PickAction, id: number, payload?: PickActionPayload) => void
+}) {
+  const isOpen    = pick.status === 'open'
+  const isTaken   = pick.status === 'taken'
+  const isSettled = ['won','lost','push','void'].includes(pick.status)
+  const isSkipped = pick.status === 'skipped'
+
+  const statusBadge =
+      pick.status === 'won'  ? <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-emerald-950 text-emerald-300 border-emerald-900">WON</span>
+    : pick.status === 'lost' ? <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-red-950 text-red-300 border-red-900">LOST</span>
+    : pick.status === 'push' ? <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-slate-800 text-slate-300 border-slate-700">PUSH</span>
+    : pick.status === 'void' ? <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-slate-800 text-slate-300 border-slate-700">VOID</span>
+    : pick.status === 'taken' ? <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-blue-950 text-blue-300 border-blue-900">ACTIVE</span>
+    : null
+
+  const confCls = CONF_STYLE[pick.confidence] ?? CONF_STYLE.medium
+  const edge = pick.edge_pct != null ? `${pick.edge_pct >= 0 ? '+' : ''}${pick.edge_pct.toFixed(1)}%` : null
+  const prob = pick.model_prob != null ? `${Math.round(pick.model_prob * 100)}%` : null
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
+      <button className="w-full p-3 text-left" onClick={onToggle}>
+        <div className="flex items-start gap-2">
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${confCls}`}>
+            {pick.confidence.toUpperCase()}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <p className="text-[12px] font-mono text-slate-100 font-semibold truncate">{pick.side}</p>
+              <p className="text-[10px] font-mono text-slate-500">· {pick.market}</p>
+              {statusBadge}
+            </div>
+            <p className="text-[10px] font-mono text-slate-400 mt-0.5">
+              {pick.game_label} · {fmtKickoff(pick.kickoff_at)}
+            </p>
+            <p className="text-[9px] font-mono text-slate-600 mt-0.5 tabular-nums">
+              {prob && <>p={prob}</>}
+              {pick.fair_line && <> · fair {pick.fair_line}</>}
+              {pick.min_odds != null && <> · min {fmtAmericanOdds(pick.min_odds)}</>}
+              {edge && <> · edge {edge}</>}
+            </p>
+            {isTaken && pick.stake != null && (
+              <p className="text-[9px] font-mono text-blue-400 mt-0.5 tabular-nums">
+                @${pick.stake.toFixed(2)} · {fmtAmericanOdds(pick.taken_odds)}
+              </p>
+            )}
+            {isSettled && pick.payout != null && (
+              <p className={`text-[9px] font-mono mt-0.5 tabular-nums ${pick.payout > 0 ? 'text-emerald-400' : pick.payout < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+                {pick.payout >= 0 ? '+' : ''}${pick.payout.toFixed(2)}
+                {pick.stake != null && <span className="text-slate-600"> on ${pick.stake.toFixed(2)}</span>}
+              </p>
+            )}
+          </div>
+          <span className={`text-slate-600 text-xs font-mono shrink-0 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-800 px-3 py-3 space-y-3">
+          <p className="text-[10px] font-mono text-slate-300 leading-relaxed whitespace-pre-wrap">
+            {pick.reasoning}
+          </p>
+
+          {isOpen   && <OpenActions   pick={pick} onAction={onAction} />}
+          {isTaken  && <TakenActions  pick={pick} onAction={onAction} />}
+          {isSkipped && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => onAction('reopen', pick.id)}
+                className="flex-1 text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+              >
+                Reopen
+              </button>
+              <button
+                onClick={() => onAction('delete', pick.id)}
+                className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+          {isSettled && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => onAction('reopen', pick.id)}
+                className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+              >
+                Undo settle
+              </button>
+              <button
+                onClick={() => { if (confirm('Delete this pick?')) onAction('delete', pick.id) }}
+                className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OpenActions({ pick, onAction }: {
+  pick: PickRow
+  onAction: (action: PickAction, id: number, payload?: PickActionPayload) => void
+}) {
+  const [stake, setStake]       = useState<string>('')
+  const [odds, setOdds]         = useState<string>(pick.min_odds != null ? String(pick.min_odds) : '-110')
+  const [showTake, setShowTake] = useState(false)
+
+  const submit = () => {
+    const s = parseFloat(stake)
+    const o = parseInt(odds, 10)
+    if (!Number.isFinite(s) || s <= 0) return
+    if (!Number.isFinite(o) || o === 0) return
+    onAction('take', pick.id, { stake: s, taken_odds: o })
+  }
+
+  if (!showTake) {
+    return (
+      <div className="flex gap-2">
+        <button
+          onClick={() => setShowTake(true)}
+          className="flex-1 text-[10px] font-mono text-emerald-300 border border-emerald-800 bg-emerald-950/40 rounded-lg py-2 active:opacity-70"
+        >
+          I&rsquo;m taking this
+        </button>
+        <button
+          onClick={() => onAction('skip', pick.id)}
+          className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+        >
+          Skip
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-[9px] font-mono text-slate-600 tracking-wider">STAKE ($)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={stake}
+            onChange={(e) => setStake(e.target.value)}
+            className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono text-slate-200 tabular-nums focus:outline-none focus:border-emerald-700"
+            placeholder="50"
+          />
+        </div>
+        <div>
+          <label className="text-[9px] font-mono text-slate-600 tracking-wider">ODDS (American)</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={odds}
+            onChange={(e) => setOdds(e.target.value)}
+            className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono text-slate-200 tabular-nums focus:outline-none focus:border-emerald-700"
+            placeholder="-110"
+          />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={submit}
+          className="flex-1 text-[10px] font-mono text-emerald-300 border border-emerald-800 bg-emerald-950/40 rounded-lg py-2 active:opacity-70"
+        >
+          Confirm Take
+        </button>
+        <button
+          onClick={() => setShowTake(false)}
+          className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function TakenActions({ pick, onAction }: {
+  pick: PickRow
+  onAction: (action: PickAction, id: number, payload?: PickActionPayload) => void
+}) {
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      <button
+        onClick={() => onAction('settle', pick.id, { result: 'won' })}
+        className="text-[10px] font-mono text-emerald-300 border border-emerald-800 bg-emerald-950/40 rounded-lg py-2 active:opacity-70"
+      >
+        Won
+      </button>
+      <button
+        onClick={() => onAction('settle', pick.id, { result: 'lost' })}
+        className="text-[10px] font-mono text-red-400 border border-red-900 bg-red-950/30 rounded-lg py-2 active:opacity-70"
+      >
+        Lost
+      </button>
+      <button
+        onClick={() => onAction('settle', pick.id, { result: 'push' })}
+        className="text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+      >
+        Push
+      </button>
+      <button
+        onClick={() => onAction('settle', pick.id, { result: 'void' })}
+        className="text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+      >
+        Void
+      </button>
     </div>
   )
 }
@@ -4007,6 +4511,7 @@ export default function Home() {
           onAction={reportAction}
           onNavigate={navigate}
         />
+        <PicksTab visible={tab === 'picks'} />
         <NotesTab visible={tab === 'notes'} filter={notesFilter} onFilterChange={setNotesFilter} />
         <TerminalTab visible={tab === 'terminal'} />
       </main>

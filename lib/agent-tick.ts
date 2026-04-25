@@ -6,6 +6,7 @@ import { TaskerLoop } from './tasker-loop'
 import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
+import { CeeloLoop } from './ceelo-loop'
 import { runRetention } from './retention'
 import { cfg } from './config'
 
@@ -101,7 +102,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(mgmtResult.logMessage)
     }
 
-    // 5. Discovery — daily scan for new protocols / Solidity repos.
+    // 5. Ceelo — NFL handicapper, time-gated (12h default).
+    const ceelo = new CeeloLoop(db)
+    const ceeloResult = await ceelo.run().catch((e: unknown) => ({
+      logMessage: `Ceelo error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (ceeloResult) {
+      await logEvent(db, ceeloResult.logMessage, ceeloResult.logType)
+      logs.push(ceeloResult.logMessage)
+    }
+
+    // 6. Discovery — daily scan for new protocols / Solidity repos.
     const discovery = new DiscoveryLoop(db)
     const discoveryResult = await discovery.run().catch((e: unknown) => ({
       inserted: 0, skipped: 0, sources: [] as string[],
