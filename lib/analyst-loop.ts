@@ -197,7 +197,6 @@ export class AnalystLoop {
       : `Cycle ${cycle + 1} complete — no trades this cycle.`
 
     await this.chat('analyst', msg)
-    await this.note(`analyst/picks/${today()}-c${cycle + 1}.md`, `# Picks Report\n${msg}`)
 
     // Mirror new picks to Telegram. Log success AND failure so the
     // operator can see what happened from the Activity log on Dash.

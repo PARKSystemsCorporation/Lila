@@ -2734,9 +2734,88 @@ interface NoteRow {
   updated_ts: number
 }
 
+interface AgentActivity {
+  vega: { step: string; cycle: number; last_ts: number | null } | null
+  cipher: {
+    step: string
+    turn_count: number
+    last_ts: number | null
+    target: { title: string; phase: string; cycles: number; last_ts: number | null } | null
+  } | null
+  lila: { last_chat_ts: number | null }
+}
+
 interface NotesData {
   notes: NoteRow[]
   counts: Record<NoteCategory | 'total', number>
+  activity: AgentActivity | null
+}
+
+// Map a Vega T-step to a human label.
+function vegaStepLabel(step: string): string {
+  switch (step) {
+    case 'T0': return 'reading chat'
+    case 'T1': return 'scanning news'
+    case 'T2': return 'scanning charts'
+    case 'T3': return 'writing research'
+    case 'F0': return 'filing picks'
+    case 'M0': return 'summarizing'
+    case 'M1': return 'P&L report'
+    default:   return step.toLowerCase()
+  }
+}
+
+// Map a Cipher bounty-step to a human label.
+function cipherStepLabel(step: string): string {
+  switch (step) {
+    case 'BT0': return 'parsing tasks'
+    case 'BH0': return 'working target'
+    case 'BZ0': return 'posting status'
+    default:    return step.toLowerCase()
+  }
+}
+
+// Convert an analyst_notes path into a readable title + subtitle.
+// Examples:
+//   analyst/notes/feed-2026-04-25.md     → "News feed"        · "2026-04-25"
+//   analyst/notes/scan-2026-04-25.md     → "Market scan"       · "2026-04-25"
+//   analyst/notes/research-2026-04-25.md → "Research note"     · "2026-04-25"
+//   analyst/summaries/2026-04-25-maintenance.md → "Daily summary" · "2026-04-25"
+//   analyst/pnl/2026-04-25-analysis.md   → "P&L briefing"      · "2026-04-25"
+//   lila/plans/2026-04-25-1714000000.md  → "Lila trade plan"   · "2026-04-25"
+//   lila/pitches/acme-retainer.md        → "Pitch"             · "acme-retainer"
+//   tasks/current.md                     → "Current task"      · "live"
+//   tasker/report/... .md                → "Cipher draft"      · <leaf>
+function humanizeNotePath(path: string): { title: string; subtitle: string } {
+  const leaf = path.split('/').pop() ?? path
+  const base = leaf.replace(/\.md$/, '')
+  const dateMatch = base.match(/\d{4}-\d{2}-\d{2}/)
+  const date = dateMatch ? dateMatch[0] : ''
+
+  if (path === 'tasks/current.md')                return { title: 'Current task',  subtitle: 'live' }
+  if (path.startsWith('analyst/notes/feed-'))     return { title: 'News feed',     subtitle: date || base }
+  if (path.startsWith('analyst/notes/scan-'))     return { title: 'Market scan',   subtitle: date || base }
+  if (path.startsWith('analyst/notes/research-')) return { title: 'Research note', subtitle: date || base }
+  if (path.startsWith('analyst/summaries/'))      return { title: 'Daily summary', subtitle: date || base }
+  if (path.startsWith('analyst/pnl/'))            return { title: 'P&L briefing', subtitle: date || base }
+  if (path.startsWith('lila/plans/'))             return { title: 'Trade plan',    subtitle: date || base }
+  if (path.startsWith('lila/pitches/'))           return { title: 'Pitch',         subtitle: base }
+  if (path.startsWith('lila/'))                   return { title: 'Lila note',     subtitle: base }
+  if (path.startsWith('tasker/'))                 return { title: 'Cipher note',   subtitle: base }
+  if (path.startsWith('analyst/'))                return { title: 'Vega note',     subtitle: base }
+  return { title: leaf, subtitle: path }
+}
+
+// Group notes by updated-day bucket: 'Today' / 'Yesterday' / 'Earlier'.
+function dayBucket(ts: number): 'today' | 'yesterday' | 'earlier' {
+  const d = new Date(ts)
+  const now = new Date()
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (sameDay(d, now)) return 'today'
+  const y = new Date(now); y.setDate(y.getDate() - 1)
+  if (sameDay(d, y)) return 'yesterday'
+  return 'earlier'
 }
 
 const NOTE_CATEGORY_STYLE: Record<NoteCategory, string> = {
@@ -2840,11 +2919,19 @@ function NotesTab({ visible, filter, onFilterChange }: {
   const pills: { key: NoteFilter; label: string; count: number }[] = data ? [
     { key: 'all',     label: 'ALL',     count: data.counts.total   },
     { key: 'analyst', label: 'VEGA',    count: data.counts.analyst },
-    { key: 'lila',    label: 'LILA',    count: data.counts.lila    },
     { key: 'tasker',  label: 'CIPHER',  count: data.counts.tasker  },
+    { key: 'lila',    label: 'LILA',    count: data.counts.lila    },
     { key: 'pitches', label: 'PITCH',   count: data.counts.pitches },
     ...(data.counts.other > 0 ? [{ key: 'other' as const, label: 'OTHER', count: data.counts.other }] : []),
   ] : []
+
+  const groups = useMemo(() => {
+    const out: { today: NoteRow[]; yesterday: NoteRow[]; earlier: NoteRow[] } = {
+      today: [], yesterday: [], earlier: [],
+    }
+    for (const n of filtered) out[dayBucket(n.updated_ts)].push(n)
+    return out
+  }, [filtered])
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
@@ -2852,12 +2939,15 @@ function NotesTab({ visible, filter, onFilterChange }: {
         <div className="flex items-center gap-2">
           <span className="text-emerald-500"><IconNotes /></span>
           <div>
-            <p className="text-xs font-mono text-slate-300 font-semibold">Notes Library</p>
+            <p className="text-xs font-mono text-slate-300 font-semibold">Notes &amp; Activity</p>
             <p className="text-[10px] font-mono text-slate-600">
-              Everything Vega / Lila / Cipher has written down
+              What the team is doing now + everything they&rsquo;ve written down
             </p>
           </div>
         </div>
+
+        {/* Live agent activity. Updates every 30s with the notes list. */}
+        {data?.activity && <AgentActivityCard activity={data.activity} />}
 
         {/* Filter pills */}
         {data && data.counts.total > 0 && (
@@ -2899,21 +2989,93 @@ function NotesTab({ visible, filter, onFilterChange }: {
             subtitle="Vega, Lila, and Cipher write notes as they work. They'll show up here."
           />
         ) : (
-          <div className="space-y-2">
-            {filtered.map(n => (
-              <NoteRow
-                key={n.id}
-                note={n}
-                expanded={expandedId === n.id}
-                content={expandedId === n.id ? expandedContent : null}
-                loadingContent={expandedId === n.id && fetchingContent}
-                onToggle={() => expand(n.id)}
-                onDelete={() => remove(n.id)}
-              />
-            ))}
+          <div className="space-y-4">
+            {(['today', 'yesterday', 'earlier'] as const).map(bucket => {
+              const rows = groups[bucket]
+              if (rows.length === 0) return null
+              const label = bucket === 'today' ? 'TODAY' : bucket === 'yesterday' ? 'YESTERDAY' : 'EARLIER'
+              return (
+                <div key={bucket} className="space-y-2">
+                  <p className="text-[9px] font-mono text-slate-600 tracking-widest">{label} · {rows.length}</p>
+                  <div className="space-y-2">
+                    {rows.map(n => (
+                      <NoteRow
+                        key={n.id}
+                        note={n}
+                        expanded={expandedId === n.id}
+                        content={expandedId === n.id ? expandedContent : null}
+                        loadingContent={expandedId === n.id && fetchingContent}
+                        onToggle={() => expand(n.id)}
+                        onDelete={() => remove(n.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Agent Activity Card ──────────────────────────────────────────────────────
+//
+// At-a-glance view of what each agent is doing *right now*. Consumes live
+// state snapshots (analyst_state, lila_loop_state, research_targets) that
+// the autonomy ticker updates as loops advance.
+
+function AgentActivityCard({ activity }: { activity: AgentActivity }) {
+  const rows: Array<{
+    who: 'Vega' | 'Cipher' | 'Lila'
+    color: string
+    line: string
+    ts: number | null
+  }> = []
+
+  if (activity.vega) {
+    rows.push({
+      who: 'Vega',
+      color: 'text-blue-400',
+      line: vegaStepLabel(activity.vega.step) + (activity.vega.cycle ? ` · cycle ${activity.vega.cycle}` : ''),
+      ts: activity.vega.last_ts,
+    })
+  }
+  if (activity.cipher) {
+    const t = activity.cipher.target
+    const line = t
+      ? `${t.title.length > 28 ? t.title.slice(0, 28) + '…' : t.title} · ${t.phase} · c${t.cycles}`
+      : cipherStepLabel(activity.cipher.step) + (activity.cipher.turn_count ? ` · turn ${activity.cipher.turn_count}` : '')
+    rows.push({
+      who: 'Cipher',
+      color: 'text-amber-400',
+      line,
+      ts: activity.cipher.target?.last_ts ?? activity.cipher.last_ts,
+    })
+  }
+  rows.push({
+    who: 'Lila',
+    color: 'text-emerald-400',
+    line: activity.lila.last_chat_ts ? 'last chat message' : 'idle — no chats yet',
+    ts: activity.lila.last_chat_ts,
+  })
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900/60 divide-y divide-slate-800">
+      {rows.map(r => (
+        <div key={r.who} className="px-3 py-2 flex items-center gap-3">
+          <span className={`text-[10px] font-mono font-semibold tracking-wider w-14 shrink-0 ${r.color}`}>
+            {r.who.toUpperCase()}
+          </span>
+          <p className="text-[11px] font-mono text-slate-300 flex-1 min-w-0 truncate">
+            {r.line}
+          </p>
+          <span className="text-[9px] font-mono text-slate-600 shrink-0 tabular-nums">
+            {r.ts ? fmtAge(r.ts) : '—'}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -2937,18 +3099,23 @@ function NoteRow({ note, expanded, content, loadingContent, onToggle, onDelete }
     })
   }
 
-  // Path → readable leaf. "analyst/notes/scan-2026-04-23.md" → "scan-2026-04-23.md"
-  const leaf = note.path.split('/').slice(1).join('/') || note.path
+  const { title, subtitle } = humanizeNotePath(note.path)
+  const catLabel = note.category === 'analyst' ? 'VEGA'
+                : note.category === 'tasker'  ? 'CIPHER'
+                : NOTE_CATEGORY_LABEL[note.category]
 
   return (
     <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
       <button className="w-full p-3 text-left" onClick={onToggle}>
         <div className="flex items-start gap-2">
           <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${catCls}`}>
-            {NOTE_CATEGORY_LABEL[note.category]}
+            {catLabel}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-mono text-slate-300 break-all">{leaf}</p>
+            <div className="flex items-baseline gap-2">
+              <p className="text-[11px] font-mono text-slate-200 font-semibold truncate">{title}</p>
+              <p className="text-[9px] font-mono text-slate-600 truncate">{subtitle}</p>
+            </div>
             <p className="text-[9px] font-mono text-slate-600 mt-0.5">
               {fmtAge(note.updated_ts)} · {note.size.toLocaleString()} chars
             </p>

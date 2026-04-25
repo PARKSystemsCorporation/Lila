@@ -14,7 +14,11 @@ function categorize(path: string): 'analyst' | 'lila' | 'tasker' | 'pitches' | '
 
 export async function GET(req: Request) {
   if (!process.env.DATABASE_URL) {
-    return NextResponse.json({ notes: [], counts: { analyst: 0, lila: 0, tasker: 0, pitches: 0, other: 0, total: 0 } })
+    return NextResponse.json({
+      notes: [],
+      counts: { analyst: 0, lila: 0, tasker: 0, pitches: 0, other: 0, total: 0 },
+      activity: null,
+    })
   }
 
   const url = new URL(req.url)
@@ -45,19 +49,43 @@ export async function GET(req: Request) {
       })
     }
 
-    // List: previews only, sorted newest first.
-    const { rows } = await db.query(
-      `SELECT id, path,
-              LEFT(content, 280) AS preview,
-              LENGTH(content)    AS size,
-              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts,
-              (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ts
-       FROM analyst_notes
-       ORDER BY updated_at DESC
-       LIMIT 500`
-    )
+    // List + activity snapshot in parallel.
+    const [notesRes, vegaRes, cipherRes, targetRes, lilaChatRes] = await Promise.all([
+      db.query(
+        `SELECT id, path,
+                LEFT(content, 280) AS preview,
+                LENGTH(content)    AS size,
+                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts,
+                (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ts
+         FROM analyst_notes
+         ORDER BY updated_at DESC
+         LIMIT 500`
+      ),
+      db.query(
+        `SELECT step, cycle,
+                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
+         FROM analyst_state WHERE id=1`
+      ),
+      db.query(
+        `SELECT step, turn_count,
+                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
+         FROM lila_loop_state WHERE id=1`
+      ),
+      db.query(
+        `SELECT title, phase, cycles,
+                (EXTRACT(EPOCH FROM last_worked_at) * 1000)::bigint AS last_ts
+         FROM research_targets
+         WHERE status='active'
+         ORDER BY last_worked_at DESC NULLS LAST
+         LIMIT 1`
+      ),
+      db.query(
+        `SELECT (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint AS last_ts
+         FROM chat_messages WHERE sender='lila'`
+      ),
+    ])
 
-    const notes = rows.map(r => ({
+    const notes = notesRes.rows.map(r => ({
       id: Number(r.id),
       path: r.path,
       category: categorize(r.path),
@@ -76,7 +104,34 @@ export async function GET(req: Request) {
       total:   notes.length,
     }
 
-    return NextResponse.json({ notes, counts })
+    const vega = vegaRes.rows[0]
+    const cipher = cipherRes.rows[0]
+    const tgt = targetRes.rows[0]
+    const lilaChat = lilaChatRes.rows[0]
+
+    const activity = {
+      vega: vega ? {
+        step: String(vega.step ?? 'T0'),
+        cycle: Number(vega.cycle ?? 0),
+        last_ts: vega.last_ts != null ? Number(vega.last_ts) : null,
+      } : null,
+      cipher: cipher ? {
+        step: String(cipher.step ?? 'BT0'),
+        turn_count: Number(cipher.turn_count ?? 0),
+        last_ts: cipher.last_ts != null ? Number(cipher.last_ts) : null,
+        target: tgt ? {
+          title: String(tgt.title ?? ''),
+          phase: String(tgt.phase ?? ''),
+          cycles: Number(tgt.cycles ?? 0),
+          last_ts: tgt.last_ts != null ? Number(tgt.last_ts) : null,
+        } : null,
+      } : null,
+      lila: {
+        last_chat_ts: lilaChat?.last_ts != null ? Number(lilaChat.last_ts) : null,
+      },
+    }
+
+    return NextResponse.json({ notes, counts, activity })
   } finally { db.release() }
 }
 
