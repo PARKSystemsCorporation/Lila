@@ -291,9 +291,80 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       id            INTEGER     PRIMARY KEY DEFAULT 1,
       cycle         INTEGER     NOT NULL DEFAULT 0,
       last_run_at   TIMESTAMPTZ,
+      last_schedule_at TIMESTAMPTZ,
+      last_grade_at    TIMESTAMPTZ,
+      last_lines_at    TIMESTAMPTZ,
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO ceelo_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+    -- Migrations for fields added after the table first shipped.
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_schedule_at TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grade_at    TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_lines_at    TIMESTAMPTZ;
+
+    -- Schedule: one row per known NFL game. ESPN's event id is the natural key.
+    CREATE TABLE IF NOT EXISTS ceelo_games (
+      id           SERIAL      PRIMARY KEY,
+      espn_id      TEXT        UNIQUE,
+      season       INTEGER     NOT NULL,
+      week         INTEGER,
+      season_type  INTEGER,                -- 1=preseason, 2=regular, 3=postseason
+      home_team    TEXT        NOT NULL,
+      away_team    TEXT        NOT NULL,
+      kickoff_at   TIMESTAMPTZ,
+      status       TEXT        NOT NULL DEFAULT 'scheduled',
+                                            -- scheduled | in_progress | final | postponed
+      home_score   INTEGER,
+      away_score   INTEGER,
+      neutral_site BOOLEAN     NOT NULL DEFAULT FALSE,
+      graded_at    TIMESTAMPTZ,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_games_kickoff ON ceelo_games(kickoff_at);
+    CREATE INDEX IF NOT EXISTS idx_ceelo_games_status ON ceelo_games(status, kickoff_at);
+
+    -- Power ratings — one row per team, updated after every graded game.
+    CREATE TABLE IF NOT EXISTS ceelo_team_ratings (
+      team           TEXT        PRIMARY KEY,           -- 2-3 letter abbr (KC, BUF, etc.)
+      rating         NUMERIC(8,3) NOT NULL DEFAULT 1500,
+      games_played   INTEGER     NOT NULL DEFAULT 0,
+      last_game_at   TIMESTAMPTZ,
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Model line per upcoming game. Recomputed on every cycle (cheap).
+    CREATE TABLE IF NOT EXISTS ceelo_model_lines (
+      game_id          INTEGER     PRIMARY KEY REFERENCES ceelo_games(id) ON DELETE CASCADE,
+      model_spread     NUMERIC(5,2),         -- home spread (negative = home favored)
+      model_home_prob  NUMERIC(4,3),
+      computed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Book lines history — populated only when ODDS_API_KEY is set.
+    CREATE TABLE IF NOT EXISTS ceelo_lines (
+      id           SERIAL      PRIMARY KEY,
+      game_id      INTEGER     NOT NULL REFERENCES ceelo_games(id) ON DELETE CASCADE,
+      book         TEXT        NOT NULL,             -- 'draftkings' | 'fanduel' | etc.
+      market       TEXT        NOT NULL,             -- 'spread' | 'total' | 'moneyline'
+      home_line    NUMERIC(6,2),
+      total_line   NUMERIC(6,2),
+      home_odds    INTEGER,
+      away_odds    INTEGER,
+      over_odds    INTEGER,
+      under_odds   INTEGER,
+      fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_lines_game ON ceelo_lines(game_id, market, fetched_at DESC);
+
+    -- Migrations: link picks to games + carry the math behind each pick.
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS game_id        INTEGER REFERENCES ceelo_games(id) ON DELETE SET NULL;
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_spread   NUMERIC(5,2);
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS book_spread    NUMERIC(5,2);
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS book_name      TEXT;
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS edge_points    NUMERIC(5,2);
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS source         TEXT NOT NULL DEFAULT 'llm';
+                                                  -- 'llm' (v1) | 'model' (v2 math-driven)
   `)
   schemaReady = true
 }

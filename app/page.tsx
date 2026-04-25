@@ -2777,6 +2777,11 @@ interface PickRow {
   fair_line: string | null
   min_odds: number | null
   edge_pct: number | null
+  model_spread: number | null
+  book_spread: number | null
+  book_name: string | null
+  edge_points: number | null
+  source: 'llm' | 'model'
   reasoning: string
   confidence: string
   status: PickStatus
@@ -2788,6 +2793,18 @@ interface PickRow {
   created_ts: number
 }
 
+interface CeeloStatus {
+  odds_key: boolean
+  rated_teams: number
+  upcoming_games: number
+  model_lines: number
+  last_run_ts: number | null
+  last_schedule_ts: number | null
+  last_grade_ts: number | null
+  last_lines_ts: number | null
+  cycle: number
+}
+
 interface PicksData {
   picks: PickRow[]
   summary: {
@@ -2796,6 +2813,7 @@ interface PicksData {
     record: { wins: number; losses: number; pushes: number }
     bankroll: { staked: number; returned: number; pnl: number; roi: number }
   }
+  status: CeeloStatus | null
 }
 
 function fmtAmericanOdds(o: number | null): string {
@@ -2862,6 +2880,9 @@ function PicksTab({ visible }: { visible: boolean }) {
 
         {/* Bankroll & record header */}
         {data && <BankrollCard summary={data.summary} />}
+
+        {/* Ceelo's autonomy state — model freshness, ratings, key state */}
+        {data?.status && <CeeloStatusCard status={data.status} />}
 
         {loading && !data ? (
           <div className="flex items-center gap-2 py-10 justify-center">
@@ -2937,6 +2958,60 @@ function BankrollCard({ summary }: { summary: PicksData['summary'] }) {
         <Stat label="Staked" value={`$${bankroll.staked.toFixed(2)}`} />
         <Stat label="Open / Active" value={`${open} / ${active}`} />
       </div>
+    </div>
+  )
+}
+
+// Snapshot of Ceelo's autonomy loop: ratings depth, schedule depth, model
+// freshness, and whether the live-line gate is armed (needs ODDS_API_KEY).
+function CeeloStatusCard({ status }: { status: CeeloStatus }) {
+  const oddsLabel  = status.odds_key ? 'ARMED' : 'WAITING'
+  const oddsClass  = status.odds_key
+    ? 'bg-emerald-950 text-emerald-300 border-emerald-900'
+    : 'bg-amber-950 text-amber-300 border-amber-900'
+  const lastRun = status.last_run_ts ? fmtAge(status.last_run_ts) : 'never'
+  const lastSched = status.last_schedule_ts ? fmtAge(status.last_schedule_ts) : '—'
+  const lastGrade = status.last_grade_ts ? fmtAge(status.last_grade_ts) : '—'
+  const lastLines = status.last_lines_ts ? fmtAge(status.last_lines_ts) : (status.odds_key ? '—' : 'no key')
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900/60 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-400 tracking-widest font-semibold">
+          CEELO &middot; CYCLE {status.cycle}
+        </p>
+        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${oddsClass}`}>
+          GATE {oddsLabel}
+        </span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <Stat label="Rated teams" value={`${status.rated_teams}/32`} />
+        <Stat label="Upcoming"    value={String(status.upcoming_games)} />
+        <Stat label="Model lines" value={String(status.model_lines)} />
+      </div>
+      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+        <div className="text-center">
+          <p className="text-[10px] font-mono text-slate-400 tabular-nums">{lastRun}</p>
+          <p className="text-[8px] font-mono text-slate-600 tracking-wider mt-0.5">LAST CYCLE</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[10px] font-mono text-slate-400 tabular-nums">{lastSched}</p>
+          <p className="text-[8px] font-mono text-slate-600 tracking-wider mt-0.5">SCHEDULE</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[10px] font-mono text-slate-400 tabular-nums">{lastGrade}</p>
+          <p className="text-[8px] font-mono text-slate-600 tracking-wider mt-0.5">LAST GRADE</p>
+        </div>
+        <div className="text-center">
+          <p className="text-[10px] font-mono text-slate-400 tabular-nums">{lastLines}</p>
+          <p className="text-[8px] font-mono text-slate-600 tracking-wider mt-0.5">BOOK LINES</p>
+        </div>
+      </div>
+      {!status.odds_key && (
+        <p className="text-[9px] font-mono text-amber-400/80 leading-snug pt-1 border-t border-slate-800">
+          Add ODDS_API_KEY (free at theoddsapi.com) to engage the edge gate. Until then, model lines are computed but no picks fire.
+        </p>
+      )}
     </div>
   )
 }
@@ -3024,6 +3099,8 @@ function PickCard({ pick, expanded, onToggle, onAction }: {
   const confCls = CONF_STYLE[pick.confidence] ?? CONF_STYLE.medium
   const edge = pick.edge_pct != null ? `${pick.edge_pct >= 0 ? '+' : ''}${pick.edge_pct.toFixed(1)}%` : null
   const prob = pick.model_prob != null ? `${Math.round(pick.model_prob * 100)}%` : null
+  const isModel = pick.source === 'model'
+  const fmtSpread = (v: number) => v === 0 ? 'PK' : v > 0 ? `+${v.toFixed(1)}` : v.toFixed(1)
 
   return (
     <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
@@ -3042,10 +3119,21 @@ function PickCard({ pick, expanded, onToggle, onAction }: {
               {pick.game_label} · {fmtKickoff(pick.kickoff_at)}
             </p>
             <p className="text-[9px] font-mono text-slate-600 mt-0.5 tabular-nums">
-              {prob && <>p={prob}</>}
-              {pick.fair_line && <> · fair {pick.fair_line}</>}
-              {pick.min_odds != null && <> · min {fmtAmericanOdds(pick.min_odds)}</>}
-              {edge && <> · edge {edge}</>}
+              {isModel ? (
+                <>
+                  {pick.model_spread != null && <>model {fmtSpread(pick.model_spread)}</>}
+                  {pick.book_spread  != null && <> · book {fmtSpread(pick.book_spread)}</>}
+                  {pick.book_name           && <> ({pick.book_name})</>}
+                  {pick.edge_points  != null && <> · edge {pick.edge_points.toFixed(1)} pt</>}
+                </>
+              ) : (
+                <>
+                  {prob && <>p={prob}</>}
+                  {pick.fair_line && <> · fair {pick.fair_line}</>}
+                  {pick.min_odds != null && <> · min {fmtAmericanOdds(pick.min_odds)}</>}
+                  {edge && <> · edge {edge}</>}
+                </>
+              )}
             </p>
             {isTaken && pick.stake != null && (
               <p className="text-[9px] font-mono text-blue-400 mt-0.5 tabular-nums">

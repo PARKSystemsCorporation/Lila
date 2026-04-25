@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
 import { netProfit } from '@/lib/ceelo-loop'
+import * as Odds from '@/lib/ceelo/odds'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,6 +24,11 @@ interface PickRow {
   fair_line: string | null
   min_odds: number | null
   edge_pct: number | null
+  model_spread: number | null
+  book_spread: number | null
+  book_name: string | null
+  edge_points: number | null
+  source: 'llm' | 'model'
   reasoning: string
   confidence: string
   status: Status
@@ -39,6 +45,7 @@ export async function GET() {
     return NextResponse.json({
       picks: [],
       summary: { open: 0, active: 0, record: { wins: 0, losses: 0, pushes: 0 }, bankroll: { staked: 0, returned: 0, pnl: 0, roi: 0 } },
+      status: null,
     })
   }
 
@@ -47,28 +54,51 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const { rows } = await db.query(
-      `SELECT id, game_label, market, side,
-              model_prob, fair_line, min_odds, edge_pct,
-              reasoning, confidence, status, stake, taken_odds, payout,
-              (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts,
-              (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
-              (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
-              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
-       FROM ceelo_picks
-       ORDER BY
-         CASE status
-           WHEN 'open'   THEN 0
-           WHEN 'taken'  THEN 1
-           WHEN 'won'    THEN 2
-           WHEN 'lost'   THEN 2
-           WHEN 'push'   THEN 2
-           WHEN 'void'   THEN 2
-           WHEN 'skipped' THEN 3
-         END,
-         created_at DESC
-       LIMIT 200`
-    )
+    const [picksRes, stateRes, ratingsRes, scheduleRes, modelRes] = await Promise.all([
+      db.query(
+        `SELECT id, game_label, market, side,
+                model_prob, fair_line, min_odds, edge_pct,
+                model_spread, book_spread, book_name, edge_points, source,
+                reasoning, confidence, status, stake, taken_odds, payout,
+                (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts,
+                (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
+                (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
+                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
+         FROM ceelo_picks
+         ORDER BY
+           CASE status
+             WHEN 'open'   THEN 0
+             WHEN 'taken'  THEN 1
+             WHEN 'won'    THEN 2
+             WHEN 'lost'   THEN 2
+             WHEN 'push'   THEN 2
+             WHEN 'void'   THEN 2
+             WHEN 'skipped' THEN 3
+           END,
+           created_at DESC
+         LIMIT 200`
+      ),
+      db.query(
+        `SELECT (EXTRACT(EPOCH FROM last_run_at)      * 1000)::bigint AS last_run_ts,
+                (EXTRACT(EPOCH FROM last_schedule_at) * 1000)::bigint AS last_sched_ts,
+                (EXTRACT(EPOCH FROM last_grade_at)    * 1000)::bigint AS last_grade_ts,
+                (EXTRACT(EPOCH FROM last_lines_at)    * 1000)::bigint AS last_lines_ts,
+                cycle
+         FROM ceelo_state WHERE id=1`
+      ),
+      db.query(`SELECT COUNT(*) AS n FROM ceelo_team_ratings WHERE games_played > 0`),
+      db.query(
+        `SELECT COUNT(*) AS n FROM ceelo_games
+         WHERE status='scheduled' AND kickoff_at > NOW()`
+      ),
+      db.query(`SELECT COUNT(*) AS n FROM ceelo_model_lines`),
+    ])
+
+    const rows = picksRes.rows
+    const s = stateRes.rows[0] ?? {}
+    const ratedTeams      = Number(ratingsRes.rows[0]?.n ?? 0)
+    const upcomingGames   = Number(scheduleRes.rows[0]?.n ?? 0)
+    const modelLineCount  = Number(modelRes.rows[0]?.n ?? 0)
 
     const picks: PickRow[] = rows.map(r => ({
       id: Number(r.id),
@@ -80,6 +110,11 @@ export async function GET() {
       fair_line: r.fair_line ?? null,
       min_odds: r.min_odds != null ? Number(r.min_odds) : null,
       edge_pct: r.edge_pct != null ? Number(r.edge_pct) : null,
+      model_spread: r.model_spread != null ? Number(r.model_spread) : null,
+      book_spread:  r.book_spread  != null ? Number(r.book_spread)  : null,
+      book_name:    r.book_name ?? null,
+      edge_points:  r.edge_points  != null ? Number(r.edge_points)  : null,
+      source: (r.source ?? 'llm') as 'llm' | 'model',
       reasoning: r.reasoning,
       confidence: r.confidence,
       status: r.status as Status,
@@ -124,6 +159,17 @@ export async function GET() {
         active,
         record: { wins, losses, pushes },
         bankroll: { staked: +staked.toFixed(2), returned: +returned.toFixed(2), pnl, roi },
+      },
+      status: {
+        odds_key:        Odds.isConfigured(),
+        rated_teams:     ratedTeams,
+        upcoming_games:  upcomingGames,
+        model_lines:     modelLineCount,
+        last_run_ts:      s.last_run_ts      != null ? Number(s.last_run_ts)      : null,
+        last_schedule_ts: s.last_sched_ts    != null ? Number(s.last_sched_ts)    : null,
+        last_grade_ts:    s.last_grade_ts    != null ? Number(s.last_grade_ts)    : null,
+        last_lines_ts:    s.last_lines_ts    != null ? Number(s.last_lines_ts)    : null,
+        cycle:            s.cycle            != null ? Number(s.cycle)            : 0,
       },
     })
   } finally { db.release() }

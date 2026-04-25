@@ -27,8 +27,10 @@ export const cfg = Object.freeze({
   MANAGEMENT_TRADE_SEC:   num('MANAGEMENT_TRADE_SEC', 900),
   // Vega step interval (minutes).
   ANALYST_STEP_MIN:       num('ANALYST_STEP_MIN', 2),
-  // Ceelo run interval (hours). NFL games drop weekly so once every 12h is plenty.
-  CEELO_RUN_HOURS:        num('CEELO_RUN_HOURS', 12),
+  // Ceelo run interval (minutes). State-machine cycle ticks; each step is
+  // internally rate-limited so this can be aggressive without spamming
+  // upstream sources.
+  CEELO_RUN_MIN:          num('CEELO_RUN_MIN', 30),
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).
   BROADCAST_INTERVAL_MIN: num('BROADCAST_INTERVAL_MIN', 60),
