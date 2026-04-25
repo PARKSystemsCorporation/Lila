@@ -27,28 +27,40 @@ export interface BroadcastResult {
   posted: boolean
 }
 
-const POST_PROMPT = `You are Lila posting a public operational update on Bluesky. One post per hour, rain or shine.
+const POST_PROMPT = `You are Lila posting market commentary on Bluesky. One post per hour.
 
-Voice: dry, numbers-first, quiet operator. No hashtags, no emojis, no exclamation points. Not a marketer. 2-3 short sentences max. Under 260 characters total.
+Voice: dry, numbers-first, quant-trained. No hashtags, no emojis, no exclamation points. Not a marketer, not a finfluencer. 2-3 short sentences max. Under 260 characters total.
+
+SCOPE — market content only:
+- Market thesis (what's setting up, what's breaking, what's reverting).
+- Commodity triggers (oil, gas, metals, ags) and the macro catalyst driving them.
+- Global news effects (central bank, geopolitics, data prints) read through a positioning lens.
+- Quant / technical reads (levels, flows, vol regime, cross-asset signals).
+- A closed trade result only if it illustrates a thesis. Lead with the setup, not the P&L.
+
+DO NOT post:
+- Life updates, internal ops chatter, bounty/research pipeline status, cycle/phase counters, queue depth, payouts.
+- Vague platitudes ("stay sharp", "risk on today"). Every post needs a specific signal or read.
 
 FINANCIAL INTEGRITY:
-- "Paid" / "received" only when {PAID_HINT_CONTEXT}. Anything submitted or approved is PENDING — say pending, not earned.
-- If nothing new happened, don't fabricate — post a quiet state line (current target, queue depth, etc.).
+- State views as views, not certainty. No guarantees, no price targets stated as fact.
+- If you reference a trade, "closed" / "P&L" is OK for realized results. Anything open is a view, not a win.
 
-Your recent posts (do NOT repeat these angles):
+Your recent posts (do NOT repeat these angles or tickers):
 {RECENT_POSTS}
 
-Current state + any notable events since last post:
+Vega's latest market intel + current positioning:
 {CONTEXT}
 
-Pick ONE angle for THIS post. Prefer newer info. Menu:
-  1. A paid event (if one just landed — lead with the $ and platform).
-  2. A closed trade (symbol + P&L).
-  3. A newly approved report (what + max).
-  4. Research progress (target + cycle + phase).
-  5. Discovery / watchlist delta (e.g. "+3 protocols from DefiLlama today").
-  6. Pipeline state (e.g. "2 reports in Lila's queue, 1 awaiting submit").
-  7. Quiet state (e.g. "Cycle 4 on <target>, phase investigate. No payouts today.").
+Pick ONE angle for THIS post. Prefer the freshest catalyst or cleanest setup. Menu:
+  1. Commodity trigger — which commodity, what's moving it right now.
+  2. Macro / news read — data print or policy event, and the positioning implication.
+  3. Quant / technical — level, flow, vol, correlation break.
+  4. Cross-asset thesis — what one market is telling you about another.
+  5. Closed trade as thesis illustration — setup → trigger → result.
+  6. Watchlist delta only if it's a real signal (e.g. "crude curve flipped to backwardation").
+
+If Vega has nothing fresh, post a tight quant read of whatever's in the current state. Do not fabricate catalysts.
 
 Output the post text only. No surrounding quotes, no "update:" preamble.`
 
@@ -344,67 +356,67 @@ export class BroadcastLoop {
     )
     const since: string = state?.last_broadcast_at ?? new Date(Date.now() - 86_400_000).toISOString()
 
-    const [paid, approved, closedTrades, earnings, target, drafts, positions, watch] = await Promise.all([
+    const [notes, picks, openPositions, closedTrades] = await Promise.all([
       this.db.query(
-        `SELECT title, payout, platform_label FROM security_reports
-         WHERE paid_at IS NOT NULL AND paid_at > $1
-         ORDER BY paid_at DESC LIMIT 3`, [since]
+        `SELECT path, content FROM analyst_notes
+         ORDER BY updated_at DESC LIMIT 4`
       ),
       this.db.query(
-        `SELECT title, reward, platform_label FROM security_reports
-         WHERE status='approved' AND updated_at > $1
-         ORDER BY updated_at DESC LIMIT 3`, [since]
+        `SELECT symbol, direction, entry_price, target_price, stop_loss, confidence, risk_level, reason, asset_class
+         FROM analyst_picks
+         WHERE status='pending' OR (status='executed' AND created_at > $1)
+         ORDER BY created_at DESC LIMIT 5`, [since]
       ),
       this.db.query(
-        `SELECT symbol, pnl FROM lila_positions
+        `SELECT symbol, direction, entry_price, target_price, stop_loss
+         FROM lila_positions
+         WHERE status='open' ORDER BY opened_at DESC LIMIT 5`
+      ),
+      this.db.query(
+        `SELECT symbol, direction, pnl, entry_price FROM lila_positions
          WHERE status='closed' AND closed_at IS NOT NULL AND closed_at > $1
            AND COALESCE(ABS(pnl), 0) >= 1
          ORDER BY closed_at DESC LIMIT 3`, [since]
       ),
-      this.db.query('SELECT total_earned FROM lila_state WHERE id=1'),
-      this.db.query(
-        `SELECT title, phase, cycles FROM research_targets
-         WHERE status='active' ORDER BY last_worked_at DESC NULLS LAST LIMIT 1`
-      ),
-      this.db.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE status='pending_review') AS reviewing,
-           COUNT(*) FILTER (WHERE status='approved')       AS approved,
-           COUNT(*) FILTER (WHERE status='submitted')      AS submitted
-         FROM security_reports`
-      ),
-      this.db.query(`SELECT symbol FROM lila_positions WHERE status='open' LIMIT 5`),
-      this.db.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE status='watching' AND first_seen_at > $1) AS new_watches,
-           COUNT(*) FILTER (WHERE status='watching')                        AS watching
-         FROM watch_targets`, [since]
-      ),
     ])
 
     const lines: string[] = []
-    lines.push(`Total earned (paid + closed P&L): $${parseFloat(earnings.rows[0]?.total_earned ?? '0').toFixed(2)}`)
-    for (const p of paid.rows)         lines.push(`PAID: "${p.title}" on ${p.platform_label} → $${parseFloat(p.payout).toFixed(2)} received`)
-    for (const a of approved.rows)     lines.push(`APPROVED: "${a.title}" on ${a.platform_label} (max $${a.reward})`)
-    for (const t of closedTrades.rows) {
-      const v = parseFloat(t.pnl ?? '0')
-      lines.push(`TRADE CLOSED: ${t.symbol} ${v >= 0 ? '+' : ''}$${v.toFixed(2)}`)
-    }
-    if (target.rows[0]) lines.push(`Research target pinned: "${target.rows[0].title}" — cycle ${target.rows[0].cycles}, phase ${target.rows[0].phase}`)
 
-    const d = drafts.rows[0]
-    const pipelineParts: string[] = []
-    if (Number(d?.reviewing) > 0) pipelineParts.push(`${d.reviewing} awaiting Lila review`)
-    if (Number(d?.approved) > 0)  pipelineParts.push(`${d.approved} approved, awaiting submit`)
-    if (Number(d?.submitted) > 0) pipelineParts.push(`${d.submitted} submitted, awaiting payout`)
-    if (pipelineParts.length) lines.push(`Reports pipeline: ${pipelineParts.join(' · ')}`)
-    if (positions.rows.length > 0) lines.push(`Open positions: ${positions.rows.map((p: { symbol: string }) => p.symbol).join(', ')}`)
-
-    const newWatches = Number(watch.rows[0]?.new_watches ?? 0)
-    const watching   = Number(watch.rows[0]?.watching ?? 0)
-    if (newWatches > 0 || watching > 0) {
-      lines.push(`Watchlist: ${watching} total${newWatches > 0 ? ` (+${newWatches} new since last post)` : ''}`)
+    if (notes.rows.length > 0) {
+      lines.push('VEGA NOTES (most recent first, treat as the freshest market reads):')
+      for (const n of notes.rows) {
+        const body = String(n.content ?? '').slice(0, 600).replace(/\s+/g, ' ').trim()
+        lines.push(`  [${n.path}] ${body}`)
+      }
+    } else {
+      lines.push('VEGA NOTES: none fresh. Lean on positioning + a technical/quant read.')
     }
+
+    if (picks.rows.length > 0) {
+      lines.push('VEGA PICKS (current thesis set):')
+      for (const p of picks.rows) {
+        const conf = p.confidence != null ? ` conf=${Number(p.confidence).toFixed(2)}` : ''
+        const entry = p.entry_price != null ? ` entry=${p.entry_price}` : ''
+        const tgt = p.target_price != null ? ` tgt=${p.target_price}` : ''
+        const stop = p.stop_loss != null ? ` stop=${p.stop_loss}` : ''
+        const risk = p.risk_level ? ` risk=${p.risk_level}` : ''
+        const why = p.reason ? ` — ${String(p.reason).slice(0, 200)}` : ''
+        lines.push(`  ${p.symbol} ${p.direction} [${p.asset_class}]${entry}${tgt}${stop}${conf}${risk}${why}`)
+      }
+    }
+
+    if (openPositions.rows.length > 0) {
+      const parts = openPositions.rows.map((p: { symbol: string; direction: string }) => `${p.symbol} ${p.direction}`)
+      lines.push(`OPEN POSITIONS: ${parts.join(', ')}`)
+    }
+
+    if (closedTrades.rows.length > 0) {
+      for (const t of closedTrades.rows) {
+        const v = parseFloat(t.pnl ?? '0')
+        lines.push(`CLOSED: ${t.symbol} ${t.direction} ${v >= 0 ? '+' : ''}$${v.toFixed(2)}`)
+      }
+    }
+
     return lines.join('\n')
   }
 
@@ -432,7 +444,6 @@ export class BroadcastLoop {
         messages: [{
           role: 'user',
           content: POST_PROMPT
-            .replace('{PAID_HINT_CONTEXT}', "there's a 'PAID:' line below")
             .replace('{RECENT_POSTS}', recent)
             .replace('{CONTEXT}', context),
         }],
