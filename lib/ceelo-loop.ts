@@ -374,6 +374,15 @@ export class CeeloLoop {
           fmtSpread(model), reasoning, conf,
         ]
       )
+
+      // Emit a real-time broadcast alert for the operator
+      const alertMsg = `🚨 Ceelo Edge Alert\n${game_label} — ${side}\n\nModel: ${fmtSpread(model)}\nBook: ${fmtSpread(book)} (${r.book})\nEdge: ${Math.abs(edge).toFixed(1)} pts (${conf})`
+      await this.db.query(
+        `INSERT INTO broadcasts (channel, content, status, scheduled_publish_at)
+         VALUES ('telegram', $1, 'pending_publish', NOW())`,
+        [alertMsg]
+      )
+
       inserted++
     }
     return inserted > 0 ? `C4 ${inserted} picks` : ''

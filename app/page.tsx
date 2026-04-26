@@ -2428,6 +2428,100 @@ const PERIODS: { key: string; label: string }[] = [
   { key: 'all', label: 'ALL' },
 ]
 
+// ─── Charts ───────────────────────────────────────────────────────────────────
+
+// Tiny chart wrapper — we dynamically import lightweight-charts so server
+// rendering doesn't try to touch window/canvas.
+function EdgeGraph({ picks }: { picks: PickRow[] }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!containerRef.current || picks.length === 0) return
+    let chart: { remove: () => void } | null = null
+    let resizeObserver: ResizeObserver | null = null
+    let cancelled = false
+
+    ;(async () => {
+      const lib = await import('lightweight-charts')
+      if (cancelled || !containerRef.current) return
+
+      const c = lib.createChart(containerRef.current, {
+        width: containerRef.current.clientWidth,
+        height: 180,
+        layout: {
+          background: { type: lib.ColorType.Solid, color: 'transparent' },
+          textColor: '#64748b',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: 10,
+        },
+        grid: {
+          vertLines: { color: 'rgba(30, 41, 59, 0.5)' },
+          horzLines: { color: 'rgba(30, 41, 59, 0.5)' },
+        },
+        timeScale: {
+          timeVisible: true,
+          borderColor: '#1e293b',
+        },
+        rightPriceScale: { borderColor: '#1e293b' },
+        crosshair: {
+          vertLine: { color: '#334155', width: 1 },
+          horzLine: { color: '#334155', width: 1 },
+        },
+        handleScroll: false,
+        handleScale: false,
+      })
+      chart = c
+
+      const series = c.addHistogramSeries({
+        color: '#f43f5e', // rose-500
+        priceFormat: { type: 'volume' }, // hides currency symbol
+      })
+
+      // Group by time, add slight offset for exact duplicates
+      const seen = new Set<number>()
+      const sorted = picks
+        .filter(p => p.edge_points != null && p.kickoff_at != null)
+        .map(p => {
+          let t = Math.floor(new Date(p.kickoff_at!).getTime() / 1000)
+          while (seen.has(t)) t++
+          seen.add(t)
+          return { time: t as unknown as import('lightweight-charts').UTCTimestamp, value: p.edge_points!, color: p.confidence === 'high' ? '#10b981' : p.confidence === 'medium' ? '#f59e0b' : '#334155' }
+        })
+        .sort((a, b) => (a.time as number) - (b.time as number))
+
+      series.setData(sorted)
+      c.timeScale().fitContent()
+
+      resizeObserver = new ResizeObserver(() => {
+        if (!containerRef.current) return
+        c.applyOptions({ width: containerRef.current.clientWidth })
+      })
+      resizeObserver.observe(containerRef.current)
+    })()
+
+    return () => {
+      cancelled = true
+      resizeObserver?.disconnect()
+      chart?.remove()
+    }
+  }, [picks])
+
+  if (picks.length === 0) return null
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-mono text-slate-400 uppercase tracking-widest">Model Edges (Pts)</p>
+        <div className="flex gap-2">
+          <span className="text-[9px] font-mono text-emerald-400">■ High</span>
+          <span className="text-[9px] font-mono text-amber-400">■ Med</span>
+        </div>
+      </div>
+      <div ref={containerRef} className="w-full h-[180px]" />
+    </div>
+  )
+}
+
 // Tiny chart wrapper — we dynamically import lightweight-charts so server
 // rendering doesn't try to touch window/canvas.
 function EquityChart({ timestamps, values, color = '#10b981' }: {
@@ -2963,6 +3057,7 @@ function PicksView({ visible, data, reload }: {
 
         {data && <BankrollCard summary={data.summary} />}
         {data?.status && <CeeloStatusCard status={data.status} />}
+        {data?.picks && data.picks.length > 0 && <EdgeGraph picks={open.concat(taken)} />}
 
         {!data ? (
           <div className="flex items-center gap-2 py-10 justify-center">
