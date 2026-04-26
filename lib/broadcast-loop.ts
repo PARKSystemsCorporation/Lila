@@ -4,6 +4,18 @@ import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 import * as Bluesky from './channels/bluesky'
 import * as Telegram from './channels/telegram'
+import * as Alpaca from './platforms/alpaca'
+
+// Market quant context: tickers Vega tracks. Same list as analyst-loop's
+// WATCHLIST so the broadcast pulls from the same universe Vega scans.
+const QUANT_WATCHLIST = [
+  // commodity ETFs
+  'GLD', 'SLV', 'USO', 'GDX', 'UNG', 'CPER', 'PDBC',
+  // leveraged index
+  'SPXL', 'TQQQ', 'UPRO', 'QLD', 'SOXL',
+  // global macro
+  'TLT', 'HYG', 'UUP', 'EEM', 'EFA', 'FXI', 'EWJ', 'VWO',
+]
 
 // ── Broadcast loop ───────────────────────────────────────────────────────────
 //
@@ -27,40 +39,25 @@ export interface BroadcastResult {
   posted: boolean
 }
 
-const POST_PROMPT = `You are Lila posting market commentary on Bluesky. One post per hour.
+const POST_PROMPT = `You are Lila posting market commentary on Bluesky. Market-only feed.
 
 Voice: dry, numbers-first, quant-trained. No hashtags, no emojis, no exclamation points. Not a marketer, not a finfluencer. 2-3 short sentences max. Under 260 characters total.
 
-SCOPE — market content only:
-- Market thesis (what's setting up, what's breaking, what's reverting).
-- Commodity triggers (oil, gas, metals, ags) and the macro catalyst driving them.
-- Global news effects (central bank, geopolitics, data prints) read through a positioning lens.
-- Quant / technical reads (levels, flows, vol regime, cross-asset signals).
-- A closed trade result only if it illustrates a thesis. Lead with the setup, not the P&L.
+REQUIRED — every post is one of these, anchored to specific tickers + numbers from the LIVE DATA below:
+- Quant read on a ticker or pair (level vs SMA, momentum, vol regime, divergence).
+- Commodity / macro / cross-asset thesis grounded in the data.
+- Trade-idea sketch (ticker, side, why) — view, not advice.
+- Post-mortem of a closed trade in the data.
 
-DO NOT post:
-- Life updates, internal ops chatter, bounty/research pipeline status, cycle/phase counters, queue depth, payouts.
-- Vague platitudes ("stay sharp", "risk on today"). Every post needs a specific signal or read.
+ABSOLUTELY FORBIDDEN. Posts containing any of this will be rejected:
+- Words like: protocols, watchlist (in the security sense), reports, queue, awaiting submit, payouts, bounties, research targets, cycles, phases, pipeline, "X reports in queue", "no payouts today". Internal ops state has zero place on the market feed.
+- Generic platitudes ("stay sharp", "risk on", "interesting tape"). Every post must name a ticker or a specific level / move.
+- Inventing data not present below.
 
-FINANCIAL INTEGRITY:
-- State views as views, not certainty. No guarantees, no price targets stated as fact.
-- If you reference a trade, "closed" / "P&L" is OK for realized results. Anything open is a view, not a win.
+If the live data is too thin to support a real take, output the single word \`SKIP\` and nothing else. Skipping is far better than fluff.
 
-Your recent posts (do NOT repeat these angles or tickers):
-{RECENT_POSTS}
-
-Vega's latest market intel + current positioning:
+LIVE DATA (use only this — do not invent beyond it):
 {CONTEXT}
-
-Pick ONE angle for THIS post. Prefer the freshest catalyst or cleanest setup. Menu:
-  1. Commodity trigger — which commodity, what's moving it right now.
-  2. Macro / news read — data print or policy event, and the positioning implication.
-  3. Quant / technical — level, flow, vol, correlation break.
-  4. Cross-asset thesis — what one market is telling you about another.
-  5. Closed trade as thesis illustration — setup → trigger → result.
-  6. Watchlist delta only if it's a real signal (e.g. "crude curve flipped to backwardation").
-
-If Vega has nothing fresh, post a tight quant read of whatever's in the current state. Do not fabricate catalysts.
 
 Output the post text only. No surrounding quotes, no "update:" preamble.`
 
@@ -179,8 +176,10 @@ export class BroadcastLoop {
 
     const text = await this.compose(context, recent)
     if (!text) {
+      // Substance gate or model-side SKIP — silent skip, mark cycle done so
+      // we don't retry until the next interval. Better than spamming slop.
       await this.mark()
-      return { logMessage: 'Broadcast: LLM returned empty, skipped.', logType: 'warn', posted: false }
+      return { logMessage: 'Broadcast skipped — no substantive market data this hour.', logType: 'info', posted: false }
     }
 
     // No preview window → publish immediately (legacy path).
@@ -248,6 +247,19 @@ export class BroadcastLoop {
     for (const row of rows) {
       const channel = String(row.channel)
       const text    = String(row.content)
+      // Cancel any queued post that matches the old ops-status pattern.
+      // Defense in depth — the new compose path filters these, but legacy
+      // queued rows from before the prompt change should die quietly.
+      if (looksLikeOpsContent(text)) {
+        await this.db.query(
+          `UPDATE broadcasts
+             SET status = 'cancelled',
+                 error  = 'cancelled: ops-status content not allowed on market feed'
+           WHERE id = $1`,
+          [Number(row.id)]
+        )
+        continue
+      }
       const r = await this.publishOne(channel, text)
       results.push({ id: Number(row.id), channel, ok: r.ok, error: r.error })
       await this.db.query(
@@ -381,28 +393,40 @@ export class BroadcastLoop {
       ),
     ])
 
+    // Live quant data on the watchlist tickers. Free via Alpaca's bars API
+    // and gives the LLM something concrete to riff on even when Vega has
+    // written no notes (offseason / pre-market / quiet day).
+    const bars = await Alpaca.getBars(QUANT_WATCHLIST, 25).catch(() => [] as Alpaca.BarData[])
+
     const lines: string[] = []
 
+    if (bars.length > 0) {
+      lines.push('LIVE QUANT (price · 20d SMA · 5d momentum · vol vs avg):')
+      for (const b of bars) {
+        const mom = `${b.momentum >= 0 ? '+' : ''}${b.momentum.toFixed(1)}%`
+        const vol = `${b.volumeRatio.toFixed(2)}x`
+        const vsSma = b.sma20 > 0 ? `${b.price >= b.sma20 ? '>' : '<'}sma` : ''
+        lines.push(`  ${b.symbol}: $${b.price.toFixed(2)} sma20=$${b.sma20.toFixed(2)} mom=${mom} vol=${vol} ${vsSma}`)
+      }
+    }
+
     if (notes.rows.length > 0) {
-      lines.push('VEGA NOTES (most recent first, treat as the freshest market reads):')
+      lines.push('VEGA NOTES (latest market reads):')
       for (const n of notes.rows) {
         const body = String(n.content ?? '').slice(0, 600).replace(/\s+/g, ' ').trim()
         lines.push(`  [${n.path}] ${body}`)
       }
-    } else {
-      lines.push('VEGA NOTES: none fresh. Lean on positioning + a technical/quant read.')
     }
 
     if (picks.rows.length > 0) {
-      lines.push('VEGA PICKS (current thesis set):')
+      lines.push('VEGA PICKS:')
       for (const p of picks.rows) {
         const conf = p.confidence != null ? ` conf=${Number(p.confidence).toFixed(2)}` : ''
         const entry = p.entry_price != null ? ` entry=${p.entry_price}` : ''
         const tgt = p.target_price != null ? ` tgt=${p.target_price}` : ''
         const stop = p.stop_loss != null ? ` stop=${p.stop_loss}` : ''
-        const risk = p.risk_level ? ` risk=${p.risk_level}` : ''
         const why = p.reason ? ` — ${String(p.reason).slice(0, 200)}` : ''
-        lines.push(`  ${p.symbol} ${p.direction} [${p.asset_class}]${entry}${tgt}${stop}${conf}${risk}${why}`)
+        lines.push(`  ${p.symbol} ${p.direction}${entry}${tgt}${stop}${conf}${why}`)
       }
     }
 
@@ -418,7 +442,18 @@ export class BroadcastLoop {
       }
     }
 
+    // Empty context = no Alpaca data and no Vega/Lila state. Caller will
+    // skip composing rather than letting the LLM invent ops content.
     return lines.join('\n')
+  }
+
+  // Substance gate: don't compose a post if there's nothing real to say.
+  private hasSubstance(context: string): boolean {
+    return context.includes('LIVE QUANT')
+        || context.includes('VEGA NOTES')
+        || context.includes('VEGA PICKS')
+        || context.includes('OPEN POSITIONS')
+        || context.includes('CLOSED:')
   }
 
   private async recentPosts(limit = 4): Promise<string> {
@@ -436,22 +471,32 @@ export class BroadcastLoop {
 
   // ── compose + publish ──────────────────────────────────────────────────────
 
-  private async compose(context: string, recent: string): Promise<string | null> {
+  private async compose(context: string, _recent: string): Promise<string | null> {
     if (!this.ai) return null
+    // Substance gate: bail before spending tokens if there's nothing to say.
+    // Prevents the model from filling the void with ops-status hallucinations
+    // (the "X reports in queue" failure mode).
+    if (!this.hasSubstance(context)) return null
     try {
       const { content } = await llmCall({
         ai: this.ai,
         module: 'broadcast.compose',
         messages: [{
           role: 'user',
-          content: POST_PROMPT
-            .replace('{RECENT_POSTS}', recent)
-            .replace('{CONTEXT}', context),
+          content: POST_PROMPT.replace('{CONTEXT}', context),
         }],
         max_tokens: 160,
-        temperature: 0.5,
+        temperature: 0.4,
       })
-      return content.trim().slice(0, 280) || null
+      const out = content.trim().slice(0, 280)
+      if (!out) return null
+      // Honor the model's own SKIP signal (we tell it to do this when
+      // the data is too thin — better than fluff).
+      if (/^skip\b/i.test(out)) return null
+      // Reject any ops-status leak (defense in depth — the prompt forbids
+      // these but if the model slips, we catch it here rather than posting).
+      if (looksLikeOpsContent(out)) return null
+      return out
     } catch (e) {
       if (e instanceof LLMBudgetExceeded) return null
       return null
@@ -483,4 +528,25 @@ export class BroadcastLoop {
       return { channel: ch, ...r }
     }))
   }
+}
+
+// Defense-in-depth filter: if the model slips and produces ops-status
+// content despite the prompt forbidding it, drop the post on the floor.
+// Pattern matches the failure mode we've actually seen on the feed
+// ("X protocols on watchlist", "X reports in queue", "awaiting submit",
+// "no payouts or closed trades today").
+function looksLikeOpsContent(text: string): boolean {
+  const lower = text.toLowerCase()
+  const banned = [
+    'protocols on watchlist',
+    'reports in queue',
+    'awaiting submit',
+    'no payouts',
+    'cycle ',
+    'phase ',
+    'pipeline',
+    'bounty queue',
+    'research target',
+  ]
+  return banned.some(b => lower.includes(b))
 }
