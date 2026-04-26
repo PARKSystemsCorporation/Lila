@@ -4144,6 +4144,7 @@ const TERM_HELP = [
   '  article             draft an article from latest finished research',
   '  watchlist refresh   force discovery scan now',
   '  say <text>          post <text> to Bluesky + Telegram immediately',
+  '  ceelo seed          seed Ceelo historical NFL ratings',
   '  clear               wipe scrollback',
   '  help                this list',
 ].join('\n')
@@ -4209,6 +4210,10 @@ function TerminalTab({ visible }: { visible: boolean }) {
           return `  ${l.label.padEnd(20)} ${ago}s ago`
         }).join('\n')
         append(cmd, out)
+      } else if (lower === 'ceelo seed') {
+        const res = await fetch('/api/ceelo/seed?seasons=3', { method: 'POST' })
+        const d = await res.json().catch(() => ({}))
+        append(cmd, res.ok ? `OK · Seeded ${d.games_graded} games.` : `FAIL: ${d.error ?? res.status}`, res.ok ? 'ok' : 'err')
       } else if (lower === 'post') {
         const res = await fetch('/api/broadcasts', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -4286,7 +4291,7 @@ function TerminalTab({ visible }: { visible: boolean }) {
   }
 
   // Quick-tap chips for common commands (mobile is a pain to type in)
-  const QUICK = ['status', 'kpis', 'loops', 'post', 'article', 'verify bluesky', 'verify telegram', 'help']
+  const QUICK = ['status', 'kpis', 'loops', 'post', 'article', 'ceelo seed', 'help']
 
   return (
     <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>

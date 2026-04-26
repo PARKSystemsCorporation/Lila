@@ -74,6 +74,7 @@ export class CeeloLoop {
 
     try { note(await this.c0_refreshSchedule()) }                     catch (e) { warned = true; note(`C0 ${err(e)}`) }
     try { note(await this.c0b_refreshInjuries()) }                    catch (e) { warned = true; note(`C0b ${err(e)}`) }
+    try { note(await this.c0c_autoSeed()) }                           catch (e) { warned = true; note(`C0c ${err(e)}`) }
     try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
     try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
     try { note(await this.c3_computeModelLines()) }                   catch (e) { warned = true; note(`C3 ${err(e)}`) }
@@ -176,6 +177,28 @@ export class CeeloLoop {
     }
     await this.db.query(`UPDATE ceelo_state SET last_injury_at=NOW() WHERE id=1`)
     return total > 0 ? `C0b ${total} injuries` : ''
+  }
+
+  // ── C0c: auto-seed historical data if empty ─────────────────────────────
+
+  private async c0c_autoSeed(): Promise<string> {
+    const { rows: [{ count }] } = await this.db.query(
+      `SELECT COUNT(*) as count FROM ceelo_team_ratings`
+    )
+    if (Number(count) > 0) return ''
+
+    // No teams rated! Let's auto-seed the database using the same logic as the API.
+    // We fetch to localhost since this runs within the node server context,
+    // but the safest approach is to hit the internal logic. Wait, this is a local loop.
+    // We can just call the POST /api/ceelo/seed endpoint via localhost.
+    try {
+      const res = await fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/ceelo/seed?seasons=3', { method: 'POST' })
+      if (!res.ok) throw new Error(`Status ${res.status}`)
+      const data = await res.json()
+      return `C0c auto-seeded ${data.games_graded} games`
+    } catch (e) {
+      return `C0c auto-seed failed: ${err(e)}`
+    }
   }
 
   // ── C1: apply newly-completed games to Elo ratings ──────────────────────
