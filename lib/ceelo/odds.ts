@@ -86,19 +86,22 @@ export async function fetchNflLines(): Promise<BookLine[]> {
     for (const bookmaker of game.bookmakers) {
       const bookName = bookmaker.key
 
-      let spreadMatch: any = null
-      let totalMatch: any = null
-      let h2hMatch: any = null
+      interface Outcome { name: string; price: number; point?: number }
+      interface Market { key: string; outcomes: Outcome[] }
+
+      let spreadMatch: Market | null = null
+      let totalMatch: Market | null = null
+      let h2hMatch: Market | null = null
 
       for (const m of bookmaker.markets) {
-        if (m.key === 'spreads') spreadMatch = m
-        if (m.key === 'totals') totalMatch = m
-        if (m.key === 'h2h') h2hMatch = m
+        if (m.key === 'spreads') spreadMatch = m as Market
+        if (m.key === 'totals') totalMatch = m as Market
+        if (m.key === 'h2h') h2hMatch = m as Market
       }
 
-      if (spreadMatch) {
-        const homeOutcome = spreadMatch.outcomes.find((o: any) => o.name === game.home_team)
-        const awayOutcome = spreadMatch.outcomes.find((o: any) => o.name === game.away_team)
+      if (spreadMatch && Array.isArray(spreadMatch.outcomes)) {
+        const homeOutcome = spreadMatch.outcomes.find((o: Outcome) => o.name === game.home_team)
+        const awayOutcome = spreadMatch.outcomes.find((o: Outcome) => o.name === game.away_team)
         if (homeOutcome && awayOutcome) {
           out.push({
             espn_id_hint: null,
@@ -107,7 +110,7 @@ export async function fetchNflLines(): Promise<BookLine[]> {
             kickoff_at: game.commence_time,
             book: bookName,
             market: 'spread',
-            home_line: homeOutcome.point,
+            home_line: homeOutcome.point ?? null,
             total_line: null,
             home_odds: homeOutcome.price,
             away_odds: awayOutcome.price,
@@ -117,9 +120,9 @@ export async function fetchNflLines(): Promise<BookLine[]> {
         }
       }
 
-      if (totalMatch) {
-        const over = totalMatch.outcomes.find((o: any) => o.name === 'Over')
-        const under = totalMatch.outcomes.find((o: any) => o.name === 'Under')
+      if (totalMatch && Array.isArray(totalMatch.outcomes)) {
+        const over = totalMatch.outcomes.find((o: Outcome) => o.name === 'Over')
+        const under = totalMatch.outcomes.find((o: Outcome) => o.name === 'Under')
         if (over && under) {
           out.push({
             espn_id_hint: null,
@@ -129,7 +132,7 @@ export async function fetchNflLines(): Promise<BookLine[]> {
             book: bookName,
             market: 'total',
             home_line: null,
-            total_line: over.point,
+            total_line: over.point ?? null,
             home_odds: null,
             away_odds: null,
             over_odds: over.price,
@@ -138,9 +141,9 @@ export async function fetchNflLines(): Promise<BookLine[]> {
         }
       }
 
-      if (h2hMatch) {
-        const homeOutcome = h2hMatch.outcomes.find((o: any) => o.name === game.home_team)
-        const awayOutcome = h2hMatch.outcomes.find((o: any) => o.name === game.away_team)
+      if (h2hMatch && Array.isArray(h2hMatch.outcomes)) {
+        const homeOutcome = h2hMatch.outcomes.find((o: Outcome) => o.name === game.home_team)
+        const awayOutcome = h2hMatch.outcomes.find((o: Outcome) => o.name === game.away_team)
         if (homeOutcome && awayOutcome) {
           out.push({
             espn_id_hint: null,
