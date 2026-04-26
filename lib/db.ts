@@ -81,8 +81,15 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     -- Migration: thread column was added after the table first shipped.
-    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread TEXT NOT NULL DEFAULT 'main';
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread       TEXT NOT NULL DEFAULT 'main';
+    -- Telegram bridge: 'via' tags where a message came from
+    -- ('telegram' | 'web' | NULL). 'mirrored_at' marks Lila replies that
+    -- have been pushed back to Telegram so we don't double-send.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS via          TEXT;
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS mirrored_at  TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_mirror ON chat_messages(thread, sender, mirrored_at)
+      WHERE sender='lila' AND mirrored_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS analyst_notes (
       id         SERIAL      PRIMARY KEY,

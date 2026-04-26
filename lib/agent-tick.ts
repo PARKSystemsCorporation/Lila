@@ -7,6 +7,7 @@ import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
+import { mirrorLilaToTelegram } from './telegram-mirror'
 import { runRetention } from './retention'
 import { cfg } from './config'
 
@@ -100,6 +101,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (mgmtResult) {
       await logEvent(db, mgmtResult.logMessage, mgmtResult.logType)
       logs.push(mgmtResult.logMessage)
+    }
+
+    // 4b. Telegram bridge — mirror Lila's replies back to Telegram when
+    //     the active conversation came from there. Runs immediately after
+    //     management so any reply just generated this tick goes out now.
+    const mirrorResult = await mirrorLilaToTelegram(db).catch((e: unknown) => ({
+      sent: 0, failed: 0,
+      logMessage: `Telegram mirror error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (mirrorResult?.logMessage) {
+      await logEvent(db, mirrorResult.logMessage, mirrorResult.logType ?? 'info')
+      logs.push(mirrorResult.logMessage)
     }
 
     // 5. Ceelo — NFL handicapper, time-gated (12h default).
