@@ -2472,7 +2472,7 @@ function EdgeGraph({ picks }: { picks: PickRow[] }) {
       })
       chart = c
 
-      const series = c.addHistogramSeries({
+      const series = c.addSeries(lib.HistogramSeries, {
         color: '#f43f5e', // rose-500
         priceFormat: { type: 'volume' }, // hides currency symbol
       })
