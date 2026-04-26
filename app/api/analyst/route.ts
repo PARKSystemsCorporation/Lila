@@ -3,8 +3,14 @@ import { getPool, ensureSchema } from '@/lib/db'
 import { Vega } from '@/lib/analyst'
 import * as Alpaca from '@/lib/platforms/alpaca'
 
+// Display-only paper bankroll. Same value as /api/trading uses so every
+// surface that shows a portfolio number agrees. Alpaca paper accounts
+// default to $100k which is meaningless for tracking.
+const PAPER_BANKROLL = 100
+
 export async function GET() {
   const hasAlpaca = !!(process.env.ALPACA_API_KEY || process.env.APCA_API_KEY_ID)
+  const paper = process.env.ALPACA_PAPER !== 'false'
 
   let account = null
   let positions: Alpaca.AlpacaPosition[] = []
@@ -16,7 +22,7 @@ export async function GET() {
   }
 
   if (!process.env.DATABASE_URL) {
-    return NextResponse.json({ picks: [], positions: [], account })
+    return NextResponse.json({ picks: [], positions: [], account, paper, paperBankroll: PAPER_BANKROLL })
   }
 
   const pool = getPool()
@@ -29,7 +35,26 @@ export async function GET() {
     const { rows: tracked } = await db.query(
       `SELECT * FROM lila_positions ORDER BY opened_at DESC LIMIT 10`
     )
-    return NextResponse.json({ picks, positions, tracked, account })
+    // In paper mode, override account.equity / cash / buying_power with the
+    // paper-bankroll math (same as the Trading tab) so the Dash card and
+    // Trading card never disagree.
+    if (paper && account) {
+      const { rows: pnlRows } = await db.query(
+        `SELECT COALESCE(SUM(pnl), 0) AS realized
+         FROM lila_positions WHERE status='closed'`
+      )
+      const realized = parseFloat(pnlRows[0]?.realized ?? '0')
+      const equity = +(PAPER_BANKROLL + realized).toFixed(2)
+      account = {
+        ...account,
+        equity:          equity.toFixed(2),
+        last_equity:     PAPER_BANKROLL.toFixed(2),
+        cash:            equity.toFixed(2),
+        buying_power:    equity.toFixed(2),
+        portfolio_value: equity.toFixed(2),
+      }
+    }
+    return NextResponse.json({ picks, positions, tracked, account, paper, paperBankroll: PAPER_BANKROLL })
   } finally {
     db.release()
   }

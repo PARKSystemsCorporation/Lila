@@ -73,6 +73,7 @@ export class CeeloLoop {
     let edgeSummary   = ''
 
     try { note(await this.c0_refreshSchedule()) }                     catch (e) { warned = true; note(`C0 ${err(e)}`) }
+    try { note(await this.c0b_refreshInjuries()) }                    catch (e) { warned = true; note(`C0b ${err(e)}`) }
     try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
     try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
     try { note(await this.c3_computeModelLines()) }                   catch (e) { warned = true; note(`C3 ${err(e)}`) }
@@ -131,6 +132,50 @@ export class CeeloLoop {
       `UPDATE ceelo_state SET last_schedule_at=NOW() WHERE id=1`
     )
     return upserted > 0 ? `C0 ${upserted} games` : 'C0 no games'
+  }
+
+  // ── C0b: refresh injury report (≤ once per 12h, per team) ───────────────
+
+  private async c0b_refreshInjuries(): Promise<string> {
+    const { rows: [s] } = await this.db.query('SELECT last_injury_at FROM ceelo_state WHERE id=1')
+    if (s?.last_injury_at && minutesSince(s.last_injury_at) < 12 * 60) return ''
+
+    // Only pull for teams with upcoming games — no point updating bye-week
+    // teams every cycle. Falls back to all 32 teams if the schedule is empty.
+    const { rows: teamRows } = await this.db.query(
+      `SELECT DISTINCT t FROM (
+         SELECT home_team AS t FROM ceelo_games
+         WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+         UNION
+         SELECT away_team AS t FROM ceelo_games
+         WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+       ) x`
+    )
+    const teams: string[] = teamRows.length
+      ? teamRows.map((r: { t: string }) => r.t).filter(Boolean)
+      : Array.from(NFL_TEAMS)
+
+    let total = 0
+    for (const team of teams) {
+      const list = await Espn.fetchTeamInjuries(team).catch(() => [] as Espn.InjuryEntry[])
+      // Wipe existing rows for this team, then insert fresh.
+      await this.db.query(`DELETE FROM ceelo_injuries WHERE team=$1`, [team])
+      for (const i of list) {
+        await this.db.query(
+          `INSERT INTO ceelo_injuries (team, player, position, status, description, fetched_at)
+           VALUES ($1,$2,$3,$4,$5,NOW())
+           ON CONFLICT (team, player) DO UPDATE
+             SET position=EXCLUDED.position,
+                 status=EXCLUDED.status,
+                 description=EXCLUDED.description,
+                 fetched_at=NOW()`,
+          [i.team, i.player, i.position, i.status, i.description]
+        )
+        total++
+      }
+    }
+    await this.db.query(`UPDATE ceelo_state SET last_injury_at=NOW() WHERE id=1`)
+    return total > 0 ? `C0b ${total} injuries` : ''
   }
 
   // ── C1: apply newly-completed games to Elo ratings ──────────────────────
@@ -357,7 +402,7 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
-    const [topRated, openPicks, status] = await Promise.all([
+    const [topRated, openPicks, status, keyInjuries] = await Promise.all([
       this.db.query(
         `SELECT team, rating, games_played FROM ceelo_team_ratings
          WHERE games_played > 0
@@ -372,8 +417,35 @@ export class CeeloLoop {
       this.db.query(
         `SELECT cycle,
                 (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
-                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
+                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming,
+                (SELECT COUNT(*) FROM ceelo_injuries WHERE status IN ('Out','Doubtful','IR')) AS hurt
          FROM ceelo_state WHERE id=1`
+      ),
+      // Surface key injuries — Out / Doubtful / IR — for teams with upcoming games.
+      // Caps at 12 entries; the LLM doesn't need every depth-chart-3 sprained ankle.
+      this.db.query(
+        `SELECT i.team, i.player, i.position, i.status
+         FROM ceelo_injuries i
+         WHERE i.status IN ('Out','Doubtful','IR','PUP')
+           AND i.team IN (
+             SELECT DISTINCT t FROM (
+               SELECT home_team AS t FROM ceelo_games
+               WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+               UNION
+               SELECT away_team AS t FROM ceelo_games
+               WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+             ) x
+           )
+         ORDER BY
+           CASE i.position
+             WHEN 'QB' THEN 0
+             WHEN 'RB' THEN 1
+             WHEN 'WR' THEN 1
+             WHEN 'TE' THEN 2
+             ELSE 3
+           END,
+           i.team
+         LIMIT 12`
       ),
     ])
 
@@ -392,18 +464,27 @@ export class CeeloLoop {
       : '(no open picks)'
     const s = status.rows[0] ?? {}
 
+    const injuryStr = keyInjuries.rows.length
+      ? keyInjuries.rows.map((i: { team: string; player: string; position: string | null; status: string }) =>
+          `${i.team} ${i.player} (${i.position ?? '?'}) — ${i.status}`
+        ).join('\n  ')
+      : '(no key injuries on tracked teams)'
+
     const prompt = `You are Ceelo, the NFL handicapper on Lila's team. The operator is talking to you one-on-one.
 
 Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. If they ask something you can't answer from the model, say so directly.
 
 CURRENT MODEL STATE:
 - Loop cycle: ${Number(s.cycle ?? 0)}
-- Rated teams: ${Number(s.rated ?? 0)}/32
+- Rated teams: ${Number(s.rated ?? 0)}/32 (Elo-walked from real game results)
 - Upcoming games tracked: ${Number(s.upcoming ?? 0)}
 - Top-rated right now: ${topRatedStr}
 - Open picks (model-driven, sorted by edge):
   ${openPicksStr}
+- Key injuries (Out / Doubtful / IR / PUP) on tracked teams:
+  ${injuryStr}
 - Live book lines: ${Odds.isConfigured() ? 'engaged (Odds API key present)' : 'NOT engaged — no Odds API key, so the edge gate is dark'}
+- Historical seed: ${Number(s.rated ?? 0) > 0 ? 'ratings are seeded from completed seasons' : 'NO HISTORICAL SEED — operator should hit /api/ceelo/seed'}
 
 CONVERSATION:
 ${transcript}

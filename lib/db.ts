@@ -309,9 +309,38 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     INSERT INTO ceelo_state (id) VALUES (1) ON CONFLICT DO NOTHING;
     -- Migrations for fields added after the table first shipped.
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_schedule_at TIMESTAMPTZ;
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grade_at    TIMESTAMPTZ;
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_lines_at    TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_schedule_at  TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grade_at     TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_lines_at     TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_injury_at    TIMESTAMPTZ;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_seed_at      TIMESTAMPTZ;
+
+    -- Closing lines per game from nflverse historical data. Surface for
+    -- backtesting and to seed Ceelo's awareness of where the market closed.
+    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS closing_spread    NUMERIC(5,2);
+    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS closing_total     NUMERIC(5,2);
+
+    -- Backfill ledger — which seasons have been Elo-walked.
+    CREATE TABLE IF NOT EXISTS ceelo_backfill (
+      season       INTEGER     PRIMARY KEY,
+      games_in     INTEGER     NOT NULL DEFAULT 0,
+      graded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Injury report snapshot. Refreshed daily via ESPN's per-team endpoint.
+    -- We dedupe on (team, player) and keep the latest status; a fresh fetch
+    -- replaces older rows for that team.
+    CREATE TABLE IF NOT EXISTS ceelo_injuries (
+      id           SERIAL      PRIMARY KEY,
+      team         TEXT        NOT NULL,
+      player       TEXT        NOT NULL,
+      position     TEXT,
+      status       TEXT,                         -- 'Out' | 'Questionable' | 'Doubtful' | 'IR' | 'PUP' | 'Active'
+      description  TEXT,
+      fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (team, player)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_injuries_team ON ceelo_injuries(team, status);
 
     -- Schedule: one row per known NFL game. ESPN's event id is the natural key.
     CREATE TABLE IF NOT EXISTS ceelo_games (

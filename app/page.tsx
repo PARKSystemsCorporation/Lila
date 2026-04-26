@@ -2325,6 +2325,49 @@ type ReportAction =
 
 // ─── Trading Tab ──────────────────────────────────────────────────────────────
 
+// "Reset paper bankroll" — calls /api/trading/reset which wipes our local
+// position history (closed + open in lila_positions), cancels pending picks,
+// and closes any actually-open paper positions on Alpaca side. Use this when
+// you want the displayed equity / realized P&L to reflect a fresh $100
+// bankroll rather than carrying over old results.
+
+function ResetPaperButton({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const click = async () => {
+    if (busy) return
+    if (!confirm('Reset paper bankroll?\n\nThis will:\n- Close any open paper positions on Alpaca\n- Wipe local position history (closed + open)\n- Cancel pending picks\n\nBounty earnings are NOT touched.')) return
+    setBusy(true)
+    try {
+      const res = await fetch('/api/trading/reset', { method: 'POST' })
+      if (res.ok) {
+        const body = await res.json()
+        setDone(`Closed ${body.alpaca_closed ?? 0} on Alpaca · dropped ${body.positions_dropped?.closed ?? 0} closed / ${body.positions_dropped?.open ?? 0} open · cancelled ${body.picks_cancelled ?? 0} picks`)
+        setTimeout(onDone, 1500)
+      } else {
+        setDone('Reset failed.')
+      }
+    } catch {
+      setDone('Reset failed (network).')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-800">
+      <button
+        onClick={click}
+        disabled={busy}
+        className="w-full text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800 disabled:opacity-50"
+      >
+        {busy ? 'Resetting…' : 'Reset paper bankroll'}
+      </button>
+      {done && <p className="text-[9px] font-mono text-slate-500 mt-1.5 text-center">{done}</p>}
+    </div>
+  )
+}
+
+
 interface OpenPosition {
   symbol: string
   qty: string
@@ -2590,6 +2633,9 @@ function TradingTab({ visible }: { visible: boolean }) {
                     </p>
                   </div>
                 </div>
+              )}
+              {isPaper && (
+                <ResetPaperButton onDone={() => location.reload()} />
               )}
             </div>
 
@@ -3183,11 +3229,53 @@ function CeeloStatusCard({ status }: { status: CeeloStatus }) {
           <p className="text-[8px] font-mono text-slate-600 tracking-wider mt-0.5">BOOK LINES</p>
         </div>
       </div>
+      {status.rated_teams < 16 && (
+        <SeedRatingsButton onDone={() => location.reload()} />
+      )}
       {!status.odds_key && (
         <p className="text-[9px] font-mono text-amber-400/80 leading-snug pt-1 border-t border-slate-800">
           Add ODDS_API_KEY (free at theoddsapi.com) to engage the edge gate. Until then, model lines are computed but no picks fire.
         </p>
       )}
+    </div>
+  )
+}
+
+// One-shot seed of Ceelo's Elo ratings from the last 3 NFL seasons of
+// nflverse historical data. Operator hits this once after deploy so the
+// model isn't sitting at 1500-across-the-board (cold start).
+function SeedRatingsButton({ onDone }: { onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const click = async () => {
+    if (busy) return
+    if (!confirm('Seed Ceelo\'s ratings from the last 3 completed NFL seasons (nflverse data)?\n\nThis Elo-walks ~800 historical games. ~30s.')) return
+    setBusy(true)
+    try {
+      const res = await fetch('/api/ceelo/seed?seasons=3', { method: 'POST' })
+      if (res.ok) {
+        const body = await res.json()
+        setDone(`Seeded ${body.games_graded ?? 0} games across seasons ${(body.seasons_walked ?? []).join(', ')}.`)
+        setTimeout(onDone, 2000)
+      } else {
+        setDone(`Seed failed (${res.status}).`)
+      }
+    } catch {
+      setDone('Seed failed (network).')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="pt-1 border-t border-slate-800">
+      <button
+        onClick={click}
+        disabled={busy}
+        className="w-full text-[10px] font-mono text-rose-300 border border-rose-900 bg-rose-950/30 rounded-lg py-2 active:opacity-70 disabled:opacity-50"
+      >
+        {busy ? 'Seeding ratings…' : 'Seed ratings (last 3 NFL seasons)'}
+      </button>
+      {done && <p className="text-[9px] font-mono text-slate-500 mt-1.5 text-center">{done}</p>}
     </div>
   )
 }

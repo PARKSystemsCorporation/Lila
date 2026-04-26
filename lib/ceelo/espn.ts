@@ -1,5 +1,55 @@
 import { normalizeTeam } from './teams'
 
+// ESPN's numeric team IDs — needed for the per-team endpoints (rosters,
+// injuries). Map of canonical 2-3 letter abbr → ESPN id.
+export const ESPN_TEAM_ID: Record<string, number> = {
+  ARI: 22, ATL: 1,  BAL: 33, BUF: 2,  CAR: 29, CHI: 3,  CIN: 4,  CLE: 5,
+  DAL: 6,  DEN: 7,  DET: 8,  GB:  9,  HOU: 34, IND: 11, JAX: 30, KC:  12,
+  LAC: 24, LAR: 14, LV:  13, MIA: 15, MIN: 16, NE:  17, NO:  18, NYG: 19,
+  NYJ: 20, PHI: 21, PIT: 23, SEA: 26, SF:  25, TB:  27, TEN: 10, WSH: 28,
+}
+
+export interface InjuryEntry {
+  team: string         // canonical abbr
+  player: string
+  position: string | null
+  status: string | null      // 'Out' | 'Questionable' | 'Doubtful' | 'IR' | 'Active' | etc.
+  description: string | null
+}
+
+// Pull current injury report for a single team. Free + no-auth.
+export async function fetchTeamInjuries(team: string): Promise<InjuryEntry[]> {
+  const id = ESPN_TEAM_ID[team]
+  if (!id) return []
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${id}/injuries`
+  const res = await fetch(url, { headers: { 'user-agent': 'Lila/Ceelo' } })
+  if (!res.ok) return []
+  const json = await res.json()
+  const items: unknown[] = Array.isArray(json?.injuries) ? json.injuries : []
+
+  const out: InjuryEntry[] = []
+  for (const itemRaw of items) {
+    const it = itemRaw as Record<string, unknown>
+    // ESPN nests injuries inside { team, injuries: [...] } per team chunk —
+    // for the per-team endpoint there's typically just one entry. Handle both.
+    const subList: unknown[] = Array.isArray(it.injuries) ? (it.injuries as unknown[]) : [it]
+    for (const subRaw of subList) {
+      const s = subRaw as Record<string, unknown>
+      const ath = s.athlete as Record<string, unknown> | undefined
+      const player = (ath?.displayName as string) ?? (ath?.fullName as string) ?? ''
+      if (!player) continue
+      const position = ((ath?.position as Record<string, unknown>)?.abbreviation as string) ?? null
+      const status = (s.status as string) ?? null
+      const details = s.details as Record<string, unknown> | undefined
+      const detailType = (details?.type as string) ?? ''
+      const detailDetail = (details?.detail as string) ?? ''
+      const description = [detailType, detailDetail].filter(Boolean).join(' — ') || null
+      out.push({ team, player, position, status, description })
+    }
+  }
+  return out
+}
+
 // ESPN's public scoreboard endpoint. Free, no auth, JSON.
 //   https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard
 //
