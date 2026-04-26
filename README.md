@@ -23,8 +23,11 @@ A three-role autonomous team inside one Next.js app:
   A target-pinned phase machine (`map → surfaces → invariants → hypothesize
   → investigate`) accumulates research notes across cycles. Non-security
   bounties go through a simpler one-shot path.
-- **Analyst** — market intelligence. Reads news, scans watchlists, files
+- **Analyst (Vega)** — market intelligence. Reads news, scans watchlists, files
   picks with tight stops. Mirrors picks to Telegram when configured.
+- **Handicapper (Ceelo)** — autonomous NFL sports betting model. Maintains an internal 
+  Elo ratings graph from nflverse historical data, fetches live spreads from 
+  The Odds API, and flags +EV edges. Mirrors picks to Telegram.
 
 All of it runs on a single server-side ticker so Lila keeps working whether
 you have the PWA open or not.
@@ -36,8 +39,10 @@ you have the PWA open or not.
 - **DeepSeek** for all LLM calls (budget-gated, per-module cost tracking)
 - **Alpaca** for trading (paper by default, live via `ALPACA_PAPER=false`)
 - **Bluesky** via AT Proto for hourly public broadcasts
-- **Telegram** Bot API for Analyst picks
-- **TradingView lightweight-charts** for the Trades tab
+- **Telegram** Bot API for Analyst picks & Ceelo alerts
+- **The Odds API** for live NFL spreads and totals
+- **nflverse** data for historical Elo ratings
+- **TradingView lightweight-charts** for the Trades and Picks edge graphs
 - **Railway** for hosting
 
 ## Run locally
@@ -98,6 +103,10 @@ mirrors them to Telegram. **TradingEngine** runs every tick, monitors
 open positions, closes on target/stop, and executes pending picks during
 market hours.
 
+A **Handicapper (Ceelo)** loop (C0/C1/C2/C3/C4/C5) maintains an internal Elo
+graph using nflverse data, diffs model spreads against live Odds API book
+lines, and emits mathematical picks into `ceelo_picks`.
+
 ## Loops
 
 ### Tasker bounty cycle (30s per step, configurable)
@@ -123,6 +132,19 @@ map → surfaces → invariants → hypothesize → investigate → (found | exh
 A confirmed finding saves a report to `security_reports` with status
 `pending_review` — **Lila reviews every draft before the operator sees
 it**.
+
+### Ceelo handicapper (30-min gated)
+
+Autonomous loop for mathematical sports betting.
+
+```
+C0  refresh NFL schedule & injuries
+C1  grade finals to update the Elo ratings graph
+C2  pull live book lines from The Odds API
+C3  compute model win-prob and spreads
+C4  diff model vs market; emit picks when |edge| ≥ 1.0 pt
+C5  reconcile kicked-off games
+```
 
 ### Lila management (priority-ordered, once per tick)
 
@@ -164,8 +186,10 @@ Plus closed-trade P&L on Alpaca positions. Everything else is marked as
   P&L curve, open/closed positions with stop/target progress bars.
 - **Board** — live bounty listings across platforms.
 - **Reports** — pipeline: Ready to submit → Submitted awaiting payout →
-  Paid → Lila reviewing → Archive. Per-report actions: Mark submitted,
-  Mark paid (with amount), Undo payout, Dismiss.
+  Paid → Lila reviewing → Archive.
+- **Picks** — Ceelo's NFL handicapper dashboard. Displays a visual `lightweight-charts`
+  Edge Graph, tracks open/active/settled picks, and provides a direct
+  chat interface with Ceelo.
 
 ## Env vars
 
@@ -178,6 +202,7 @@ See [`.env.example`](.env.example) for the full commented reference.
 - Bounty sources → `SUPERTEAM_API_KEY`, `NEYNAR_API_KEY`, `CLAWTASKS_API_KEY`, `WALLET_ADDRESS`
 - Bluesky broadcasts → `BSKY_HANDLE` + `BSKY_APP_PASSWORD`
 - Telegram picks feed → `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`
+- Ceelo Edge Gate → `ODDS_API_KEY`
 
 **Tuning knobs** (all optional, defaults sensible):
 `TASKER_STEP_SEC`, `RESEARCH_CYCLE_SEC`, `MANAGEMENT_CHECK_SEC`,
