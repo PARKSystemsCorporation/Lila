@@ -96,7 +96,8 @@ export class TaskerLoop {
 
     const { rows } = await this.db.query(
       `SELECT sender, content FROM chat_messages
-       WHERE created_at > NOW() - INTERVAL '15 minutes'
+       WHERE thread = 'main'
+         AND created_at > NOW() - INTERVAL '15 minutes'
        ORDER BY created_at ASC LIMIT 25`
     )
     if (!rows.length) return { logMessage: 'Chat clear.', logType: 'info' }

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'reports' | 'picks' | 'notes' | 'terminal'
+type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'library' | 'picks' | 'terminal'
 
 interface UnifiedBounty {
   id: string
@@ -156,9 +156,8 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'dash',     label: 'Dash',    Icon: IconDash     },
   { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
-  { key: 'reports',  label: 'Reports', Icon: IconReports  },
+  { key: 'library',  label: 'Library', Icon: IconNotes    },
   { key: 'picks',    label: 'Picks',   Icon: IconPicks    },
-  { key: 'notes',    label: 'Notes',   Icon: IconNotes    },
   { key: 'terminal', label: 'Term',    Icon: IconTerminal },
 ]
 
@@ -248,7 +247,11 @@ function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
 // Cross-tab navigation. Children call `onNavigate({ tab, notesFilter? })` to
 // jump to a tab and pre-set a filter — e.g. TargetCard sends you to Notes
 // pre-filtered to Cipher's plans.
-type NavigateFn = (to: { tab: Tab; notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'pitches' | 'other' }) => void
+type NavigateFn = (to: {
+  tab: Tab
+  notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'pitches' | 'other'
+  libraryMode?: 'reports' | 'notes'
+}) => void
 
 function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
   const [copied, setCopied] = useState(false)
@@ -425,8 +428,8 @@ function ChatTab({ visible }: { visible: boolean }) {
       <div className="shrink-0 px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-800/60">
         <div className="flex gap-1">
           <span className="w-5 h-5 rounded-full bg-emerald-900 border border-emerald-700 flex items-center justify-center text-[9px] font-mono text-emerald-400">L</span>
-          <span className="w-5 h-5 rounded-full bg-amber-950 border border-amber-800 flex items-center justify-center text-[9px] font-mono text-amber-400">T</span>
-          <span className="w-5 h-5 rounded-full bg-blue-900 border border-blue-700 flex items-center justify-center text-[9px] font-mono text-blue-400">A</span>
+          <span className="w-5 h-5 rounded-full bg-amber-950 border border-amber-800 flex items-center justify-center text-[9px] font-mono text-amber-400">C</span>
+          <span className="w-5 h-5 rounded-full bg-blue-900 border border-blue-700 flex items-center justify-center text-[9px] font-mono text-blue-400">V</span>
           <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[9px] font-mono text-slate-400">U</span>
         </div>
         <div className="min-w-0">
@@ -2103,7 +2106,7 @@ function TargetCard({ onNavigate }: { onNavigate?: NavigateFn }) {
 
       {onNavigate && (
         <button
-          onClick={() => onNavigate({ tab: 'notes', notesFilter: 'tasker' })}
+          onClick={() => onNavigate({ tab: 'library', notesFilter: 'tasker' })}
           className="w-full text-[10px] font-mono text-slate-400 border border-slate-800 rounded-lg py-2 active:bg-slate-800 mt-1"
         >
           View Cipher plans →
@@ -2830,18 +2833,22 @@ function fmtKickoff(ts: number | null): string {
 }
 
 function PicksTab({ visible }: { visible: boolean }) {
+  const [mode, setMode] = useState<'picks' | 'chat'>('picks')
   const [data, setData] = useState<PicksData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [openCount, setOpenCount] = useState(0)
 
+  // Light poll on the data so the Picks pill can show an open-pick badge
+  // even while the user is sitting in the Chat sub-mode.
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/picks')
-      if (res.ok) setData(await res.json())
+      if (res.ok) {
+        const d: PicksData = await res.json()
+        setData(d)
+        setOpenCount(d.summary?.open ?? 0)
+      }
     } catch { /* ignore */ }
-    finally { setLoading(false) }
   }, [])
-
   useEffect(() => {
     if (!visible) return
     load()
@@ -2849,14 +2856,44 @@ function PicksTab({ visible }: { visible: boolean }) {
     return () => clearInterval(id)
   }, [visible, load])
 
+  return (
+    <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="shrink-0 flex border-b border-slate-800 bg-slate-950">
+        <LibraryModePill
+          active={mode === 'picks'}
+          label="Picks"
+          badge={openCount > 0 ? openCount : undefined}
+          onClick={() => setMode('picks')}
+        />
+        <LibraryModePill
+          active={mode === 'chat'}
+          label="Chat Ceelo"
+          onClick={() => setMode('chat')}
+        />
+      </div>
+
+      <div className="flex-1 relative overflow-hidden">
+        <PicksView visible={visible && mode === 'picks'} data={data} reload={load} />
+        <CeeloChatView visible={visible && mode === 'chat'} />
+      </div>
+    </div>
+  )
+}
+
+function PicksView({ visible, data, reload }: {
+  visible: boolean
+  data: PicksData | null
+  reload: () => Promise<void>
+}) {
+  const [expandedId, setExpandedId] = useState<number | null>(null)
   const post = useCallback(async (body: object) => {
     await fetch('/api/picks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    await load()
-  }, [load])
+    await reload()
+  }, [reload])
 
   const open    = useMemo(() => (data?.picks ?? []).filter(p => p.status === 'open'), [data])
   const taken   = useMemo(() => (data?.picks ?? []).filter(p => p.status === 'taken'), [data])
@@ -2867,26 +2904,23 @@ function PicksTab({ visible }: { visible: boolean }) {
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
       <div className="px-4 py-5 space-y-4">
         <div className="flex items-center gap-2">
-          <span className="text-emerald-500"><IconPicks /></span>
+          <span className="text-rose-400"><IconPicks /></span>
           <div>
             <p className="text-xs font-mono text-slate-300 font-semibold">
               Ceelo &mdash; NFL Handicapper
             </p>
             <p className="text-[10px] font-mono text-slate-600">
-              Picks are informational. You decide what to take.
+              Math-driven picks. You decide what to take.
             </p>
           </div>
         </div>
 
-        {/* Bankroll & record header */}
         {data && <BankrollCard summary={data.summary} />}
-
-        {/* Ceelo's autonomy state — model freshness, ratings, key state */}
         {data?.status && <CeeloStatusCard status={data.status} />}
 
-        {loading && !data ? (
+        {!data ? (
           <div className="flex items-center gap-2 py-10 justify-center">
-            <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
+            <div className="w-4 h-4 border-2 border-slate-700 border-t-rose-500 rounded-full animate-spin" />
             <p className="text-xs font-mono text-slate-600">Loading picks&hellip;</p>
           </div>
         ) : (
@@ -2929,11 +2963,153 @@ function PicksTab({ visible }: { visible: boolean }) {
             {open.length === 0 && taken.length === 0 && settled.length === 0 && skipped.length === 0 && (
               <EmptyState
                 title="No picks yet."
-                subtitle="Ceelo runs every 12h. Picks land here when an edge is flagged."
+                subtitle="Ceelo runs every 30 min. Picks land here once the model finds an edge ≥ 1.0 pt."
               />
             )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Ceelo one-on-one chat (operator ↔ Ceelo, thread='ceelo') ─────────────
+//
+// Ceelo's reply lands ~30s after send (the Ceelo loop runs every tick and
+// handles chat ungated by the cycle interval). Polls /api/ceelo/chat.
+
+interface CeeloMsg { id: number; sender: 'user' | 'ceelo'; content: string; ts?: number }
+
+function CeeloChatView({ visible }: { visible: boolean }) {
+  const [messages, setMessages] = useState<CeeloMsg[]>([])
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [nearBottom, setNearBottom] = useState(true)
+  const lastId = useRef(0)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    bottomRef.current?.scrollIntoView({ behavior })
+  }, [])
+
+  useEffect(() => {
+    if (nearBottom) scrollToBottom('smooth')
+  }, [messages, nearBottom, scrollToBottom])
+
+  const onScroll = useCallback(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    setNearBottom(dist < 60)
+  }, [])
+
+  useEffect(() => {
+    if (!visible) return
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/ceelo/chat?after=${lastId.current}`)
+        if (!res.ok) return
+        const { messages: incoming } = await res.json()
+        if (incoming.length > 0) {
+          setMessages(prev => [...prev, ...incoming])
+          lastId.current = incoming[incoming.length - 1].id
+        }
+      } catch { /* network hiccup */ }
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [visible])
+
+  const send = useCallback(async () => {
+    const text = input.trim()
+    if (!text || sending) return
+    setInput('')
+    setSending(true)
+    try {
+      const res = await fetch('/api/ceelo/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      })
+      if (!res.ok) throw new Error()
+      const { id, timestamp } = await res.json()
+      setMessages(prev => [...prev, { id, sender: 'user', content: text, ts: timestamp }])
+      if (id > lastId.current) lastId.current = id
+    } catch {
+      setMessages(prev => [...prev, { id: -Date.now(), sender: 'ceelo', content: 'Send failed. Try again.' }])
+    } finally {
+      setSending(false)
+    }
+  }, [input, sending])
+
+  return (
+    <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
+      {/* Header bubble */}
+      <div className="shrink-0 px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-800/60">
+        <span className="w-6 h-6 rounded-full bg-rose-950 border border-rose-800 flex items-center justify-center text-[10px] font-mono text-rose-400 font-semibold">C</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-mono text-slate-200 font-semibold">Ceelo</p>
+          <p className="text-[9px] font-mono text-slate-600">NFL handicapper · grounded in his model</p>
+        </div>
+      </div>
+
+      <div ref={scrollerRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {messages.length === 0 && (
+          <EmptyState
+            title="Open."
+            subtitle="Ask him about ratings, current edges, or his read on a specific matchup."
+          />
+        )}
+        {messages.map(m => (
+          <CeeloChatBubble key={m.id} msg={m} />
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="shrink-0 border-t border-slate-800 px-3 py-2 bg-slate-950 flex items-end gap-2"
+           style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}>
+        <textarea
+          rows={1}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              send()
+            }
+          }}
+          placeholder="Ask Ceelo…"
+          className="flex-1 resize-none bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-rose-700 max-h-32"
+        />
+        <button
+          onClick={send}
+          disabled={!input.trim() || sending}
+          className="text-[10px] font-mono text-rose-300 border border-rose-800 bg-rose-950/40 rounded-xl px-3 py-2 active:opacity-70 disabled:opacity-40"
+        >
+          {sending ? '…' : 'Send'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function CeeloChatBubble({ msg }: { msg: CeeloMsg }) {
+  if (msg.sender === 'user') {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-emerald-950/40 text-emerald-100 border border-emerald-900/60 px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words">
+          {msg.content}
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-start gap-2">
+      <span className="w-6 h-6 rounded-full bg-rose-950 border border-rose-800 flex items-center justify-center text-[10px] font-mono text-rose-400 font-semibold shrink-0 mt-0.5">C</span>
+      <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-slate-900 border border-slate-800 text-slate-200 px-3 py-2 text-xs font-mono whitespace-pre-wrap break-words">
+        {msg.content}
       </div>
     </div>
   )
@@ -3312,9 +3488,100 @@ function TakenActions({ pick, onAction }: {
   )
 }
 
+// ─── Library Tab (Reports + Notes, mode toggle) ───────────────────────────
+//
+// Single tab housing the bounty-report pipeline (actionable items) and
+// the agent-written notes library. Mode toggle at the top swaps between
+// the two views; both subviews remain mounted so their internal state /
+// polling persists across toggles.
+
+function LibraryTab({
+  visible,
+  mode,
+  onModeChange,
+  reports,
+  reportsLoading,
+  onReportAction,
+  onNavigate,
+  notesFilter,
+  onNotesFilterChange,
+}: {
+  visible: boolean
+  mode: 'reports' | 'notes'
+  onModeChange: (m: 'reports' | 'notes') => void
+  reports: SecurityReport[]
+  reportsLoading: boolean
+  onReportAction: (a: ReportAction) => void
+  onNavigate: NavigateFn
+  notesFilter: NoteFilter
+  onNotesFilterChange: (f: NoteFilter) => void
+}) {
+  const reportsBadge = reports.filter(r => r.status === 'approved' || r.status === 'pending_review').length
+
+  return (
+    <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
+      {/* Mode toggle bar */}
+      <div className="shrink-0 flex border-b border-slate-800 bg-slate-950">
+        <LibraryModePill
+          active={mode === 'reports'}
+          label="Reports"
+          badge={reportsBadge > 0 ? reportsBadge : undefined}
+          onClick={() => onModeChange('reports')}
+        />
+        <LibraryModePill
+          active={mode === 'notes'}
+          label="Notes"
+          onClick={() => onModeChange('notes')}
+        />
+      </div>
+
+      {/* Subviews — both mounted so polling/state persists across mode flips. */}
+      <div className="flex-1 relative overflow-hidden">
+        <ReportsTab
+          reports={reports}
+          loading={reportsLoading}
+          visible={visible && mode === 'reports'}
+          onAction={onReportAction}
+          onNavigate={onNavigate}
+        />
+        <NotesTab
+          visible={visible && mode === 'notes'}
+          filter={notesFilter}
+          onFilterChange={onNotesFilterChange}
+        />
+      </div>
+    </div>
+  )
+}
+
+function LibraryModePill({ active, label, badge, onClick }: {
+  active: boolean
+  label: string
+  badge?: number
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 py-3 text-[11px] font-mono tracking-widest uppercase relative transition-colors ${
+        active
+          ? 'text-emerald-400 border-b-2 border-emerald-500'
+          : 'text-slate-600 active:text-slate-400 border-b-2 border-transparent'
+      }`}
+    >
+      {label}
+      {badge != null && badge > 0 && (
+        <span className="ml-2 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-amber-500 text-slate-950 text-[9px] font-bold tabular-nums">
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
 // ─── Notes Tab ────────────────────────────────────────────────────────────────
 
-type NoteCategory = 'analyst' | 'lila' | 'tasker' | 'pitches' | 'other'
+type NoteCategory = 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'pitches' | 'other'
 
 interface NoteRow {
   id: number
@@ -3335,6 +3602,7 @@ interface AgentActivity {
     target: { title: string; phase: string; cycles: number; last_ts: number | null } | null
   } | null
   lila: { last_chat_ts: number | null }
+  ceelo?: { cycle: number; rated: number; upcoming: number; last_ts: number | null } | null
 }
 
 interface NotesData {
@@ -3395,6 +3663,8 @@ function humanizeNotePath(path: string): { title: string; subtitle: string } {
   if (path.startsWith('lila/'))                   return { title: 'Lila note',     subtitle: base }
   if (path.startsWith('tasker/'))                 return { title: 'Cipher note',   subtitle: base }
   if (path.startsWith('analyst/'))                return { title: 'Vega note',     subtitle: base }
+  if (path.startsWith('ceelo/cycles/'))           return { title: 'Ceelo cycle',   subtitle: date || base }
+  if (path.startsWith('ceelo/'))                  return { title: 'Ceelo note',    subtitle: base }
   return { title: leaf, subtitle: path }
 }
 
@@ -3414,14 +3684,16 @@ const NOTE_CATEGORY_STYLE: Record<NoteCategory, string> = {
   analyst: 'bg-blue-950 text-blue-300 border-blue-900',
   lila:    'bg-emerald-950 text-emerald-300 border-emerald-900',
   tasker:  'bg-amber-950 text-amber-300 border-amber-900',
+  ceelo:   'bg-rose-950 text-rose-300 border-rose-900',
   pitches: 'bg-purple-950 text-purple-300 border-purple-900',
   other:   'bg-slate-800 text-slate-400 border-slate-700',
 }
 
 const NOTE_CATEGORY_LABEL: Record<NoteCategory, string> = {
-  analyst: 'ANALYST',
+  analyst: 'VEGA',
   lila:    'LILA',
-  tasker:  'TASKER',
+  tasker:  'CIPHER',
+  ceelo:   'CEELO',
   pitches: 'PITCH',
   other:   'OTHER',
 }
@@ -3512,6 +3784,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
     { key: 'all',     label: 'ALL',     count: data.counts.total   },
     { key: 'analyst', label: 'VEGA',    count: data.counts.analyst },
     { key: 'tasker',  label: 'CIPHER',  count: data.counts.tasker  },
+    { key: 'ceelo',   label: 'CEELO',   count: data.counts.ceelo ?? 0 },
     { key: 'lila',    label: 'LILA',    count: data.counts.lila    },
     { key: 'pitches', label: 'PITCH',   count: data.counts.pitches },
     ...(data.counts.other > 0 ? [{ key: 'other' as const, label: 'OTHER', count: data.counts.other }] : []),
@@ -3620,7 +3893,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
 
 function AgentActivityCard({ activity }: { activity: AgentActivity }) {
   const rows: Array<{
-    who: 'Vega' | 'Cipher' | 'Lila'
+    who: 'Vega' | 'Cipher' | 'Ceelo' | 'Lila'
     color: string
     line: string
     ts: number | null
@@ -3644,6 +3917,14 @@ function AgentActivityCard({ activity }: { activity: AgentActivity }) {
       color: 'text-amber-400',
       line,
       ts: activity.cipher.target?.last_ts ?? activity.cipher.last_ts,
+    })
+  }
+  if (activity.ceelo) {
+    rows.push({
+      who: 'Ceelo',
+      color: 'text-rose-400',
+      line: `cycle ${activity.ceelo.cycle} · ${activity.ceelo.rated}/32 rated · ${activity.ceelo.upcoming} upcoming`,
+      ts: activity.ceelo.last_ts,
     })
   }
   rows.push({
@@ -3692,9 +3973,7 @@ function NoteRow({ note, expanded, content, loadingContent, onToggle, onDelete }
   }
 
   const { title, subtitle } = humanizeNotePath(note.path)
-  const catLabel = note.category === 'analyst' ? 'VEGA'
-                : note.category === 'tasker'  ? 'CIPHER'
-                : NOTE_CATEGORY_LABEL[note.category]
+  const catLabel = NOTE_CATEGORY_LABEL[note.category]
 
   return (
     <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
@@ -4180,7 +4459,7 @@ function ReportCard({ report, onAction, onNavigate }: {
             )}
             {onNavigate && (
               <button
-                onClick={() => onNavigate({ tab: 'notes', notesFilter: 'tasker' })}
+                onClick={() => onNavigate({ tab: 'library', notesFilter: 'tasker' })}
                 className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
               >
                 Research notes →
@@ -4428,6 +4707,8 @@ export default function Home() {
   // Pre-filter the Notes tab when the operator deep-links from elsewhere
   // (TargetCard → Cipher plans, ReportCard → Cipher, etc).
   const [notesFilter, setNotesFilter] = useState<NoteFilter>('all')
+  // Library tab inner mode: Reports (default; actionable items) or Notes.
+  const [libraryMode, setLibraryMode] = useState<'reports' | 'notes'>('reports')
   // Badge count for unread chat messages (since the operator last opened
   // the Chat tab). Reset when they switch back to Chat.
   const [chatSeenId, setChatSeenId] = useState(0)
@@ -4440,7 +4721,11 @@ export default function Home() {
   }, [chatLatestId])
 
   const navigate: NavigateFn = useCallback((to) => {
-    if (to.notesFilter) setNotesFilter(to.notesFilter)
+    if (to.notesFilter) {
+      setNotesFilter(to.notesFilter)
+      setLibraryMode('notes')
+    }
+    if (to.libraryMode) setLibraryMode(to.libraryMode)
     setTab(to.tab)
   }, [])
 
@@ -4527,7 +4812,7 @@ export default function Home() {
     } finally { setReportsLoading(false) }
   }, [])
 
-  useEffect(() => { if (tab === 'reports') loadReports() }, [tab, loadReports])
+  useEffect(() => { if (tab === 'library' && libraryMode === 'reports') loadReports() }, [tab, libraryMode, loadReports])
 
   const reportAction = useCallback(async (a: ReportAction) => {
     const body: Record<string, unknown> = { id: a.id, action: a.kind }
@@ -4592,15 +4877,18 @@ export default function Home() {
           visible={tab === 'bounties'}
           onAssign={setAssignedBounty}
         />
-        <ReportsTab
+        <LibraryTab
+          visible={tab === 'library'}
+          mode={libraryMode}
+          onModeChange={setLibraryMode}
           reports={reports}
-          loading={reportsLoading}
-          visible={tab === 'reports'}
-          onAction={reportAction}
+          reportsLoading={reportsLoading}
+          onReportAction={reportAction}
           onNavigate={navigate}
+          notesFilter={notesFilter}
+          onNotesFilterChange={setNotesFilter}
         />
         <PicksTab visible={tab === 'picks'} />
-        <NotesTab visible={tab === 'notes'} filter={notesFilter} onFilterChange={setNotesFilter} />
         <TerminalTab visible={tab === 'terminal'} />
       </main>
 
@@ -4608,8 +4896,8 @@ export default function Home() {
         tab={tab}
         onTab={setTabWithSeen}
         badges={{
-          chat: tab === 'chat' ? 0 : Math.max(0, chatLatestId - chatSeenId),
-          reports: reports.filter(r => r.status === 'approved').length,
+          chat:    tab === 'chat' ? 0 : Math.max(0, chatLatestId - chatSeenId),
+          library: reports.filter(r => r.status === 'approved' || r.status === 'pending_review').length,
         }}
       />
     </div>

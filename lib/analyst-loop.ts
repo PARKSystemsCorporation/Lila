@@ -74,7 +74,8 @@ export class AnalystLoop {
   private async t0(): Promise<string> {
     const { rows } = await this.db.query(
       `SELECT sender, content FROM chat_messages
-       WHERE created_at > NOW() - INTERVAL '10 minutes'
+       WHERE thread = 'main'
+         AND created_at > NOW() - INTERVAL '10 minutes'
        ORDER BY created_at ASC LIMIT 20`
     )
     if (!rows.length) return 'No new chat. Moving to feed.'

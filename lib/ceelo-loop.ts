@@ -1,5 +1,7 @@
+import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import { cfg } from './config'
+import { llmCall, LLMBudgetExceeded } from './llm'
 import * as Espn from './ceelo/espn'
 import * as Odds from './ceelo/odds'
 import { applyGame, modelLine, DEFAULT_RATING } from './ceelo/ratings'
@@ -30,36 +32,64 @@ const EDGE_THRESHOLD_PTS = 1.0
 
 export class CeeloLoop {
   private db: PoolClient
+  private ai: OpenAI | null
 
   constructor(db: PoolClient) {
     this.db = db
+    this.ai = process.env.DEEPSEEK_API_KEY
+      ? new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })
+      : null
   }
 
-  async shouldRun(): Promise<boolean> {
+  async shouldRunCycle(): Promise<boolean> {
     const { rows: [s] } = await this.db.query('SELECT last_run_at FROM ceelo_state WHERE id=1')
     if (!s?.last_run_at) return true
     return (Date.now() - new Date(s.last_run_at).getTime()) / 60_000 >= cfg.CEELO_RUN_MIN
   }
 
+  // Runs every tick. Chat handling is fast and ungated; the heavy data
+  // cycle (C0-C5) only runs when CEELO_RUN_MIN has elapsed.
   async run(): Promise<{ logMessage: string; logType: 'info' | 'success' | 'warn' } | null> {
-    if (!(await this.shouldRun())) return null
+    const chatMsg = await this.handleChat().catch((e) => `chat err: ${err(e)}`)
+    const cycleMsg = (await this.shouldRunCycle()) ? await this.runCycle() : null
 
+    if (cycleMsg) {
+      // Cycle log wins when it fires; chat reply (if any) is logged inline.
+      const merged = chatMsg
+        ? `${cycleMsg.logMessage} · ${chatMsg}`
+        : cycleMsg.logMessage
+      return { ...cycleMsg, logMessage: merged }
+    }
+    if (chatMsg) return { logMessage: `Ceelo — ${chatMsg}`, logType: 'info' }
+    return null
+  }
+
+  private async runCycle(): Promise<{ logMessage: string; logType: 'info' | 'success' | 'warn' }> {
     const notes: string[] = []
     let warned = false
     const note = (msg: string) => { if (msg) notes.push(msg) }
 
-    try { note(await this.c0_refreshSchedule()) }   catch (e) { warned = true; note(`C0 ${err(e)}`) }
-    try { note(await this.c1_gradeFinals()) }       catch (e) { warned = true; note(`C1 ${err(e)}`) }
-    try { note(await this.c2_pullBookLines()) }     catch (e) { warned = true; note(`C2 ${err(e)}`) }
-    try { note(await this.c3_computeModelLines()) } catch (e) { warned = true; note(`C3 ${err(e)}`) }
-    try { note(await this.c4_emitPicks()) }         catch (e) { warned = true; note(`C4 ${err(e)}`) }
-    try { note(await this.c5_reconcile()) }         catch (e) { warned = true; note(`C5 ${err(e)}`) }
+    let gradedSummary = ''
+    let edgeSummary   = ''
+
+    try { note(await this.c0_refreshSchedule()) }                     catch (e) { warned = true; note(`C0 ${err(e)}`) }
+    try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
+    try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
+    try { note(await this.c3_computeModelLines()) }                   catch (e) { warned = true; note(`C3 ${err(e)}`) }
+    try { edgeSummary = await this.c4_emitPicks(); note(edgeSummary) } catch (e) { warned = true; note(`C4 ${err(e)}`) }
+    try { note(await this.c5_reconcile()) }                           catch (e) { warned = true; note(`C5 ${err(e)}`) }
+
+    // File a Ceelo note with the cycle outcome — gives the operator a
+    // human-readable trace in the Library tab.
+    if (gradedSummary || edgeSummary) {
+      await this.fileCycleNote(gradedSummary, edgeSummary).catch(() => {})
+    }
 
     await this.db.query(
       `UPDATE ceelo_state SET last_run_at=NOW(), cycle=cycle+1, updated_at=NOW() WHERE id=1`
     )
 
-    const msg = notes.join(' · ') || 'Ceelo: idle (no upcoming games).'
+    const msg = notes.filter(Boolean).join(' · ') || 'idle (no upcoming games)'
     return { logMessage: `Ceelo — ${msg}`, logType: warned ? 'warn' : 'info' }
   }
 
@@ -295,6 +325,131 @@ export class CeeloLoop {
        RETURNING id`
     )
     return started.rowCount ? `C5 voided ${started.rowCount} (kicked off)` : ''
+  }
+
+  // ── chat: one-on-one with the operator (thread='ceelo') ─────────────────
+
+  private async handleChat(): Promise<string> {
+    if (!this.ai) return ''
+
+    // Find the latest user message. If a ceelo reply already exists after
+    // it, we've already responded.
+    const { rows: latest } = await this.db.query(
+      `SELECT id, sender, content
+       FROM chat_messages
+       WHERE thread='ceelo'
+       ORDER BY id DESC LIMIT 1`
+    )
+    if (!latest.length) return ''
+    const last = latest[0]
+    if (last.sender !== 'user') return ''
+
+    // Pull last 10 messages for context (oldest → newest).
+    const { rows: history } = await this.db.query(
+      `SELECT sender, content
+       FROM chat_messages
+       WHERE thread='ceelo'
+       ORDER BY id DESC LIMIT 10`
+    )
+    const transcript = history
+      .reverse()
+      .map((m: { sender: string; content: string }) => `[${m.sender.toUpperCase()}]: ${m.content}`)
+      .join('\n')
+
+    // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
+    const [topRated, openPicks, status] = await Promise.all([
+      this.db.query(
+        `SELECT team, rating, games_played FROM ceelo_team_ratings
+         WHERE games_played > 0
+         ORDER BY rating DESC LIMIT 8`
+      ),
+      this.db.query(
+        `SELECT game_label, market, side, model_spread, book_spread, edge_points, confidence
+         FROM ceelo_picks
+         WHERE status='open'
+         ORDER BY ABS(COALESCE(edge_points, 0)) DESC LIMIT 6`
+      ),
+      this.db.query(
+        `SELECT cycle,
+                (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
+                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
+         FROM ceelo_state WHERE id=1`
+      ),
+    ])
+
+    const topRatedStr = topRated.rows.length
+      ? topRated.rows.map((r: { team: string; rating: string; games_played: number }) =>
+          `${r.team} ${Number(r.rating).toFixed(0)} (${r.games_played}g)`
+        ).join(', ')
+      : '(none yet — Elo cold-start)'
+    const openPicksStr = openPicks.rows.length
+      ? openPicks.rows.map((p: { game_label: string; side: string; model_spread: string | null; book_spread: string | null; edge_points: string | null; confidence: string }) => {
+          const m = p.model_spread != null ? Number(p.model_spread).toFixed(1) : '?'
+          const b = p.book_spread  != null ? Number(p.book_spread).toFixed(1)  : '?'
+          const e = p.edge_points  != null ? Number(p.edge_points).toFixed(1)  : '?'
+          return `${p.side} (${p.game_label}) — model ${m}, book ${b}, edge ${e}pt [${p.confidence}]`
+        }).join('\n  ')
+      : '(no open picks)'
+    const s = status.rows[0] ?? {}
+
+    const prompt = `You are Ceelo, the NFL handicapper on Lila's team. The operator is talking to you one-on-one.
+
+Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. If they ask something you can't answer from the model, say so directly.
+
+CURRENT MODEL STATE:
+- Loop cycle: ${Number(s.cycle ?? 0)}
+- Rated teams: ${Number(s.rated ?? 0)}/32
+- Upcoming games tracked: ${Number(s.upcoming ?? 0)}
+- Top-rated right now: ${topRatedStr}
+- Open picks (model-driven, sorted by edge):
+  ${openPicksStr}
+- Live book lines: ${Odds.isConfigured() ? 'engaged (Odds API key present)' : 'NOT engaged — no Odds API key, so the edge gate is dark'}
+
+CONVERSATION:
+${transcript}
+
+Your reply only — no name prefix, no quotes.`
+
+    let reply: string
+    try {
+      const res = await llmCall({
+        ai: this.ai,
+        module: 'ceelo.chat',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 260,
+        temperature: 0.4,
+      })
+      reply = res.content.trim().slice(0, 1500)
+    } catch (e) {
+      if (e instanceof LLMBudgetExceeded) {
+        reply = 'On the bench — daily LLM budget hit. Back online tomorrow.'
+      } else {
+        return `chat err: ${err(e)}`
+      }
+    }
+    if (!reply) return ''
+
+    await this.db.query(
+      `INSERT INTO chat_messages (sender, content, thread) VALUES ('ceelo', $1, 'ceelo')`,
+      [reply]
+    )
+    return 'replied to operator'
+  }
+
+  // Write a note summarizing the cycle's grading + edge findings.
+  private async fileCycleNote(graded: string, edges: string): Promise<void> {
+    const stamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 13)  // YYYYMMDDTHHMM
+    const date = new Date().toISOString().slice(0, 10)
+    const path = `ceelo/cycles/${date}-${stamp}.md`
+    const body = `# Ceelo cycle ${date} ${new Date().toISOString().slice(11, 16)}\n\n` +
+                 (graded ? `## Grades\n${graded}\n\n` : '') +
+                 (edges  ? `## Edges\n${edges}\n\n`   : '') +
+                 `_Loop is autonomous. ${Odds.isConfigured() ? 'Edge gate ARMED.' : 'Edge gate WAITING for ODDS_API_KEY.'}_`
+    await this.db.query(
+      `INSERT INTO analyst_notes (path, content, updated_at) VALUES ($1,$2,NOW())
+       ON CONFLICT (path) DO UPDATE SET content=$2, updated_at=NOW()`,
+      [path, body]
+    )
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────

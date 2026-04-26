@@ -4,11 +4,12 @@ import { getPool, ensureSchema } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 // Categorize an analyst_notes path into a display bucket.
-function categorize(path: string): 'analyst' | 'lila' | 'tasker' | 'pitches' | 'other' {
+function categorize(path: string): 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'pitches' | 'other' {
   if (path.startsWith('lila/pitches/')) return 'pitches'
   if (path.startsWith('lila/'))   return 'lila'
   if (path.startsWith('tasker/')) return 'tasker'
   if (path.startsWith('analyst/')) return 'analyst'
+  if (path.startsWith('ceelo/'))  return 'ceelo'
   return 'other'
 }
 
@@ -16,7 +17,7 @@ export async function GET(req: Request) {
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({
       notes: [],
-      counts: { analyst: 0, lila: 0, tasker: 0, pitches: 0, other: 0, total: 0 },
+      counts: { analyst: 0, lila: 0, tasker: 0, ceelo: 0, pitches: 0, other: 0, total: 0 },
       activity: null,
     })
   }
@@ -50,7 +51,7 @@ export async function GET(req: Request) {
     }
 
     // List + activity snapshot in parallel.
-    const [notesRes, vegaRes, cipherRes, targetRes, lilaChatRes] = await Promise.all([
+    const [notesRes, vegaRes, cipherRes, targetRes, lilaChatRes, ceeloRes] = await Promise.all([
       db.query(
         `SELECT id, path,
                 LEFT(content, 280) AS preview,
@@ -81,7 +82,14 @@ export async function GET(req: Request) {
       ),
       db.query(
         `SELECT (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint AS last_ts
-         FROM chat_messages WHERE sender='lila'`
+         FROM chat_messages WHERE sender='lila' AND thread='main'`
+      ),
+      db.query(
+        `SELECT cycle,
+                (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS last_ts,
+                (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
+                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
+         FROM ceelo_state WHERE id=1`
       ),
     ])
 
@@ -99,6 +107,7 @@ export async function GET(req: Request) {
       analyst: notes.filter(n => n.category === 'analyst').length,
       lila:    notes.filter(n => n.category === 'lila').length,
       tasker:  notes.filter(n => n.category === 'tasker').length,
+      ceelo:   notes.filter(n => n.category === 'ceelo').length,
       pitches: notes.filter(n => n.category === 'pitches').length,
       other:   notes.filter(n => n.category === 'other').length,
       total:   notes.length,
@@ -108,6 +117,7 @@ export async function GET(req: Request) {
     const cipher = cipherRes.rows[0]
     const tgt = targetRes.rows[0]
     const lilaChat = lilaChatRes.rows[0]
+    const ceelo = ceeloRes.rows[0]
 
     const activity = {
       vega: vega ? {
@@ -129,6 +139,12 @@ export async function GET(req: Request) {
       lila: {
         last_chat_ts: lilaChat?.last_ts != null ? Number(lilaChat.last_ts) : null,
       },
+      ceelo: ceelo ? {
+        cycle:    Number(ceelo.cycle ?? 0),
+        rated:    Number(ceelo.rated ?? 0),
+        upcoming: Number(ceelo.upcoming ?? 0),
+        last_ts:  ceelo.last_ts != null ? Number(ceelo.last_ts) : null,
+      } : null,
     }
 
     return NextResponse.json({ notes, counts, activity })
@@ -160,6 +176,7 @@ export async function POST(req: Request) {
         analyst: 'analyst/',
         lila:    'lila/',
         tasker:  'tasker/',
+        ceelo:   'ceelo/',
         pitches: 'lila/pitches/',
       }
       const prefix = prefixMap[category]

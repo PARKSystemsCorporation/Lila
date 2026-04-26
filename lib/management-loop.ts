@@ -162,7 +162,8 @@ export class ManagementLoop {
   private async replyToOperator(): Promise<ManagementResult | null> {
     const { rows } = await this.db.query(
       `SELECT sender, content, created_at FROM chat_messages
-       WHERE created_at > NOW() - INTERVAL '20 minutes'
+       WHERE thread = 'main'
+         AND created_at > NOW() - INTERVAL '20 minutes'
        ORDER BY created_at ASC LIMIT 30`
     )
     if (!rows.length) return null

@@ -329,6 +329,7 @@ export class BroadcastLoop {
       const { rows } = await this.db.query(
         `SELECT 1 FROM chat_messages
          WHERE sender = 'lila'
+           AND thread = 'main'
            AND content LIKE $1
            AND created_at > NOW() - INTERVAL '60 minutes'
          LIMIT 1`,

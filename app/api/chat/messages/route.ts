@@ -17,7 +17,9 @@ export async function GET(req: Request) {
       `SELECT id, sender, content,
               (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS timestamp
        FROM chat_messages
-       WHERE sender IN ('analyst', 'lila', 'tasker') AND id > $1
+       WHERE sender IN ('analyst', 'lila', 'tasker')
+         AND thread = 'main'
+         AND id > $1
        ORDER BY id ASC LIMIT 30`,
       [after]
     )

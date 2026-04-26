@@ -77,8 +77,12 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       id         SERIAL      PRIMARY KEY,
       sender     TEXT        NOT NULL,
       content    TEXT        NOT NULL,
+      thread     TEXT        NOT NULL DEFAULT 'main',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    -- Migration: thread column was added after the table first shipped.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread TEXT NOT NULL DEFAULT 'main';
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS analyst_notes (
       id         SERIAL      PRIMARY KEY,
