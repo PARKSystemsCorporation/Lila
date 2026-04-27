@@ -41,6 +41,80 @@ export async function fetchSeasons(seasons: number[]): Promise<NflverseGame[]> {
   return all.filter(g => want.has(g.season))
 }
 
+// ── Depth charts (NFL only — nflverse depth_charts release) ──────────────
+
+const DEPTH_URL = (season: number) =>
+  `https://github.com/nflverse/nflverse-data/releases/download/depth_charts/depth_charts_${season}.csv`
+
+export interface DepthEntry {
+  season: number
+  week: number
+  team: string                // 2-3 letter abbr
+  player: string
+  position: string            // QB / RB / WR / etc.
+  depth_position: number      // 1 = starter, 2 = backup, 3+ = deeper
+  formation: string           // 'Offense' | 'Defense' | 'Special Teams'
+}
+
+// Pull the most-recent week's depth chart for the given season. Returns
+// only first-string + second-string per (team, position) — the rest is
+// noise for a handicapper.
+export async function fetchDepthCharts(season: number): Promise<DepthEntry[]> {
+  const res = await fetch(DEPTH_URL(season), {
+    headers: { 'user-agent': 'Lila/Ceelo' },
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (!res.ok) throw new Error(`nflverse depth_charts ${season}: ${res.status}`)
+  const text = await res.text()
+  return parseDepth(text, season)
+}
+
+function parseDepth(text: string, season: number): DepthEntry[] {
+  const lines = text.split(/\r?\n/).filter(Boolean)
+  if (lines.length < 2) return []
+  const header = splitCsvLine(lines[0])
+  const idx = (n: string) => header.indexOf(n)
+  const I = {
+    season:         idx('season'),
+    week:           idx('week'),
+    team:           idx('club_code')  >= 0 ? idx('club_code')  : idx('team'),
+    full_name:      idx('full_name'),
+    position:       idx('position'),
+    depth_position: idx('depth_position'),
+    formation:      idx('formation'),
+  }
+  if ([I.team, I.full_name, I.position, I.depth_position, I.formation].some(i => i < 0)) return []
+
+  // Find the latest week so we only return current depth.
+  let maxWeek = 0
+  for (let i = 1; i < lines.length; i++) {
+    const cells = splitCsvLine(lines[i])
+    const w = parseInt(cells[I.week] ?? '', 10)
+    if (Number.isFinite(w) && w > maxWeek) maxWeek = w
+  }
+
+  const out: DepthEntry[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const cells = splitCsvLine(lines[i])
+    const w = parseInt(cells[I.week] ?? '', 10)
+    if (w !== maxWeek) continue
+    const dp = parseInt(cells[I.depth_position] ?? '', 10)
+    if (!Number.isFinite(dp) || dp > 2) continue   // starter + backup only
+    const team = (cells[I.team] ?? '').toUpperCase().trim()
+    if (!team) continue
+    out.push({
+      season,
+      week: w,
+      team,
+      player: cells[I.full_name] ?? '',
+      position: cells[I.position] ?? '',
+      depth_position: dp,
+      formation: cells[I.formation] ?? '',
+    })
+  }
+  return out
+}
+
 // ── CSV parsing ─────────────────────────────────────────────────────────
 
 function parseCsv(text: string): NflverseGame[] {

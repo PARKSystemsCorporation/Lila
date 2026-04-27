@@ -443,6 +443,26 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_ceelo_team_epa_season ON ceelo_team_epa(season, net_epa DESC);
     ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_epa_at TIMESTAMPTZ;
 
+    -- Depth charts (NFL only for now — nflverse weekly depth_charts file).
+    -- Starter + immediate-backup per (team, position, formation). Refreshed
+    -- weekly via Ceelo's loop. NBA / MLB depth ranking sources aren't
+    -- ingested yet (basketball-reference / retrosheet are scrape-required).
+    CREATE TABLE IF NOT EXISTS ceelo_depth_charts (
+      id              SERIAL      PRIMARY KEY,
+      sport           TEXT        NOT NULL DEFAULT 'NFL',
+      season          INTEGER     NOT NULL,
+      week            INTEGER     NOT NULL,
+      team            TEXT        NOT NULL,
+      player          TEXT        NOT NULL,
+      position        TEXT        NOT NULL,
+      depth_position  INTEGER     NOT NULL,        -- 1 = starter, 2 = backup
+      formation       TEXT        NOT NULL,        -- 'Offense' | 'Defense' | 'Special Teams'
+      fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (sport, team, position, formation, depth_position)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_depth_team ON ceelo_depth_charts(sport, team, position);
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_depth_at TIMESTAMPTZ;
+
     -- Current-season rosters. Refreshed weekly via ESPN's per-team endpoint.
     -- One row per (team, player). Stale players get pruned when a fresh
     -- fetch overwrites the team list.

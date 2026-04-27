@@ -5,6 +5,7 @@ import { llmCall, LLMBudgetExceeded } from './llm'
 import * as Espn from './ceelo/espn'
 import * as Odds from './ceelo/odds'
 import * as PublicBets from './ceelo/public-bets'
+import * as Nflverse from './ceelo/nflverse'
 import { applyGame, modelLine, DEFAULT_RATING, SPORT_CONFIG } from './ceelo/ratings'
 import { ALL_SPORTS, NFL_TEAMS, NBA_TEAMS, MLB_TEAMS, type Sport } from './ceelo/teams'
 
@@ -90,6 +91,7 @@ export class CeeloLoop {
     try { note(await this.c0b_refreshInjuries()) }                    catch (e) { warned = true; note(`C0b ${err(e)}`) }
     try { note(await this.c0c_autoSeed()) }                           catch (e) { warned = true; note(`C0c ${err(e)}`) }
     try { note(await this.c0d_refreshRosters()) }                     catch (e) { warned = true; note(`C0d ${err(e)}`) }
+    try { note(await this.c0e_refreshDepthCharts()) }                 catch (e) { warned = true; note(`C0e ${err(e)}`) }
     try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
     try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
     try { note(await this.c2b_pullPublicBets()) }                     catch (e) { warned = true; note(`C2b ${err(e)}`) }
@@ -252,26 +254,95 @@ export class CeeloLoop {
     return total > 0 ? `C0d ${total} roster` : ''
   }
 
-  // ── C0c: auto-seed historical data if empty ─────────────────────────────
+  // ── C0e: NFL depth charts via nflverse (≤ once per 7 days) ──────────────
+  // Pulls the latest week of starter + immediate-backup depth from nflverse.
+  // Skips silently in offseason (nflverse releases the next season's file
+  // around July) — fetch error is non-fatal.
+
+  private async c0e_refreshDepthCharts(): Promise<string> {
+    const { rows: [s] } = await this.db.query('SELECT last_depth_at FROM ceelo_state WHERE id=1')
+    if (s?.last_depth_at && minutesSince(s.last_depth_at) < 7 * 24 * 60) return ''
+
+    const season = new Date().getUTCFullYear()
+    let entries: Nflverse.DepthEntry[] = []
+    try {
+      entries = await Nflverse.fetchDepthCharts(season)
+    } catch {
+      // Try previous season — nflverse releases lag. Silent fail if both miss.
+      try { entries = await Nflverse.fetchDepthCharts(season - 1) } catch { /* ignore */ }
+    }
+    if (!entries.length) {
+      // Touch the gate so we don't hammer 404s every cycle in offseason.
+      await this.db.query(`UPDATE ceelo_state SET last_depth_at=NOW() WHERE id=1`)
+      return ''
+    }
+
+    // Wipe + re-insert NFL depth (table-wide unique key handles dedup but
+    // wipe keeps the table tidy when rosters shuffle).
+    await this.db.query(`DELETE FROM ceelo_depth_charts WHERE sport='NFL'`)
+    let inserted = 0
+    for (const d of entries) {
+      await this.db.query(
+        `INSERT INTO ceelo_depth_charts
+           (sport, season, week, team, player, position, depth_position, formation, fetched_at)
+         VALUES ('NFL',$1,$2,$3,$4,$5,$6,$7,NOW())
+         ON CONFLICT (sport, team, position, formation, depth_position) DO UPDATE
+           SET player=EXCLUDED.player,
+               season=EXCLUDED.season,
+               week=EXCLUDED.week,
+               fetched_at=NOW()`,
+        [d.season, d.week, d.team, d.player, d.position, d.depth_position, d.formation]
+      )
+      inserted++
+    }
+    await this.db.query(`UPDATE ceelo_state SET last_depth_at=NOW() WHERE id=1`)
+    return inserted > 0 ? `C0e ${inserted} depth (NFL)` : ''
+  }
+
+  // ── C0c: auto-seed historical data per sport when empty ─────────────────
+  // Per-sport check: any sport with zero rated teams gets auto-seeded.
+  // NFL uses the rich nflverse seed (closing lines + EPA + Elo). NBA + MLB
+  // use ESPN's date-range seed via /api/ceelo/seed-prev (Elo + games only —
+  // historical book lines aren't free for those sports yet).
 
   private async c0c_autoSeed(): Promise<string> {
-    const { rows: [{ count }] } = await this.db.query(
-      `SELECT COUNT(*) as count FROM ceelo_team_ratings`
+    const { rows } = await this.db.query(
+      `SELECT sport, COUNT(*) AS rated
+       FROM ceelo_team_ratings
+       GROUP BY sport`
     )
-    if (Number(count) > 0) return ''
+    const ratedBySport = new Map<string, number>(
+      rows.map((r: { sport: string; rated: number }) => [r.sport, Number(r.rated)])
+    )
 
-    // No teams rated! Let's auto-seed the database using the same logic as the API.
-    // We fetch to localhost since this runs within the node server context,
-    // but the safest approach is to hit the internal logic. Wait, this is a local loop.
-    // We can just call the POST /api/ceelo/seed endpoint via localhost.
-    try {
-      const res = await fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/ceelo/seed?seasons=3', { method: 'POST' })
-      if (!res.ok) throw new Error(`Status ${res.status}`)
-      const data = await res.json()
-      return `C0c auto-seeded ${data.games_graded} games`
-    } catch (e) {
-      return `C0c auto-seed failed: ${err(e)}`
+    const notes: string[] = []
+    const port = process.env.PORT || '3000'
+
+    // NFL — nflverse seed (richer dataset).
+    if ((ratedBySport.get('NFL') ?? 0) === 0) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/ceelo/seed?seasons=3`, { method: 'POST' })
+        if (res.ok) {
+          const d = await res.json()
+          notes.push(`NFL ${d.games_graded ?? 0}g`)
+        } else notes.push(`NFL err${res.status}`)
+      } catch (e) { notes.push(`NFL ${err(e).slice(0,30)}`) }
     }
+
+    // NBA + MLB — ESPN date-range seed.
+    for (const sport of ['NBA', 'MLB'] as const) {
+      if ((ratedBySport.get(sport) ?? 0) > 0) continue
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/api/ceelo/seed-prev?sport=${sport}`, { method: 'POST' })
+        if (res.ok) {
+          const d = await res.json()
+          const r = d.results?.[0]
+          notes.push(`${sport} ${r?.graded ?? 0}g`)
+        } else notes.push(`${sport} err${res.status}`)
+      } catch (e) { notes.push(`${sport} ${err(e).slice(0,30)}`) }
+    }
+
+    return notes.length > 0 ? `C0c seeded ${notes.join(' · ')}` : ''
   }
 
   // ── C1: apply newly-completed games to Elo ratings ──────────────────────
@@ -314,18 +385,42 @@ export class CeeloLoop {
     return `C1 graded ${graded}`
   }
 
-  // ── C2: pull current book lines (stubbed until ODDS_API_KEY) ────────────
+  // ── C2: pull current book lines (per-sport gate, derived from data) ─────
+  //
+  // Gate per-sport from the lines table itself (max(fetched_at) per sport).
+  // Old behavior used a single `last_lines_at` column on ceelo_state which
+  // meant NFL's offseason no-data return blocked NBA + MLB for 30 minutes
+  // each cycle. Each sport now has its own freshness window.
 
   private async c2_pullBookLines(): Promise<string> {
     if (!Odds.isConfigured()) return ''   // silent — expected pre-key
 
-    const { rows: [s] } = await this.db.query('SELECT last_lines_at FROM ceelo_state WHERE id=1')
-    if (s?.last_lines_at && minutesSince(s.last_lines_at) < ODDS_REFRESH_MIN) return ''
+    const { rows: freshRows } = await this.db.query(
+      `SELECT sport, MAX(fetched_at) AS last
+       FROM ceelo_lines
+       GROUP BY sport`
+    )
+    const lastBySport = new Map<string, Date>(
+      freshRows.map((r: { sport: string; last: Date }) => [r.sport, new Date(r.last)])
+    )
 
     let totalStored = 0
     const sportNotes: string[] = []
+    let calls = 0
+
     for (const sport of ALL_SPORTS) {
-      const lines = await Odds.fetchLines(sport).catch(() => [] as Odds.BookLine[])
+      const last = lastBySport.get(sport)
+      if (last && minutesSince(last) < ODDS_REFRESH_MIN) continue
+
+      calls++
+      let lines: Odds.BookLine[] = []
+      try {
+        lines = await Odds.fetchLines(sport)
+      } catch (e) {
+        sportNotes.push(`${sport} err`)
+        continue
+      }
+
       let stored = 0
       for (const l of lines) {
         const { rows: [g] } = await this.db.query(
@@ -349,10 +444,15 @@ export class CeeloLoop {
         stored++
       }
       totalStored += stored
-      if (stored > 0) sportNotes.push(`${sport} ${stored}`)
+      // Always log — even '0' for a sport that returned nothing — so the
+      // operator can see that we tried + the upstream returned empty.
+      sportNotes.push(`${sport} ${stored}`)
     }
-    await this.db.query(`UPDATE ceelo_state SET last_lines_at=NOW() WHERE id=1`)
-    return totalStored > 0 ? `C2 ${sportNotes.join(' ')}` : ''
+
+    if (calls > 0) {
+      await this.db.query(`UPDATE ceelo_state SET last_lines_at=NOW() WHERE id=1`)
+    }
+    return calls > 0 ? `C2 ${sportNotes.join(' · ')}` : ''
   }
 
   // ── C2b: public-betting % per game (free Action Network web API) ────────
@@ -574,7 +674,7 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
-    const [topRated, openPicks, status, keyInjuries, epaTop, epaBottom, epaSeasonInfo] = await Promise.all([
+    const [topRated, openPicks, status, perSport, keyInjuries, epaTop, epaBottom, epaSeasonInfo] = await Promise.all([
       this.db.query(
         `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
          WHERE games_played > 0
@@ -597,8 +697,22 @@ export class CeeloLoop {
                 (SELECT MAX(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS newest_season,
                 (SELECT COUNT(*) FROM ceelo_rosters) AS rostered_players,
                 (SELECT COUNT(DISTINCT team) FROM ceelo_rosters) AS rostered_teams,
-                (SELECT COUNT(*) FROM ceelo_lines) AS live_book_lines
+                (SELECT COUNT(*) FROM ceelo_lines) AS live_book_lines,
+                (SELECT COUNT(*) FROM ceelo_depth_charts) AS depth_chart_rows
          FROM ceelo_state WHERE id=1`
+      ),
+      // Per-sport breakdown — answers Ceelo's "what's actually flowing"
+      // question by sport instead of conflating NFL offseason with NBA.
+      this.db.query(
+        `SELECT sport,
+                (SELECT COUNT(*) FROM ceelo_team_ratings r
+                 WHERE r.sport=s.sport AND r.games_played > 0) AS rated,
+                (SELECT COUNT(*) FROM ceelo_games g
+                 WHERE g.sport=s.sport AND g.status='scheduled' AND g.kickoff_at > NOW()) AS upcoming,
+                (SELECT COUNT(DISTINCT game_id) FROM ceelo_lines l
+                 WHERE l.sport=s.sport AND l.fetched_at > NOW() - INTERVAL '24 hours') AS lines_24h,
+                (SELECT MAX(fetched_at) FROM ceelo_lines l WHERE l.sport=s.sport) AS last_lines_at
+         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)`
       ),
       // Surface key injuries — Out / Doubtful / IR — for teams with upcoming games.
       // Caps at 12 entries; the LLM doesn't need every depth-chart-3 sprained ankle.
@@ -692,23 +806,36 @@ export class CeeloLoop {
         ).join(', ')
       : ''
 
-    const prompt = `You are Ceelo, the NFL handicapper on Lila's team. The operator is talking to you one-on-one.
+    // Per-sport breakdown line for the chat — gives Ceelo specific
+    // numbers per sport instead of conflating them.
+    const perSportLines = perSport.rows.map((r: { sport: string; rated: number; upcoming: number; lines_24h: number; last_lines_at: string | null }) => {
+      const ageMin = r.last_lines_at ? Math.floor((Date.now() - new Date(r.last_lines_at).getTime()) / 60_000) : null
+      const ageStr = ageMin == null ? 'never' : ageMin < 60 ? `${ageMin}m ago` : `${Math.floor(ageMin/60)}h ago`
+      return `  ${r.sport}: ${Number(r.rated)} teams rated · ${Number(r.upcoming)} upcoming · ${Number(r.lines_24h)} lines in last 24h (last fetch ${ageStr})`
+    }).join('\n')
+
+    const depthCount = Number(s.depth_chart_rows ?? 0)
+    const prompt = `You are Ceelo, the multi-sport handicapper on Lila's team (NFL + NBA + MLB). The operator is talking to you one-on-one.
 
 Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. Be CONFIDENT about what you have — don't undersell. Only say you're missing data if it's literally not in the inventory below.
 
 DATA YOU ACTUALLY HAVE (use it — these are real, queried just now):
-- 32-team Elo ratings: ${Number(s.rated ?? 0)}/32 walked from real completed games (regular + postseason).
+- Elo ratings across all sports: ${Number(s.rated ?? 0)} teams walked from real completed games.
 - Historical games graded: ${Number(s.historical_graded ?? 0)} across seasons ${seasonRange}.
-- Historical closing spreads + closing totals: ${Number(s.historical_with_lines ?? 0)} games. (Source: nflverse — same dataset 538 / professional shops use.) These ARE the historical Vegas lines.
-- EPA / play-by-play aggregates: ${epaRows} team-season rows across ${epaSeasons} seasons${epaLatestSeason ? ` (latest ${epaLatestSeason})` : ''}. Per-team: net_epa, epa_per_play (offense), pass_epa, rush_epa, success_rate, epa_allowed (defense). This is the gold-standard handicapping signal.
-- Current schedule + final scores from ESPN (refreshed hourly).
-- Current rosters: ${Number(s.rostered_players ?? 0)} players across ${Number(s.rostered_teams ?? 0)} teams (ESPN, refreshed weekly).
+- Historical closing spreads + closing totals: ${Number(s.historical_with_lines ?? 0)} games (NFL via nflverse — same dataset 538 / professional shops use). NBA + MLB historical lines aren't ingested yet.
+- EPA / play-by-play aggregates (NFL): ${epaRows} team-season rows across ${epaSeasons} seasons${epaLatestSeason ? ` (latest ${epaLatestSeason})` : ''}. Per-team: net_epa, epa_per_play (offense), pass_epa, rush_epa, success_rate, epa_allowed (defense). NBA + MLB EPA aren't ingested.
+- Depth charts (NFL): ${depthCount} starter+backup entries via nflverse. NBA + MLB depth ranks not ingested.
+- Current schedule + final scores from ESPN (refreshed hourly per sport).
+- Current rosters: ${Number(s.rostered_players ?? 0)} players across ${Number(s.rostered_teams ?? 0)} teams (ESPN, weekly).
 - Active injury reports: ${Number(s.hurt ?? 0)} Out/Doubtful/IR/PUP entries on tracked teams.
-- Live book lines for upcoming games: ${Number(s.live_book_lines ?? 0)} entries (${Odds.isConfigured() ? 'Odds API ENGAGED — edge gate active' : 'Odds API NOT engaged — no live book lines, edge gate dark'}).
 - Model-derived spread + win-prob per upcoming game (computed each cycle from the Elo ratings).
+- Odds API: ${Odds.isConfigured() ? 'KEY PRESENT' : 'NO KEY — edge gate dark'}.
+
+PER-SPORT BREAKDOWN (be specific when asked about a single sport):
+${perSportLines}
 
 DATA YOU DO NOT HAVE (don't pretend you do):
-- Depth chart starter ranks. (Have rosters but not depth order.)
+- NBA / MLB historical book lines, EPA, depth charts. NFL has all three; the others stop at Elo + games + rosters.
 - Coaching tendencies, weather forecasts, ref crews. (Not ingested.)
 - In-season weekly EPA snapshots. (Have season totals; no week-by-week trend yet.)
 
