@@ -2352,6 +2352,13 @@ interface BriefData {
     confirmed_earned: number
     paid_mtd: number
     last_paid: { title: string; payout: number; on: string } | null
+    reconciliation: {
+      total_earned: number
+      sum_of_paid: number
+      paid_count: number
+      delta: number
+      reconciled: boolean
+    }
   }
   positions: {
     paper: boolean
@@ -2419,6 +2426,9 @@ function OperatorBrief({ visible, onNavigate }: {
         }
         accent="emerald"
       />
+      {/* Reconciliation caption — confirms the wallet headline matches the
+          actual sum of paid bounties. Catches paper-P&L leak residue. */}
+      <WalletReconcile r={b.wallet.reconciliation} />
 
       {/* 2. Open positions (Alpaca) */}
       <BriefRow
@@ -2511,6 +2521,22 @@ function BriefRow({ label, primary, secondary, accent, onClick }: {
       </div>
       {onClick && <span className="text-slate-700 text-[10px] font-mono shrink-0">→</span>}
     </Wrap>
+  )
+}
+
+// Wallet reconciliation caption. If total_earned doesn't match the sum
+// of paid bounty payouts, surface the delta + source. Catches residue
+// from the now-fixed paper-P&L leak.
+function WalletReconcile({ r }: {
+  r: BriefData['wallet']['reconciliation']
+}) {
+  const inSync = Math.abs(r.delta) < 0.01
+  const tone = inSync ? 'text-slate-600' : 'text-amber-400'
+  const note = inSync
+    ? `${r.paid_count} paid bounty${r.paid_count === 1 ? '' : 'ies'} · sum $${r.sum_of_paid.toFixed(2)} · in sync`
+    : `${r.paid_count} paid bounty${r.paid_count === 1 ? '' : 'ies'} sum $${r.sum_of_paid.toFixed(2)} · delta ${r.delta >= 0 ? '+' : ''}$${r.delta.toFixed(2)} (likely paper-P&L leak${r.reconciled ? ' — already reconciled' : ' — auto-fix on next deploy'})`
+  return (
+    <p className={`text-[9px] font-mono pl-[5.25rem] -mt-1 ${tone}`}>{note}</p>
   )
 }
 

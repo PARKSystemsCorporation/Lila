@@ -18,6 +18,15 @@ interface BriefResponse {
     confirmed_earned: number
     paid_mtd: number
     last_paid: { title: string; payout: number; on: string } | null
+    // Reconciliation: total_earned ought to equal sum_of_paid. If it doesn't,
+    // the difference is leak residue from the old paper-P&L credit code.
+    reconciliation: {
+      total_earned: number      // raw lila_state.total_earned
+      sum_of_paid: number       // SUM(security_reports.payout WHERE status='paid')
+      paid_count: number
+      delta: number             // total_earned - sum_of_paid (should be 0)
+      reconciled: boolean       // migration v2 has run
+    }
   }
   positions: {
     paper: boolean
@@ -54,11 +63,11 @@ export async function GET() {
     await ensureSchema(db)
 
     const [
-      walletRes, paidMtdRes, lastPaidRes,
+      walletRes, paidMtdRes, lastPaidRes, paidSumRes,
       bountyCounts, paperRealizedRes, openLocalRes,
       cipherRes, scoutRes, vegaRes, targetRes, lilaRes, ceeloRes,
     ] = await Promise.all([
-      db.query(`SELECT total_earned, active_tasks FROM lila_state WHERE id=1`),
+      db.query(`SELECT total_earned, active_tasks, reconciled_paper_pnl_v2 FROM lila_state WHERE id=1`),
       db.query(
         `SELECT COALESCE(SUM(payout), 0) AS paid_mtd
          FROM security_reports
@@ -68,6 +77,12 @@ export async function GET() {
         `SELECT title, payout, to_char(paid_at, 'YYYY-MM-DD') AS d
          FROM security_reports
          WHERE status='paid' ORDER BY paid_at DESC LIMIT 1`
+      ),
+      db.query(
+        `SELECT COALESCE(SUM(payout), 0) AS sum_of_paid,
+                COUNT(*) AS paid_count
+         FROM security_reports
+         WHERE status='paid' AND payout IS NOT NULL`
       ),
       db.query(
         `SELECT
@@ -152,15 +167,27 @@ export async function GET() {
     const lila = lilaRes.rows[0]
     const ceelo = ceeloRes.rows[0]
 
+    const totalEarned = parseFloat(wallet.total_earned ?? '0')
+    const sumOfPaid   = parseFloat(paidSumRes.rows[0]?.sum_of_paid ?? '0')
+    const paidCount   = Number(paidSumRes.rows[0]?.paid_count ?? 0)
+    const reconciled  = Boolean(wallet.reconciled_paper_pnl_v2)
+
     const body: BriefResponse = {
       wallet: {
-        confirmed_earned: parseFloat(wallet.total_earned ?? '0'),
+        confirmed_earned: totalEarned,
         paid_mtd: parseFloat(paidMtd),
         last_paid: lastPaid ? {
           title:  String(lastPaid.title),
           payout: parseFloat(lastPaid.payout ?? '0'),
           on:     String(lastPaid.d),
         } : null,
+        reconciliation: {
+          total_earned: totalEarned,
+          sum_of_paid:  sumOfPaid,
+          paid_count:   paidCount,
+          delta:        +(totalEarned - sumOfPaid).toFixed(2),
+          reconciled,
+        },
       },
       positions: {
         paper,

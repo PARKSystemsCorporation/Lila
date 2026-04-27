@@ -37,23 +37,29 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE lila_state DROP COLUMN IF EXISTS last_bounty;
     -- Bookkeeping: a tracking flag that the trading-P&L-leak fix has been
     -- applied. Older deploys credited Alpaca P&L into total_earned; this
-    -- migration subtracts the cumulative paper P&L back out exactly once
-    -- so the operator's "Earned" headline is honest going forward.
-    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS reconciled_paper_pnl BOOLEAN NOT NULL DEFAULT FALSE;
-    DO $reconcile$
+    -- migration rebases total_earned to the only honest source of truth —
+    -- the sum of confirmed bounty payouts (security_reports.payout where
+    -- status='paid'). Runs once via the v2 flag; v1 left residue when a
+    -- deploy had losing paper trades (the old credit-on-wins code only
+    -- inflated total_earned by positive PnL but v1 subtracted net PnL).
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS reconciled_paper_pnl    BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS reconciled_paper_pnl_v2 BOOLEAN NOT NULL DEFAULT FALSE;
+    DO $reconcile_v2$
     DECLARE
-      paper_total NUMERIC;
+      paid_total NUMERIC;
     BEGIN
-      IF NOT (SELECT reconciled_paper_pnl FROM lila_state WHERE id = 1) THEN
-        SELECT COALESCE(SUM(pnl), 0) INTO paper_total
-          FROM lila_positions WHERE status = 'closed';
+      IF NOT (SELECT reconciled_paper_pnl_v2 FROM lila_state WHERE id = 1) THEN
+        SELECT COALESCE(SUM(payout), 0) INTO paid_total
+          FROM security_reports
+          WHERE status = 'paid' AND payout IS NOT NULL;
         UPDATE lila_state
-          SET total_earned         = GREATEST(0, total_earned - GREATEST(paper_total, 0)),
-              reconciled_paper_pnl = TRUE
+          SET total_earned             = paid_total,
+              reconciled_paper_pnl     = TRUE,
+              reconciled_paper_pnl_v2  = TRUE
           WHERE id = 1;
       END IF;
     END
-    $reconcile$;
+    $reconcile_v2$;
 
     CREATE TABLE IF NOT EXISTS lila_log (
       id         SERIAL      PRIMARY KEY,
