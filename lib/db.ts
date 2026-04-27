@@ -350,6 +350,12 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status, created_at DESC);
+    -- Per-author article streams. Lila / Vega / Ceelo each write a noon
+    -- report daily; existing Lila research deep-dives (default 'lila' /
+    -- 'research-deepdive') still work via the same table.
+    ALTER TABLE articles ADD COLUMN IF NOT EXISTS author TEXT NOT NULL DEFAULT 'lila';
+    ALTER TABLE articles ADD COLUMN IF NOT EXISTS kind   TEXT NOT NULL DEFAULT 'research-deepdive';
+    CREATE INDEX IF NOT EXISTS idx_articles_author_kind ON articles(author, kind, created_at DESC);
 
     -- Ceelo: NFL handicapper. Posts picks; operator decides which to take and
     -- marks W/L. Strictly informational — no auto-execution. Bankroll lives

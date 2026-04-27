@@ -402,7 +402,7 @@ function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
 type NavigateFn = (to: {
   tab: Tab
   notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'scout' | 'pitches' | 'other'
-  libraryMode?: 'reports' | 'notes'
+  libraryMode?: 'reports' | 'notes' | 'articles'
 }) => void
 
 function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
@@ -4337,6 +4337,279 @@ function TakenActions({ pick, onAction }: {
 // the two views; both subviews remain mounted so their internal state /
 // polling persists across toggles.
 
+// ─── Articles (Substack drafts from Lila / Vega / Ceelo) ─────────────────
+//
+// Lila, Vega, and Ceelo each draft a daily noon Substack article from
+// the operator's actual data. Drafts persist; operator copies the
+// markdown into Substack manually. Per-author manual-trigger buttons at
+// the top let the operator prompt any author at will (this is the
+// "settings" entry point the brief asked for).
+
+type ArticleAuthor = 'lila' | 'vega' | 'ceelo'
+
+interface ArticleRow {
+  id: number
+  title: string
+  content: string
+  source: string | null
+  status: 'draft' | 'published' | 'dismissed'
+  external_url: string | null
+  author: ArticleAuthor
+  kind: string
+  created_ts: number
+  updated_ts: number
+}
+
+interface ArticlesPayload {
+  articles: ArticleRow[]
+  counts: { draft: number; published: number; dismissed: number; lila: number; vega: number; ceelo: number }
+  wroteToday: { lila: boolean; vega: boolean; ceelo: boolean }
+}
+
+const AUTHOR_STYLE: Record<ArticleAuthor, { color: string; label: string }> = {
+  lila:  { color: 'text-emerald-300 border-emerald-800 bg-emerald-950/40', label: 'LILA' },
+  vega:  { color: 'text-blue-300 border-blue-800 bg-blue-950/40',          label: 'VEGA' },
+  ceelo: { color: 'text-rose-300 border-rose-800 bg-rose-950/40',          label: 'CEELO' },
+}
+
+function ArticlesView({ visible }: { visible: boolean }) {
+  const [data, setData] = useState<ArticlesPayload | null>(null)
+  const [filter, setFilter] = useState<'all' | ArticleAuthor>('all')
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [generating, setGenerating] = useState<ArticleAuthor | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/articles')
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (!visible) return
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [visible, load])
+
+  const generateNow = async (author: ArticleAuthor) => {
+    if (generating) return
+    setGenerating(author)
+    try {
+      const res = await fetch('/api/articles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'noon-report', author }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        alert(`Generate failed: ${body?.error ?? res.status}`)
+      }
+      await load()
+    } catch {
+      alert('Generate failed (network).')
+    } finally {
+      setGenerating(null)
+    }
+  }
+
+  const dismiss = async (id: number) => {
+    if (!confirm('Dismiss this draft?')) return
+    await fetch('/api/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'dismiss', id }),
+    })
+    await load()
+  }
+
+  const markPublished = async (id: number) => {
+    const url = prompt('Substack URL (optional)?', '')
+    await fetch('/api/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'mark_published', id, external_url: url || null }),
+    })
+    await load()
+  }
+
+  const filtered = useMemo(() => {
+    if (!data) return [] as ArticleRow[]
+    if (filter === 'all') return data.articles
+    return data.articles.filter(a => a.author === filter)
+  }, [data, filter])
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-4 space-y-4">
+        {/* Manual generate row — the "settings" controls per author. */}
+        <div className="space-y-2">
+          <p className="text-[10px] font-mono text-slate-500 tracking-widest">GENERATE NOW</p>
+          <div className="grid grid-cols-3 gap-2">
+            {(['lila','vega','ceelo'] as ArticleAuthor[]).map(a => {
+              const wrote = data?.wroteToday?.[a]
+              const cls = AUTHOR_STYLE[a].color
+              return (
+                <button
+                  key={a}
+                  onClick={() => generateNow(a)}
+                  disabled={generating !== null}
+                  className={`text-[10px] font-mono py-2 rounded-lg border tracking-wider transition-colors ${cls} disabled:opacity-50`}
+                >
+                  {generating === a ? 'WRITING…' : `${AUTHOR_STYLE[a].label}${wrote ? ' ✓' : ''}`}
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-[9px] font-mono text-slate-600">
+            ✓ marks today&rsquo;s noon report already filed. Manual press writes a fresh draft anyway.
+          </p>
+        </div>
+
+        {/* Author filter pills */}
+        {data && data.articles.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            <ArticleFilterPill active={filter === 'all'} label="ALL" count={data.articles.length} onClick={() => setFilter('all')} />
+            {(['lila','vega','ceelo'] as ArticleAuthor[]).map(a => (
+              <ArticleFilterPill
+                key={a}
+                active={filter === a}
+                label={AUTHOR_STYLE[a].label}
+                count={data.counts[a]}
+                onClick={() => setFilter(a)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Article list */}
+        {!data ? (
+          <p className="text-xs font-mono text-slate-700">Loading…</p>
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            title="No articles yet."
+            subtitle="Lila / Vega / Ceelo each draft a noon report daily. Or hit a button above to generate one now."
+          />
+        ) : (
+          <div className="space-y-2">
+            {filtered.map(a => (
+              <ArticleCard
+                key={a.id}
+                article={a}
+                expanded={expandedId === a.id}
+                onToggle={() => setExpandedId(expandedId === a.id ? null : a.id)}
+                onDismiss={() => dismiss(a.id)}
+                onMarkPublished={() => markPublished(a.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ArticleFilterPill({ active, label, count, onClick }: {
+  active: boolean; label: string; count: number; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`text-[9px] font-mono px-2 py-1 rounded border tracking-wider ${
+        active
+          ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+          : 'text-slate-500 border-slate-800 active:bg-slate-800'
+      }`}
+    >
+      {label} · {count}
+    </button>
+  )
+}
+
+function ArticleCard({ article, expanded, onToggle, onDismiss, onMarkPublished }: {
+  article: ArticleRow
+  expanded: boolean
+  onToggle: () => void
+  onDismiss: () => void
+  onMarkPublished: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  const cls = AUTHOR_STYLE[article.author]?.color ?? 'text-slate-300 border-slate-700 bg-slate-900'
+  const label = AUTHOR_STYLE[article.author]?.label ?? article.author.toUpperCase()
+  const statusBadge =
+      article.status === 'published' ? <span className="text-[8px] font-mono text-emerald-400 border border-emerald-900 rounded px-1">PUBLISHED</span>
+    : article.status === 'dismissed' ? <span className="text-[8px] font-mono text-slate-600 border border-slate-800 rounded px-1">DISMISSED</span>
+    : <span className="text-[8px] font-mono text-amber-400 border border-amber-900 rounded px-1">DRAFT</span>
+
+  const copyMd = () => {
+    navigator.clipboard.writeText(article.content).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
+      <button className="w-full p-3 text-left" onClick={onToggle}>
+        <div className="flex items-start gap-2">
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${cls}`}>
+            {label}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] font-mono text-slate-100 font-semibold truncate">{article.title}</p>
+            <p className="text-[9px] font-mono text-slate-600 mt-0.5">
+              {fmtAge(article.created_ts)} · {article.kind} · {article.content.length.toLocaleString()} chars
+            </p>
+          </div>
+          <span className="shrink-0">{statusBadge}</span>
+          <span className={`text-slate-600 text-xs font-mono shrink-0 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="border-t border-slate-800 px-3 py-3 space-y-3">
+          <pre className="text-[10px] font-mono text-slate-300 leading-relaxed bg-slate-950 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto select-text">
+            {article.content}
+          </pre>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={copyMd}
+              className="flex-1 text-[10px] font-mono text-emerald-300 border border-emerald-800 bg-emerald-950/40 rounded-lg py-2 active:opacity-70"
+            >
+              {copied ? '✓ copied' : 'Copy Markdown'}
+            </button>
+            {article.status !== 'published' && (
+              <button
+                onClick={onMarkPublished}
+                className="flex-1 text-[10px] font-mono text-blue-300 border border-blue-800 bg-blue-950/40 rounded-lg py-2 active:opacity-70"
+              >
+                Mark published
+              </button>
+            )}
+            {article.status !== 'dismissed' && (
+              <button
+                onClick={onDismiss}
+                className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+              >
+                Dismiss
+              </button>
+            )}
+            {article.external_url && (
+              <a
+                href={article.external_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 text-[10px] font-mono text-emerald-400 border border-emerald-900 rounded-lg py-2 text-center active:opacity-70"
+              >
+                Open ↗
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LibraryTab({
   visible,
   mode,
@@ -4349,8 +4622,8 @@ function LibraryTab({
   onNotesFilterChange,
 }: {
   visible: boolean
-  mode: 'reports' | 'notes'
-  onModeChange: (m: 'reports' | 'notes') => void
+  mode: 'reports' | 'notes' | 'articles'
+  onModeChange: (m: 'reports' | 'notes' | 'articles') => void
   reports: SecurityReport[]
   reportsLoading: boolean
   onReportAction: (a: ReportAction) => void
@@ -4375,9 +4648,14 @@ function LibraryTab({
           label="Notes"
           onClick={() => onModeChange('notes')}
         />
+        <LibraryModePill
+          active={mode === 'articles'}
+          label="Articles"
+          onClick={() => onModeChange('articles')}
+        />
       </div>
 
-      {/* Subviews — both mounted so polling/state persists across mode flips. */}
+      {/* Subviews — all mounted so polling/state persists across mode flips. */}
       <div className="flex-1 relative overflow-hidden">
         <ReportsTab
           reports={reports}
@@ -4391,6 +4669,7 @@ function LibraryTab({
           filter={notesFilter}
           onFilterChange={onNotesFilterChange}
         />
+        <ArticlesView visible={visible && mode === 'articles'} />
       </div>
     </div>
   )
@@ -5568,7 +5847,7 @@ export default function Home() {
   // (TargetCard → Cipher plans, ReportCard → Cipher, etc).
   const [notesFilter, setNotesFilter] = useState<NoteFilter>('all')
   // Library tab inner mode: Reports (default; actionable items) or Notes.
-  const [libraryMode, setLibraryMode] = useState<'reports' | 'notes'>('reports')
+  const [libraryMode, setLibraryMode] = useState<'reports' | 'notes' | 'articles'>('reports')
   // Badge count for unread chat messages (since the operator last opened
   // the Chat tab). Reset when they switch back to Chat.
   const [chatSeenId, setChatSeenId] = useState(0)

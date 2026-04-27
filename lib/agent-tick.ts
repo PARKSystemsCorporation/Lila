@@ -9,6 +9,7 @@ import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
 import { mirrorLilaToTelegram } from './telegram-mirror'
+import { runNoonArticles } from './article-engine'
 import { runRetention } from './retention'
 import { cfg } from './config'
 
@@ -162,6 +163,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (broadcastResult) {
       await logEvent(db, broadcastResult.logMessage, broadcastResult.logType)
       logs.push(broadcastResult.logMessage)
+    }
+
+    // 6b. Noon Substack reports — Lila / Vega / Ceelo each write once per
+    //     UTC day at/after noon. Article-engine handles the gate per author.
+    const articleResult = await runNoonArticles(db).catch((e: unknown) => ({
+      generated: [] as ('lila'|'vega'|'ceelo')[],
+      skipped:   [] as ('lila'|'vega'|'ceelo')[],
+      _error:    String(e).slice(0, 120),
+    }))
+    if (articleResult.generated.length > 0) {
+      const msg = `Noon articles filed: ${articleResult.generated.join(', ')}.`
+      await logEvent(db, msg, 'success')
+      logs.push(msg)
     }
 
     // 7. Retention — once per 24h, trims stale log/usage/chat/broadcast rows.

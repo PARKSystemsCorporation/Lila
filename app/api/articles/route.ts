@@ -73,22 +73,33 @@ export async function GET() {
     await ensureSchema(db)
 
     const { rows } = await db.query(
-      `SELECT id, title, content, source, status, external_url,
+      `SELECT id, title, content, source, status, external_url, author, kind,
               (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts,
               (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ts
        FROM articles
        ORDER BY
          CASE status WHEN 'draft' THEN 1 WHEN 'published' THEN 2 ELSE 3 END,
          created_at DESC
-       LIMIT 50`
+       LIMIT 100`
     )
     const { rows: [counts] } = await db.query(
       `SELECT
          COUNT(*) FILTER (WHERE status='draft')     AS draft,
          COUNT(*) FILTER (WHERE status='published') AS published,
-         COUNT(*) FILTER (WHERE status='dismissed') AS dismissed
+         COUNT(*) FILTER (WHERE status='dismissed') AS dismissed,
+         COUNT(*) FILTER (WHERE author='lila')      AS lila,
+         COUNT(*) FILTER (WHERE author='vega')      AS vega,
+         COUNT(*) FILTER (WHERE author='ceelo')     AS ceelo
        FROM articles`
     )
+    // Per-author 'wrote today?' so the UI can grey-out the manual button
+    // once that agent has already filed their noon report for the day.
+    const { rows: today } = await db.query(
+      `SELECT DISTINCT author FROM articles
+       WHERE kind='noon-report' AND created_at::date = (NOW() AT TIME ZONE 'UTC')::date`
+    )
+    const wroteToday = new Set<string>(today.map((r: { author: string }) => r.author))
+
     return NextResponse.json({
       articles: rows.map(r => ({
         id: Number(r.id),
@@ -97,6 +108,8 @@ export async function GET() {
         source: r.source,
         status: r.status,
         external_url: r.external_url,
+        author: (r.author ?? 'lila') as string,
+        kind:   (r.kind   ?? 'research-deepdive') as string,
         created_ts: Number(r.created_ts),
         updated_ts: Number(r.updated_ts),
       })),
@@ -104,6 +117,14 @@ export async function GET() {
         draft: Number(counts.draft ?? 0),
         published: Number(counts.published ?? 0),
         dismissed: Number(counts.dismissed ?? 0),
+        lila:  Number(counts.lila  ?? 0),
+        vega:  Number(counts.vega  ?? 0),
+        ceelo: Number(counts.ceelo ?? 0),
+      },
+      wroteToday: {
+        lila:  wroteToday.has('lila'),
+        vega:  wroteToday.has('vega'),
+        ceelo: wroteToday.has('ceelo'),
       },
     })
   } finally { db.release() }
@@ -143,6 +164,22 @@ export async function POST(req: Request) {
       if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
       await db.query(`UPDATE articles SET status='dismissed', updated_at=NOW() WHERE id=$1`, [id])
       return NextResponse.json({ ok: true })
+    }
+
+    // Manual trigger for the noon-report flow. Operator passes
+    // ?author=lila|vega|ceelo (or in body). Bypasses the noon-time gate
+    // — this is "write now". Idempotent-ish: if author already wrote
+    // today, we still let it through (overwrite/extra is fine — it's a
+    // draft, operator can dismiss extras).
+    if (action === 'noon-report') {
+      const author = String(body.author ?? '').toLowerCase()
+      if (!['lila','vega','ceelo'].includes(author)) {
+        return NextResponse.json({ error: 'author must be lila|vega|ceelo' }, { status: 400 })
+      }
+      const { generateNoonReport } = await import('@/lib/article-engine')
+      const r = await generateNoonReport(db, author as 'lila'|'vega'|'ceelo')
+      if (!r.ok) return NextResponse.json({ error: r.reason ?? 'failed' }, { status: 502 })
+      return NextResponse.json({ ok: true, id: r.id, title: r.title })
     }
 
     if (action !== 'generate') {
