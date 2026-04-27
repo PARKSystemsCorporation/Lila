@@ -3435,54 +3435,66 @@ function PicksTab({ visible }: { visible: boolean }) {
   )
 }
 
-// ─── EdgeBoard — sportsbook-style edge feed (NFL / NBA / MLB) ──────────────
+// ─── EdgeBoard — one row per game, traffic-light, Ceelo's predicted score ──
 //
-// Mirrors the FanDuel "Scoreboard" layout the operator referenced. Per
-// sport, shows ONLY upcoming games where Ceelo's model spread differs
-// from the latest market line by ≥ the sport's edge threshold (NFL 1pt,
-// NBA 1.5pt, MLB 0.5 run). Cards display:
-//   matchup + W-L records · book line · open · model spread · edge ·
-//   confidence · public bets% / money% (when scrape source is wired).
+// Every upcoming game gets one card. Card shows Ceelo's predicted final
+// scores + revised spread, the consensus book line across however many
+// books posted, the open line, and a traffic light:
+//   ● green  — |edge| > 1.5 pts (or > 0.75 runs MLB) → bet candidate
+//   ● yellow — within 1.5      → Ceelo + book agree
+//   ● grey   — no model or no books yet
+// Operator can sort by time or by edge size, and filter to green-only.
 
 type EdgeSport = 'NFL' | 'NBA' | 'MLB'
 
-interface EdgeRow {
+interface BookLine { book: string; home_line: number }
+
+interface GameRow {
   game_id: number
   sport: EdgeSport
-  game_label: string
-  kickoff_at: number
   home_team: string
   away_team: string
   home_record: string
   away_record: string
-  market_home_spread: number
+  kickoff_at: number
+  books: BookLine[]
+  consensus_home_spread: number | null
+  best_home_spread: number | null
+  worst_home_spread: number | null
   open_home_spread: number | null
-  book: string
-  model_home_spread: number
-  model_home_prob: number
-  edge_points: number
-  edge_threshold: number
-  confidence: 'low' | 'medium' | 'high'
-  pick_side: 'home' | 'away'
+  model_home_spread: number | null
+  model_home_prob: number | null
+  predicted_home_score: number | null
+  predicted_away_score: number | null
+  predicted_total: number | null
+  edge_points: number | null
+  edge_side: 'home' | 'away' | null
+  edge_team: string | null
+  light: 'green' | 'yellow' | 'grey'
   public_bets_pct: number | null
   public_money_pct: number | null
-  public_side: string | null
+  public_side: 'home' | 'away' | null
 }
 
 interface EdgeFeed {
-  edges: EdgeRow[]
-  byDate: Array<{ date: string; items: EdgeRow[] }>
+  games: GameRow[]
+  byDate: Array<{ date: string; items: GameRow[] }>
   meta: {
     sport: EdgeSport
     threshold: number
     total_games: number
-    edge_count: number
-    latest_season: number
-  }
+    green_count: number
+    yellow_count: number
+    avg_total: number
+    sort: string
+    filter: string
+  } | null
 }
 
 function EdgeBoard({ visible }: { visible: boolean }) {
   const [sport, setSport] = useState<EdgeSport>('NFL')
+  const [sortBy, setSortBy] = useState<'time' | 'edge'>('time')
+  const [greenOnly, setGreenOnly] = useState(false)
   const [feed, setFeed] = useState<EdgeFeed | null>(null)
   const [loading, setLoading] = useState(false)
   const [seeded, setSeeded] = useState<Record<string, number>>({})
@@ -3491,8 +3503,9 @@ function EdgeBoard({ visible }: { visible: boolean }) {
   const reload = useCallback(async () => {
     setLoading(true)
     try {
+      const filter = greenOnly ? 'green' : 'all'
       const [edgesRes, seedRes] = await Promise.all([
-        fetch(`/api/picks/edges?sport=${sport}&days=7`),
+        fetch(`/api/picks/edges?sport=${sport}&days=7&sort=${sortBy}&filter=${filter}`),
         fetch('/api/ceelo/seed-prev'),
       ])
       if (edgesRes.ok) setFeed(await edgesRes.json())
@@ -3504,7 +3517,7 @@ function EdgeBoard({ visible }: { visible: boolean }) {
       }
     } catch { /* ignore */ }
     finally { setLoading(false) }
-  }, [sport])
+  }, [sport, sortBy, greenOnly])
 
   useEffect(() => {
     if (!visible) return
@@ -3515,27 +3528,18 @@ function EdgeBoard({ visible }: { visible: boolean }) {
 
   const seedThisSport = async () => {
     if (seeding) return
-    if (!confirm(`Seed Ceelo's ${sport} ratings from the most recent completed season?\n\nThis walks ESPN's scoreboard week by week and Elo-walks every completed game. ~30s for NBA, ~60s for MLB.`)) return
+    if (!confirm(`Seed Ceelo's ${sport} ratings from the most recent completed season?`)) return
     setSeeding(true)
     try {
       const res = await fetch(`/api/ceelo/seed-prev?sport=${sport}`, { method: 'POST' })
-      if (res.ok) {
-        const body = await res.json()
-        const r = body.results?.[0]
-        if (r) alert(`Seeded ${sport} ${r.label}: ${r.graded} games walked, ${r.ingested} total ingested.`)
-        await reload()
-      } else {
-        alert(`Seed failed (${res.status}).`)
-      }
-    } catch {
-      alert('Seed failed (network).')
-    } finally {
-      setSeeding(false)
-    }
+      if (res.ok) await reload()
+      else alert(`Seed failed (${res.status}).`)
+    } catch { alert('Seed failed (network).') }
+    finally { setSeeding(false) }
   }
 
   const ratedCount = seeded[sport] ?? 0
-  const expectedTeams = sport === 'NFL' ? 32 : sport === 'NBA' ? 30 : 30   // 30 MLB + Athletics
+  const expectedTeams = sport === 'NFL' ? 32 : 30
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
@@ -3557,16 +3561,35 @@ function EdgeBoard({ visible }: { visible: boolean }) {
           ))}
         </div>
 
+        {/* Sort + filter controls */}
+        <div className="flex gap-2">
+          <SegmentedToggle
+            value={sortBy}
+            onChange={(v) => setSortBy(v as 'time' | 'edge')}
+            options={[{ key: 'time', label: 'TIME' }, { key: 'edge', label: 'EDGE' }]}
+            className="flex-1"
+          />
+          <button
+            onClick={() => setGreenOnly(!greenOnly)}
+            className={`text-[10px] font-mono px-3 py-1.5 rounded-lg border tracking-widest ${
+              greenOnly
+                ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
+                : 'border-slate-800 text-slate-500 active:bg-slate-900'
+            }`}
+          >
+            ● GREEN ONLY
+          </button>
+        </div>
+
         {/* Meta caption */}
         {feed?.meta && (
           <p className="text-[10px] font-mono text-slate-500">
-            {sport} edges &middot; threshold {feed.meta.threshold.toFixed(1)} {sport === 'MLB' ? 'runs' : 'pts'} &middot;{' '}
-            {feed.meta.edge_count}/{feed.meta.total_games} games flagged &middot;{' '}
-            {ratedCount}/{expectedTeams} teams rated
+            {sport} &middot; {feed.meta.green_count} green &middot; {feed.meta.yellow_count} yellow
+            {' '}&middot; pred. total ~{feed.meta.avg_total} &middot; {ratedCount}/{expectedTeams} teams rated
           </p>
         )}
 
-        {/* Cold-start nudge: only show seed button when ratings are sparse. */}
+        {/* Cold-start nudge */}
         {ratedCount < expectedTeams * 0.5 && sport !== 'NFL' && (
           <button
             onClick={seedThisSport}
@@ -3581,12 +3604,16 @@ function EdgeBoard({ visible }: { visible: boolean }) {
         {loading && !feed ? (
           <div className="flex items-center gap-2 py-10 justify-center">
             <div className="w-4 h-4 border-2 border-slate-700 border-t-rose-500 rounded-full animate-spin" />
-            <p className="text-xs font-mono text-slate-600">Loading edges…</p>
+            <p className="text-xs font-mono text-slate-600">Loading games…</p>
           </div>
         ) : !feed?.byDate || feed.byDate.length === 0 ? (
           <EmptyState
-            title="No edges flagged."
-            subtitle={`Ceelo only files ${sport} games where his model differs from the book by ≥ ${feed?.meta?.threshold ?? 1} ${sport === 'MLB' ? 'runs' : 'points'}. Live book lines need ODDS_API_KEY to be set.`}
+            title={greenOnly ? 'No green games right now.' : 'No upcoming games yet.'}
+            subtitle={
+              greenOnly
+                ? `Try toggling green-only off to see all ${sport} matchups + Ceelo's reads on each.`
+                : `Schedule + lines populate as the loop fetches them. Live book lines need ODDS_API_KEY.`
+            }
           />
         ) : (
           feed.byDate.map(g => (
@@ -3594,9 +3621,7 @@ function EdgeBoard({ visible }: { visible: boolean }) {
               <p className="text-[10px] font-mono text-slate-500 tracking-widest pt-2">
                 {fmtDateHeader(g.date)} &middot; {g.items.length}
               </p>
-              {g.items.map(e => (
-                <EdgeCard key={`${e.game_id}:${e.book}`} edge={e} />
-              ))}
+              {g.items.map(row => <GameCard key={row.game_id} row={row} />)}
             </div>
           ))
         )}
@@ -3605,69 +3630,153 @@ function EdgeBoard({ visible }: { visible: boolean }) {
   )
 }
 
-function EdgeCard({ edge: e }: { edge: EdgeRow }) {
-  const takeHome = e.pick_side === 'home'
-  const pickTeam = takeHome ? e.home_team : e.away_team
-  const pickSpread = takeHome ? e.market_home_spread : -e.market_home_spread
-  const confColor = e.confidence === 'high' ? 'text-emerald-300 border-emerald-800 bg-emerald-950/40'
-                  : e.confidence === 'medium' ? 'text-amber-300 border-amber-800 bg-amber-950/30'
-                  : 'text-slate-400 border-slate-700 bg-slate-900'
-  const kickoff = new Date(e.kickoff_at)
-  const time = kickoff.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+function GameCard({ row }: { row: GameRow }) {
+  const time = new Date(row.kickoff_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const lightColor = row.light === 'green' ? 'bg-emerald-400'
+                   : row.light === 'yellow' ? 'bg-amber-400'
+                   : 'bg-slate-700'
+  const lightBorder = row.light === 'green' ? 'border-emerald-900/60'
+                    : row.light === 'yellow' ? 'border-amber-900/40'
+                    : 'border-slate-800'
+
+  // Ceelo's revised spread + favored team
+  const modelSpread = row.model_home_spread
+  const modelFav   = modelSpread != null && modelSpread !== 0
+    ? (modelSpread < 0 ? row.home_team : row.away_team)
+    : null
+  const modelMargin = modelSpread != null ? Math.abs(modelSpread) : null
+
+  // Consensus book line (home spread)
+  const cons = row.consensus_home_spread
+  const homeIsFavored = cons != null && cons < 0
+  const bookFav = cons != null ? (homeIsFavored ? row.home_team : row.away_team) : null
+  const bookSpreadMag = cons != null ? Math.abs(cons) : null
+
+  // Edge framing
+  const edge = row.edge_points
+  const edgeMag = edge != null ? Math.abs(edge).toFixed(1) : null
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/40 overflow-hidden">
-      {/* Header: matchup + Ceelo's pick badge */}
-      <div className="px-3 pt-3 pb-2 flex items-start justify-between gap-2">
+    <div className={`rounded-xl border ${lightBorder} bg-slate-950/40 overflow-hidden`}>
+      {/* Header — traffic light, matchup, kickoff */}
+      <div className="px-3 pt-3 pb-2 flex items-start gap-2">
+        <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${lightColor}`} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[12px] font-mono text-slate-100 font-semibold tabular-nums">
-            <span className="truncate">{e.away_team}</span>
-            <span className="text-[9px] font-mono text-slate-600">{e.away_record}</span>
+          <div className="flex items-baseline gap-1.5 text-[12px] font-mono text-slate-100 font-semibold tabular-nums flex-wrap">
+            <span>{row.away_team}</span>
+            <span className="text-[9px] font-mono text-slate-600">{row.away_record}</span>
             <span className="text-slate-600 mx-1">@</span>
-            <span className="truncate">{e.home_team}</span>
-            <span className="text-[9px] font-mono text-slate-600">{e.home_record}</span>
+            <span>{row.home_team}</span>
+            <span className="text-[9px] font-mono text-slate-600">{row.home_record}</span>
           </div>
           <p className="text-[9px] font-mono text-slate-600 mt-0.5">
-            Today · {time} · {e.book}
+            {time}
+            {row.books.length > 0 && <> &middot; {row.books.length} book{row.books.length === 1 ? '' : 's'}</>}
           </p>
         </div>
-        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border tabular-nums shrink-0 ${confColor}`}>
-          CEELO {pickTeam} {fmtSignedSpread(pickSpread)}
-        </span>
       </div>
 
-      {/* Numeric grid: market line | open | model | edge | public */}
-      <div className="px-3 pb-3 pt-1 grid grid-cols-5 gap-2 border-t border-slate-800/60">
-        <EdgeStat label="LINE"    value={fmtSignedSpread(e.market_home_spread)} sub={e.home_team} />
-        <EdgeStat label="OPEN"    value={e.open_home_spread != null ? fmtSignedSpread(e.open_home_spread) : '—'} sub={e.home_team} />
-        <EdgeStat label="MODEL"   value={fmtSignedSpread(e.model_home_spread)} sub="Ceelo" emphasized />
-        <EdgeStat label="EDGE"    value={`${e.edge_points >= 0 ? '+' : ''}${e.edge_points.toFixed(1)}`} sub={`${(e.model_home_prob * 100).toFixed(0)}% home`} accent />
-        <EdgeStat label="PUBLIC"
-                  value={e.public_bets_pct != null ? `${e.public_bets_pct.toFixed(0)}%` : '—'}
-                  sub={e.public_money_pct != null ? `${e.public_money_pct.toFixed(0)}% $` : 'no data'} />
+      {/* Body — Ceelo's read + book consensus + edge */}
+      <div className="px-3 pb-3 pt-1 border-t border-slate-800/60 space-y-2">
+        {/* Ceelo's prediction line */}
+        {row.predicted_home_score != null && row.predicted_away_score != null ? (
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-[8px] font-mono text-slate-600 tracking-widest w-12 shrink-0">CEELO</span>
+            <span className="text-[13px] font-mono font-semibold text-rose-300 tabular-nums">
+              {row.away_team} {row.predicted_away_score} &mdash; {row.home_team} {row.predicted_home_score}
+            </span>
+            {modelFav && modelMargin != null && (
+              <span className="text-[10px] font-mono text-slate-400">
+                ({modelFav} by {modelMargin.toFixed(1)})
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-baseline gap-2">
+            <span className="text-[8px] font-mono text-slate-600 tracking-widest w-12 shrink-0">CEELO</span>
+            <span className="text-[10px] font-mono text-slate-600">model not computed yet</span>
+          </div>
+        )}
+
+        {/* Book consensus line */}
+        {cons != null && bookFav && bookSpreadMag != null ? (
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-[8px] font-mono text-slate-600 tracking-widest w-12 shrink-0">BOOK</span>
+            <span className="text-[12px] font-mono text-slate-200 tabular-nums">
+              {bookFav} {bookSpreadMag === 0 ? 'PK' : `-${bookSpreadMag.toFixed(1)}`}
+            </span>
+            <span className="text-[9px] font-mono text-slate-600">
+              consensus
+              {row.open_home_spread != null && (() => {
+                const openFav = row.open_home_spread < 0 ? row.home_team : row.away_team
+                const openMag = Math.abs(row.open_home_spread)
+                const moved = row.open_home_spread !== cons
+                return (
+                  <> · open {openFav} -{openMag.toFixed(1)}{moved ? ' (moved)' : ''}</>
+                )
+              })()}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-baseline gap-2">
+            <span className="text-[8px] font-mono text-slate-600 tracking-widest w-12 shrink-0">BOOK</span>
+            <span className="text-[10px] font-mono text-slate-600">no live lines (Odds API silent)</span>
+          </div>
+        )}
+
+        {/* Edge line + take */}
+        {edge != null && row.edge_team && edgeMag != null && (
+          <div className="flex items-baseline gap-2 pt-1 border-t border-slate-900/60">
+            <span className="text-[8px] font-mono text-slate-600 tracking-widest w-12 shrink-0">EDGE</span>
+            <span className={`text-[12px] font-mono font-semibold tabular-nums ${row.light === 'green' ? 'text-emerald-300' : 'text-amber-300'}`}>
+              {edge >= 0 ? '+' : '−'}{edgeMag} pt
+            </span>
+            <span className="text-[10px] font-mono text-slate-400">
+              {row.light === 'green'
+                ? <>take <span className="text-emerald-300">{row.edge_team}</span></>
+                : <>{row.edge_team} edge — within tolerance, agree with book</>}
+            </span>
+          </div>
+        )}
+
+        {/* Public — only when we have data */}
+        {row.public_bets_pct != null && row.public_side && (
+          <p className="text-[9px] font-mono text-slate-600 pt-1 border-t border-slate-900/60">
+            Public: {row.public_bets_pct.toFixed(0)}% bets
+            {row.public_money_pct != null && <> &middot; {row.public_money_pct.toFixed(0)}% money</>}
+            {' '}on{' '}
+            {row.public_side === 'home' ? row.home_team : row.away_team}
+          </p>
+        )}
       </div>
     </div>
   )
 }
 
-function EdgeStat({ label, value, sub, accent, emphasized }: {
-  label: string; value: string; sub?: string; accent?: boolean; emphasized?: boolean
+// Reusable two-segment toggle (used by the sort selector).
+function SegmentedToggle({ value, onChange, options, className }: {
+  value: string
+  onChange: (v: string) => void
+  options: Array<{ key: string; label: string }>
+  className?: string
 }) {
-  const cls = accent      ? 'text-emerald-300'
-            : emphasized  ? 'text-rose-300'
-            : 'text-slate-200'
   return (
-    <div className="text-center">
-      <p className="text-[8px] font-mono text-slate-600 tracking-widest">{label}</p>
-      <p className={`text-[12px] font-mono font-semibold tabular-nums ${cls}`}>{value}</p>
-      {sub && <p className="text-[8px] font-mono text-slate-700 mt-0.5 truncate">{sub}</p>}
+    <div className={`flex border border-slate-800 rounded-lg overflow-hidden ${className ?? ''}`}>
+      {options.map(o => (
+        <button
+          key={o.key}
+          onClick={() => onChange(o.key)}
+          className={`flex-1 text-[10px] font-mono py-1.5 tracking-widest transition-colors ${
+            value === o.key
+              ? 'bg-rose-950/40 text-rose-300'
+              : 'text-slate-500 active:bg-slate-900'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   )
-}
-
-function fmtSignedSpread(s: number): string {
-  if (Math.abs(s) < 0.05) return 'PK'
-  return s > 0 ? `+${s.toFixed(1)}` : s.toFixed(1)
 }
 
 function fmtDateHeader(yyyymmdd: string): string {
