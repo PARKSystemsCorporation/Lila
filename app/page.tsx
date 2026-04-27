@@ -3485,21 +3485,57 @@ function EdgeBoard({ visible }: { visible: boolean }) {
   const [sport, setSport] = useState<EdgeSport>('NFL')
   const [feed, setFeed] = useState<EdgeFeed | null>(null)
   const [loading, setLoading] = useState(false)
+  const [seeded, setSeeded] = useState<Record<string, number>>({})
+  const [seeding, setSeeding] = useState(false)
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [edgesRes, seedRes] = await Promise.all([
+        fetch(`/api/picks/edges?sport=${sport}&days=7`),
+        fetch('/api/ceelo/seed-prev'),
+      ])
+      if (edgesRes.ok) setFeed(await edgesRes.json())
+      if (seedRes.ok) {
+        const body = await seedRes.json()
+        const map: Record<string, number> = {}
+        for (const s of body.sports ?? []) map[s.sport] = s.rated_teams
+        setSeeded(map)
+      }
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [sport])
 
   useEffect(() => {
     if (!visible) return
-    const load = async () => {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/picks/edges?sport=${sport}&days=7`)
-        if (res.ok) setFeed(await res.json())
-      } catch { /* ignore */ }
-      finally { setLoading(false) }
-    }
-    load()
-    const id = setInterval(load, 30_000)
+    reload()
+    const id = setInterval(reload, 30_000)
     return () => clearInterval(id)
-  }, [visible, sport])
+  }, [visible, reload])
+
+  const seedThisSport = async () => {
+    if (seeding) return
+    if (!confirm(`Seed Ceelo's ${sport} ratings from the most recent completed season?\n\nThis walks ESPN's scoreboard week by week and Elo-walks every completed game. ~30s for NBA, ~60s for MLB.`)) return
+    setSeeding(true)
+    try {
+      const res = await fetch(`/api/ceelo/seed-prev?sport=${sport}`, { method: 'POST' })
+      if (res.ok) {
+        const body = await res.json()
+        const r = body.results?.[0]
+        if (r) alert(`Seeded ${sport} ${r.label}: ${r.graded} games walked, ${r.ingested} total ingested.`)
+        await reload()
+      } else {
+        alert(`Seed failed (${res.status}).`)
+      }
+    } catch {
+      alert('Seed failed (network).')
+    } finally {
+      setSeeding(false)
+    }
+  }
+
+  const ratedCount = seeded[sport] ?? 0
+  const expectedTeams = sport === 'NFL' ? 32 : sport === 'NBA' ? 30 : 30   // 30 MLB + Athletics
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
@@ -3525,8 +3561,20 @@ function EdgeBoard({ visible }: { visible: boolean }) {
         {feed?.meta && (
           <p className="text-[10px] font-mono text-slate-500">
             {sport} edges &middot; threshold {feed.meta.threshold.toFixed(1)} {sport === 'MLB' ? 'runs' : 'pts'} &middot;{' '}
-            {feed.meta.edge_count}/{feed.meta.total_games} games flagged
+            {feed.meta.edge_count}/{feed.meta.total_games} games flagged &middot;{' '}
+            {ratedCount}/{expectedTeams} teams rated
           </p>
+        )}
+
+        {/* Cold-start nudge: only show seed button when ratings are sparse. */}
+        {ratedCount < expectedTeams * 0.5 && sport !== 'NFL' && (
+          <button
+            onClick={seedThisSport}
+            disabled={seeding}
+            className="w-full text-[10px] font-mono text-rose-300 border border-rose-900 bg-rose-950/30 rounded-lg py-2 active:opacity-70 disabled:opacity-50"
+          >
+            {seeding ? `Seeding ${sport}…` : `Seed ${sport} ratings (last completed season)`}
+          </button>
         )}
 
         {/* Body */}

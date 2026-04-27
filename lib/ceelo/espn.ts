@@ -151,6 +151,69 @@ export async function fetchSeasonWeek(season: number, seasonType: number, week: 
   return fetchScoreboard(sport, url)
 }
 
+// Walk a season's full schedule via the dates query, in 14-day chunks.
+// Used by /api/ceelo/seed-prev to backfill NBA + MLB ratings from the
+// most-recently-completed season — ESPN's scoreboard returns up to ~200
+// events per call, so chunking is safer than asking for the full year.
+export async function fetchDateRange(sport: Sport, startISO: string, endISO: string): Promise<EspnGame[]> {
+  const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '')
+  const start = new Date(startISO)
+  const end = new Date(endISO)
+  const out: EspnGame[] = []
+  const seen = new Set<string>()
+  const cursor = new Date(start)
+  while (cursor.getTime() <= end.getTime()) {
+    const chunkEnd = new Date(Math.min(end.getTime(), cursor.getTime() + 14 * 86_400_000))
+    const url = `${scoreboardUrl(sport)}?dates=${fmt(cursor)}-${fmt(chunkEnd)}&limit=300`
+    const games = await fetchScoreboard(sport, url).catch(() => [] as EspnGame[])
+    for (const g of games) {
+      if (seen.has(g.espn_id)) continue
+      seen.add(g.espn_id)
+      out.push(g)
+    }
+    cursor.setTime(chunkEnd.getTime() + 86_400_000)
+  }
+  return out
+}
+
+// Default end-dates for previously-completed seasons, used by the
+// pre-seed UI button. Caller passes the season year (ESPN's convention:
+// year the season ENDS for NBA / NFL).
+export function defaultPriorSeasonRange(sport: Sport): { start: string; end: string; label: string } {
+  // Today's date drives this so the function stays correct across calendar years.
+  const now = new Date()
+  const Y = now.getUTCFullYear()
+  // The most-recently-completed season for each sport, as of "now":
+  if (sport === 'NFL') {
+    // NFL season runs Aug Y → Feb (Y+1). If we're past March, the season
+    // that ended in Feb of Y is "previous". If we're before March (rare),
+    // it's the season that ended in Feb (Y-1).
+    const ended = now.getUTCMonth() >= 2 ? Y : Y - 1
+    return {
+      start: `${ended - 1}-08-01`,
+      end:   `${ended}-02-28`,
+      label: `${ended - 1}-${String(ended).slice(2)}`,
+    }
+  }
+  if (sport === 'NBA') {
+    // NBA runs Oct Y → June (Y+1). Previous season ended in June of
+    // current year (or last year if we're before July).
+    const ended = now.getUTCMonth() >= 6 ? Y : Y - 1
+    return {
+      start: `${ended - 1}-10-01`,
+      end:   `${ended}-06-30`,
+      label: `${ended - 1}-${String(ended).slice(2)}`,
+    }
+  }
+  // MLB runs March-Oct of a single calendar year.
+  const ended = now.getUTCMonth() >= 10 ? Y : Y - 1
+  return {
+    start: `${ended}-03-01`,
+    end:   `${ended}-11-15`,
+    label: `${ended}`,
+  }
+}
+
 async function fetchScoreboard(sport: Sport, url: string): Promise<EspnGame[]> {
   const res = await fetch(url, { headers: { 'user-agent': 'Lila/Ceelo' } })
   if (!res.ok) throw new Error(`ESPN ${sport} scoreboard ${res.status}`)

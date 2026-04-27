@@ -4,6 +4,7 @@ import { cfg } from './config'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import * as Espn from './ceelo/espn'
 import * as Odds from './ceelo/odds'
+import * as PublicBets from './ceelo/public-bets'
 import { applyGame, modelLine, DEFAULT_RATING, SPORT_CONFIG } from './ceelo/ratings'
 import { ALL_SPORTS, NFL_TEAMS, NBA_TEAMS, MLB_TEAMS, type Sport } from './ceelo/teams'
 
@@ -91,6 +92,7 @@ export class CeeloLoop {
     try { note(await this.c0d_refreshRosters()) }                     catch (e) { warned = true; note(`C0d ${err(e)}`) }
     try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
     try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
+    try { note(await this.c2b_pullPublicBets()) }                     catch (e) { warned = true; note(`C2b ${err(e)}`) }
     try { note(await this.c3_computeModelLines()) }                   catch (e) { warned = true; note(`C3 ${err(e)}`) }
     try { edgeSummary = await this.c4_emitPicks(); note(edgeSummary) } catch (e) { warned = true; note(`C4 ${err(e)}`) }
     try { note(await this.c5_reconcile()) }                           catch (e) { warned = true; note(`C5 ${err(e)}`) }
@@ -351,6 +353,59 @@ export class CeeloLoop {
     }
     await this.db.query(`UPDATE ceelo_state SET last_lines_at=NOW() WHERE id=1`)
     return totalStored > 0 ? `C2 ${sportNotes.join(' ')}` : ''
+  }
+
+  // ── C2b: public-betting % per game (free Action Network web API) ────────
+  // Latest public bets/money split per game. Stamped onto the most-recent
+  // ceelo_lines row per (game, book) so the EdgeBoard can render the
+  // BETS%/MONEY% columns. Stays NULL if the source is unreachable.
+
+  private async c2b_pullPublicBets(): Promise<string> {
+    let totalUpdated = 0
+    const sportNotes: string[] = []
+    for (const sport of ALL_SPORTS) {
+      const today = new Date()
+      // Action Network's date param is the slate date — pull today + 1
+      // so we cover same-day late tip-offs as well as next-day games.
+      const tomorrow = new Date(today.getTime() + 86_400_000)
+      const entries = [
+        ...await PublicBets.fetchPublicBets(sport, today).catch(() => [] as PublicBets.PublicBetEntry[]),
+        ...await PublicBets.fetchPublicBets(sport, tomorrow).catch(() => [] as PublicBets.PublicBetEntry[]),
+      ]
+      let updated = 0
+      for (const e of entries) {
+        if (e.public_bets_pct == null) continue
+        const res = await this.db.query(
+          `UPDATE ceelo_lines SET
+              public_bets_pct = $1,
+              public_money_pct = $2,
+              public_side = $3
+           WHERE id IN (
+             SELECT id FROM ceelo_lines
+             WHERE sport = $4
+               AND market = 'spread'
+               AND game_id IN (
+                 SELECT id FROM ceelo_games
+                 WHERE sport = $4
+                   AND home_team = $5
+                   AND away_team = $6
+                   AND kickoff_at BETWEEN $7::timestamptz - INTERVAL '6 hours'
+                                      AND $7::timestamptz + INTERVAL '6 hours'
+               )
+             ORDER BY fetched_at DESC
+             LIMIT 8
+           )`,
+          [
+            e.public_bets_pct, e.public_money_pct, e.public_side,
+            sport, e.home_team, e.away_team, e.kickoff_at,
+          ]
+        )
+        if ((res.rowCount ?? 0) > 0) updated++
+      }
+      if (updated > 0) sportNotes.push(`${sport} ${updated}`)
+      totalUpdated += updated
+    }
+    return totalUpdated > 0 ? `C2b ${sportNotes.join(' ')}` : ''
   }
 
   // ── C3: compute model lines for upcoming games ──────────────────────────
