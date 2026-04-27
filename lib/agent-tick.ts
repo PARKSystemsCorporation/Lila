@@ -3,6 +3,7 @@ import { getPool, ensureSchema } from './db'
 import { TradingEngine } from './trading-engine'
 import { AnalystLoop } from './analyst-loop'
 import { TaskerLoop } from './tasker-loop'
+import { ScoutLoop } from './scout-loop'
 import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
@@ -89,6 +90,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (taskerResult) {
       await logEvent(db, taskerResult.logMessage, taskerResult.logType)
       logs.push(taskerResult.logMessage)
+    }
+
+    // 3b. Scout — volume bounty hunter. Shallow scans, files drafts to the
+    //     same security_reports queue Lila reviews for Cipher.
+    const scout = new ScoutLoop(db)
+    const scoutResult = await scout.run().catch((e: unknown) => ({
+      logMessage: `Scout error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (scoutResult) {
+      await logEvent(db, scoutResult.logMessage, scoutResult.logType)
+      logs.push(scoutResult.logMessage)
     }
 
     // 4. Management Lila — replies to operator, proactive check-ins.

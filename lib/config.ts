@@ -31,6 +31,9 @@ export const cfg = Object.freeze({
   // internally rate-limited so this can be aggressive without spamming
   // upstream sources.
   CEELO_RUN_MIN:          num('CEELO_RUN_MIN', 30),
+  // Scout step interval (seconds). Volume bounty hunter — runs faster than
+  // Cipher's deep cycles. One target per cycle, shallow scan + draft.
+  SCOUT_RUN_SEC:          num('SCOUT_RUN_SEC', 300),
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).
   BROADCAST_INTERVAL_MIN: num('BROADCAST_INTERVAL_MIN', 60),

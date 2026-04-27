@@ -269,6 +269,45 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     INSERT INTO discovery_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 
+    -- ── Scout: volume bounty hunter ─────────────────────────────────────
+    -- Sibling to Cipher but optimized for $1-5k payouts via shallow-but-
+    -- fast triage of fresh targets — recently-listed protocols, forks of
+    -- majors, post-seed-round scrappy projects. Higher miss rate is fine;
+    -- the goal is 5-10 submissions per week. Output reports go to the
+    -- same security_reports queue Cipher uses, tagged source='scout' so
+    -- Lila reviews them at speed. Inputs come from watch_targets so
+    -- Discovery and Scout share the funnel.
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'cipher';
+
+    CREATE TABLE IF NOT EXISTS scout_state (
+      id              INTEGER     PRIMARY KEY DEFAULT 1,
+      step            TEXT        NOT NULL DEFAULT 'S0',
+      cycle           INTEGER     NOT NULL DEFAULT 0,
+      last_step_at    TIMESTAMPTZ,
+      last_pick_at    TIMESTAMPTZ,
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO scout_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+    ALTER TABLE scout_state ADD COLUMN IF NOT EXISTS last_pick_at TIMESTAMPTZ;
+
+    -- Per-target scan ledger so we don't re-scan the same target every
+    -- cycle. status: 'queued' | 'scanned' | 'reported' | 'dismissed'.
+    CREATE TABLE IF NOT EXISTS scout_findings (
+      id              SERIAL      PRIMARY KEY,
+      target_id       INTEGER     REFERENCES watch_targets(id) ON DELETE SET NULL,
+      target_name     TEXT,
+      target_url      TEXT,
+      severity        TEXT,
+      summary         TEXT,
+      details         TEXT,
+      report_id       INTEGER     REFERENCES security_reports(id) ON DELETE SET NULL,
+      status          TEXT        NOT NULL DEFAULT 'queued',
+      scanned_at      TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_scout_findings_target ON scout_findings(target_id);
+    CREATE INDEX IF NOT EXISTS idx_scout_findings_status ON scout_findings(status, created_at DESC);
+
     -- Legacy tables removed: lila_skills (Hermes synth, unused).
     DROP TABLE IF EXISTS lila_skills;
 

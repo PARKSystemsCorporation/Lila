@@ -78,6 +78,158 @@ function fmtAge(ts: number): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
+// ─── Voice (Web Speech API — browser-native, zero external APIs) ─────────
+//
+// Speech recognition for operator input + speech synthesis for agent
+// replies. Both run entirely in the browser. STT requires Chrome / Safari
+// (iOS 14.5+); TTS works on every modern mobile browser.
+
+interface SpeechRecognitionLike extends EventTarget {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  start(): void
+  stop(): void
+  abort(): void
+  onresult: ((e: { results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean }> & { length: number }; resultIndex: number }) => void) | null
+  onerror: ((e: { error?: string }) => void) | null
+  onend: (() => void) | null
+}
+
+type SRConstructor = new () => SpeechRecognitionLike
+
+function getSpeechRecognition(): SRConstructor | null {
+  if (typeof window === 'undefined') return null
+  const w = window as unknown as { SpeechRecognition?: SRConstructor; webkitSpeechRecognition?: SRConstructor }
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
+}
+
+interface UseSTT {
+  supported: boolean
+  listening: boolean
+  transcript: string
+  start: () => void
+  stop: () => void
+  reset: () => void
+}
+
+// Tap-to-toggle speech-to-text. Streams interim transcripts so the
+// caller can render the live partial text in the compose box.
+function useSpeechRecognition(onFinal?: (text: string) => void): UseSTT {
+  const [listening, setListening] = useState(false)
+  const [transcript, setTranscript] = useState('')
+  const recRef = useRef<SpeechRecognitionLike | null>(null)
+  const supportedRef = useRef<boolean>(false)
+  const onFinalRef = useRef(onFinal)
+  useEffect(() => { onFinalRef.current = onFinal }, [onFinal])
+
+  useEffect(() => {
+    const SR = getSpeechRecognition()
+    supportedRef.current = !!SR
+    if (!SR) return
+    const r = new SR()
+    r.continuous = false
+    r.interimResults = true
+    r.lang = 'en-US'
+    r.onresult = (e) => {
+      let interim = ''
+      let final = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const seg = e.results[i] as unknown as { 0: { transcript: string }; isFinal: boolean }
+        const text = seg[0].transcript
+        if (seg.isFinal) final += text
+        else              interim += text
+      }
+      if (final) {
+        setTranscript(prev => (prev ? prev + ' ' : '') + final.trim())
+        onFinalRef.current?.(final.trim())
+      } else if (interim) {
+        setTranscript(interim)
+      }
+    }
+    r.onerror = () => { setListening(false) }
+    r.onend = ()   => { setListening(false) }
+    recRef.current = r
+    return () => { r.abort?.() }
+  }, [])
+
+  const start = useCallback(() => {
+    const r = recRef.current
+    if (!r || listening) return
+    setTranscript('')
+    try { r.start(); setListening(true) } catch { /* already started */ }
+  }, [listening])
+
+  const stop = useCallback(() => {
+    const r = recRef.current
+    if (!r) return
+    try { r.stop() } catch { /* ignore */ }
+    setListening(false)
+  }, [])
+
+  const reset = useCallback(() => setTranscript(''), [])
+
+  return { supported: supportedRef.current, listening, transcript, start, stop, reset }
+}
+
+interface UseTTS {
+  supported: boolean
+  enabled: boolean
+  setEnabled: (v: boolean) => void
+  speak: (text: string) => void
+  cancel: () => void
+}
+
+// Persistent (localStorage) toggle + speak helper. We strip leading
+// emoji / bracketed tags before speaking so the synth doesn't read out
+// the literal "warning sign" or "[broadcast:bluesky]" tokens.
+function useSpeechSynthesis(storageKey: string): UseTTS {
+  const [enabled, setEnabledRaw] = useState(false)
+  const [supported, setSupported] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setSupported(typeof window.speechSynthesis !== 'undefined')
+    try {
+      const saved = window.localStorage.getItem(storageKey)
+      if (saved === '1') setEnabledRaw(true)
+    } catch { /* ignore */ }
+  }, [storageKey])
+
+  const setEnabled = useCallback((v: boolean) => {
+    setEnabledRaw(v)
+    try { window.localStorage.setItem(storageKey, v ? '1' : '0') } catch { /* ignore */ }
+    if (!v && typeof window !== 'undefined') window.speechSynthesis?.cancel()
+  }, [storageKey])
+
+  const speak = useCallback((text: string) => {
+    if (!enabled || typeof window === 'undefined') return
+    if (!window.speechSynthesis) return
+    const cleaned = text
+      // Strip a leading run of non-letter / non-digit chars (covers emoji,
+      // arrows, bullet glyphs, whitespace) without needing the \p{Emoji}
+      // Unicode property class which isn't available in the build target.
+      .replace(/^[^\w(]+/, '')
+      .replace(/\[[^\]]{1,80}\]/g, '')             // bracketed tags like [broadcast:bluesky]
+      .replace(/```[\s\S]*?```/g, '. code block .')  // skip code fences
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!cleaned) return
+    const u = new SpeechSynthesisUtterance(cleaned)
+    u.rate = 1.05
+    u.pitch = 1.0
+    u.lang = 'en-US'
+    window.speechSynthesis.speak(u)
+  }, [enabled])
+
+  const cancel = useCallback(() => {
+    if (typeof window === 'undefined') return
+    window.speechSynthesis?.cancel()
+  }, [])
+
+  return { supported, enabled, setEnabled, speak, cancel }
+}
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 const IconChat = () => (
@@ -249,7 +401,7 @@ function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
 // pre-filtered to Cipher's plans.
 type NavigateFn = (to: {
   tab: Tab
-  notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'pitches' | 'other'
+  notesFilter?: 'all' | 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'scout' | 'pitches' | 'other'
   libraryMode?: 'reports' | 'notes'
 }) => void
 
@@ -3797,7 +3949,7 @@ function LibraryModePill({ active, label, badge, onClick }: {
 
 // ─── Notes Tab ────────────────────────────────────────────────────────────────
 
-type NoteCategory = 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'pitches' | 'other'
+type NoteCategory = 'analyst' | 'lila' | 'tasker' | 'ceelo' | 'scout' | 'pitches' | 'other'
 
 interface NoteRow {
   id: number
@@ -3819,6 +3971,7 @@ interface AgentActivity {
   } | null
   lila: { last_chat_ts: number | null }
   ceelo?: { cycle: number; rated: number; upcoming: number; last_ts: number | null } | null
+  scout?: { cycle: number; scanned: number; reported: number; last_ts: number | null } | null
 }
 
 interface NotesData {
@@ -3881,6 +4034,7 @@ function humanizeNotePath(path: string): { title: string; subtitle: string } {
   if (path.startsWith('analyst/'))                return { title: 'Vega note',     subtitle: base }
   if (path.startsWith('ceelo/cycles/'))           return { title: 'Ceelo cycle',   subtitle: date || base }
   if (path.startsWith('ceelo/'))                  return { title: 'Ceelo note',    subtitle: base }
+  if (path.startsWith('scout/'))                  return { title: 'Scout finding', subtitle: base }
   return { title: leaf, subtitle: path }
 }
 
@@ -3901,6 +4055,7 @@ const NOTE_CATEGORY_STYLE: Record<NoteCategory, string> = {
   lila:    'bg-emerald-950 text-emerald-300 border-emerald-900',
   tasker:  'bg-amber-950 text-amber-300 border-amber-900',
   ceelo:   'bg-rose-950 text-rose-300 border-rose-900',
+  scout:   'bg-cyan-950 text-cyan-300 border-cyan-900',
   pitches: 'bg-purple-950 text-purple-300 border-purple-900',
   other:   'bg-slate-800 text-slate-400 border-slate-700',
 }
@@ -3910,6 +4065,7 @@ const NOTE_CATEGORY_LABEL: Record<NoteCategory, string> = {
   lila:    'LILA',
   tasker:  'CIPHER',
   ceelo:   'CEELO',
+  scout:   'SCOUT',
   pitches: 'PITCH',
   other:   'OTHER',
 }
@@ -4000,6 +4156,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
     { key: 'all',     label: 'ALL',     count: data.counts.total   },
     { key: 'analyst', label: 'VEGA',    count: data.counts.analyst },
     { key: 'tasker',  label: 'CIPHER',  count: data.counts.tasker  },
+    { key: 'scout',   label: 'SCOUT',   count: data.counts.scout ?? 0 },
     { key: 'ceelo',   label: 'CEELO',   count: data.counts.ceelo ?? 0 },
     { key: 'lila',    label: 'LILA',    count: data.counts.lila    },
     { key: 'pitches', label: 'PITCH',   count: data.counts.pitches },
@@ -4109,7 +4266,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
 
 function AgentActivityCard({ activity }: { activity: AgentActivity }) {
   const rows: Array<{
-    who: 'Vega' | 'Cipher' | 'Ceelo' | 'Lila'
+    who: 'Vega' | 'Cipher' | 'Scout' | 'Ceelo' | 'Lila'
     color: string
     line: string
     ts: number | null
@@ -4133,6 +4290,14 @@ function AgentActivityCard({ activity }: { activity: AgentActivity }) {
       color: 'text-amber-400',
       line,
       ts: activity.cipher.target?.last_ts ?? activity.cipher.last_ts,
+    })
+  }
+  if (activity.scout) {
+    rows.push({
+      who: 'Scout',
+      color: 'text-cyan-400',
+      line: `cycle ${activity.scout.cycle} · ${activity.scout.scanned} scanned · ${activity.scout.reported} reported`,
+      ts: activity.scout.last_ts,
     })
   }
   if (activity.ceelo) {
