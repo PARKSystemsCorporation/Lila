@@ -1,4 +1,11 @@
-import { normalizeTeam } from './teams'
+import { normalizeTeamFor, type Sport } from './teams'
+
+// Sport → ESPN URL path. site.api.espn.com is open + free + no auth.
+const SPORT_PATH: Record<Sport, string> = {
+  NFL: 'football/nfl',
+  NBA: 'basketball/nba',
+  MLB: 'baseball/mlb',
+}
 
 // ESPN's numeric team IDs — needed for the per-team endpoints (rosters,
 // injuries). Map of canonical 2-3 letter abbr → ESPN id.
@@ -106,10 +113,13 @@ export async function fetchTeamRoster(team: string): Promise<RosterEntry[]> {
 // param we can pull ranges (YYYYMMDD or YYYYMMDD-YYYYMMDD) and with
 // `seasontype` + `week` + `dates=YYYY` we can pull a specific season-week.
 
-const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
+function scoreboardUrl(sport: Sport): string {
+  return `https://site.api.espn.com/apis/site/v2/sports/${SPORT_PATH[sport]}/scoreboard`
+}
 
 export interface EspnGame {
   espn_id: string
+  sport: Sport
   season: number              // e.g. 2025
   week: number | null
   season_type: number         // 1=preseason, 2=regular, 3=postseason
@@ -122,24 +132,34 @@ export interface EspnGame {
   neutral_site: boolean
 }
 
-export async function fetchCurrent(): Promise<EspnGame[]> {
-  return fetchScoreboard(BASE)
+export async function fetchCurrent(sport: Sport = 'NFL'): Promise<EspnGame[]> {
+  return fetchScoreboard(sport, scoreboardUrl(sport))
 }
 
-export async function fetchSeasonWeek(season: number, seasonType: number, week: number): Promise<EspnGame[]> {
-  const url = `${BASE}?seasontype=${seasonType}&week=${week}&dates=${season}`
-  return fetchScoreboard(url)
+// Pull current scoreboard for a wider window (NBA + MLB drop daily — the
+// default ESPN scoreboard only covers ~today, so request a date range).
+export async function fetchUpcoming(sport: Sport, daysAhead = 7): Promise<EspnGame[]> {
+  const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, '')
+  const start = new Date()
+  const end = new Date(Date.now() + daysAhead * 86_400_000)
+  const url = `${scoreboardUrl(sport)}?dates=${fmt(start)}-${fmt(end)}&limit=200`
+  return fetchScoreboard(sport, url)
 }
 
-async function fetchScoreboard(url: string): Promise<EspnGame[]> {
+export async function fetchSeasonWeek(season: number, seasonType: number, week: number, sport: Sport = 'NFL'): Promise<EspnGame[]> {
+  const url = `${scoreboardUrl(sport)}?seasontype=${seasonType}&week=${week}&dates=${season}`
+  return fetchScoreboard(sport, url)
+}
+
+async function fetchScoreboard(sport: Sport, url: string): Promise<EspnGame[]> {
   const res = await fetch(url, { headers: { 'user-agent': 'Lila/Ceelo' } })
-  if (!res.ok) throw new Error(`ESPN scoreboard ${res.status}`)
+  if (!res.ok) throw new Error(`ESPN ${sport} scoreboard ${res.status}`)
   const json = await res.json()
   const events: unknown[] = Array.isArray(json?.events) ? json.events : []
-  return events.map(parseEvent).filter((g): g is EspnGame => g !== null)
+  return events.map(e => parseEvent(e, sport)).filter((g): g is EspnGame => g !== null)
 }
 
-function parseEvent(raw: unknown): EspnGame | null {
+function parseEvent(raw: unknown, sport: Sport): EspnGame | null {
   const e = raw as Record<string, unknown>
   const espn_id = String(e?.id ?? '')
   if (!espn_id) return null
@@ -160,7 +180,7 @@ function parseEvent(raw: unknown): EspnGame | null {
   for (const cRaw of competitors) {
     const c = cRaw as Record<string, unknown>
     const team = c.team as Record<string, unknown> | undefined
-    const abbr = normalizeTeam(team?.abbreviation as string | undefined)
+    const abbr = normalizeTeamFor(sport, team?.abbreviation as string | undefined)
     if (!abbr) return null
     const scoreStr = c.score
     const score = scoreStr != null && scoreStr !== '' ? Number(scoreStr) : null
@@ -187,6 +207,7 @@ function parseEvent(raw: unknown): EspnGame | null {
 
   return {
     espn_id,
+    sport,
     season,
     week,
     season_type: seasonType,

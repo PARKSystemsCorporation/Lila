@@ -3382,12 +3382,12 @@ function fmtKickoff(ts: number | null): string {
 }
 
 function PicksTab({ visible }: { visible: boolean }) {
-  const [mode, setMode] = useState<'picks' | 'chat'>('picks')
+  const [mode, setMode] = useState<'edges' | 'picks' | 'chat'>('edges')
   const [data, setData] = useState<PicksData | null>(null)
   const [openCount, setOpenCount] = useState(0)
 
   // Light poll on the data so the Picks pill can show an open-pick badge
-  // even while the user is sitting in the Chat sub-mode.
+  // even while the user is sitting elsewhere in the tab.
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/picks')
@@ -3409,24 +3409,226 @@ function PicksTab({ visible }: { visible: boolean }) {
     <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
       <div className="shrink-0 flex border-b border-slate-800 bg-slate-950">
         <LibraryModePill
+          active={mode === 'edges'}
+          label="Edges"
+          onClick={() => setMode('edges')}
+        />
+        <LibraryModePill
           active={mode === 'picks'}
-          label="Picks"
+          label="My Bets"
           badge={openCount > 0 ? openCount : undefined}
           onClick={() => setMode('picks')}
         />
         <LibraryModePill
           active={mode === 'chat'}
-          label="Chat Ceelo"
+          label="Chat"
           onClick={() => setMode('chat')}
         />
       </div>
 
       <div className="flex-1 relative overflow-hidden">
-        <PicksView visible={visible && mode === 'picks'} data={data} reload={load} />
+        <EdgeBoard  visible={visible && mode === 'edges'} />
+        <PicksView  visible={visible && mode === 'picks'} data={data} reload={load} />
         <CeeloChatView visible={visible && mode === 'chat'} />
       </div>
     </div>
   )
+}
+
+// ─── EdgeBoard — sportsbook-style edge feed (NFL / NBA / MLB) ──────────────
+//
+// Mirrors the FanDuel "Scoreboard" layout the operator referenced. Per
+// sport, shows ONLY upcoming games where Ceelo's model spread differs
+// from the latest market line by ≥ the sport's edge threshold (NFL 1pt,
+// NBA 1.5pt, MLB 0.5 run). Cards display:
+//   matchup + W-L records · book line · open · model spread · edge ·
+//   confidence · public bets% / money% (when scrape source is wired).
+
+type EdgeSport = 'NFL' | 'NBA' | 'MLB'
+
+interface EdgeRow {
+  game_id: number
+  sport: EdgeSport
+  game_label: string
+  kickoff_at: number
+  home_team: string
+  away_team: string
+  home_record: string
+  away_record: string
+  market_home_spread: number
+  open_home_spread: number | null
+  book: string
+  model_home_spread: number
+  model_home_prob: number
+  edge_points: number
+  edge_threshold: number
+  confidence: 'low' | 'medium' | 'high'
+  pick_side: 'home' | 'away'
+  public_bets_pct: number | null
+  public_money_pct: number | null
+  public_side: string | null
+}
+
+interface EdgeFeed {
+  edges: EdgeRow[]
+  byDate: Array<{ date: string; items: EdgeRow[] }>
+  meta: {
+    sport: EdgeSport
+    threshold: number
+    total_games: number
+    edge_count: number
+    latest_season: number
+  }
+}
+
+function EdgeBoard({ visible }: { visible: boolean }) {
+  const [sport, setSport] = useState<EdgeSport>('NFL')
+  const [feed, setFeed] = useState<EdgeFeed | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!visible) return
+    const load = async () => {
+      setLoading(true)
+      try {
+        const res = await fetch(`/api/picks/edges?sport=${sport}&days=7`)
+        if (res.ok) setFeed(await res.json())
+      } catch { /* ignore */ }
+      finally { setLoading(false) }
+    }
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [visible, sport])
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-4 space-y-3">
+        {/* Sport selector */}
+        <div className="flex gap-2">
+          {(['NFL', 'NBA', 'MLB'] as EdgeSport[]).map(s => (
+            <button
+              key={s}
+              onClick={() => setSport(s)}
+              className={`flex-1 text-[11px] font-mono py-2 rounded-lg border tracking-widest transition-colors ${
+                sport === s
+                  ? 'bg-rose-950/40 border-rose-800 text-rose-300'
+                  : 'border-slate-800 text-slate-500 active:bg-slate-900'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {/* Meta caption */}
+        {feed?.meta && (
+          <p className="text-[10px] font-mono text-slate-500">
+            {sport} edges &middot; threshold {feed.meta.threshold.toFixed(1)} {sport === 'MLB' ? 'runs' : 'pts'} &middot;{' '}
+            {feed.meta.edge_count}/{feed.meta.total_games} games flagged
+          </p>
+        )}
+
+        {/* Body */}
+        {loading && !feed ? (
+          <div className="flex items-center gap-2 py-10 justify-center">
+            <div className="w-4 h-4 border-2 border-slate-700 border-t-rose-500 rounded-full animate-spin" />
+            <p className="text-xs font-mono text-slate-600">Loading edges…</p>
+          </div>
+        ) : !feed?.byDate || feed.byDate.length === 0 ? (
+          <EmptyState
+            title="No edges flagged."
+            subtitle={`Ceelo only files ${sport} games where his model differs from the book by ≥ ${feed?.meta?.threshold ?? 1} ${sport === 'MLB' ? 'runs' : 'points'}. Live book lines need ODDS_API_KEY to be set.`}
+          />
+        ) : (
+          feed.byDate.map(g => (
+            <div key={g.date} className="space-y-2">
+              <p className="text-[10px] font-mono text-slate-500 tracking-widest pt-2">
+                {fmtDateHeader(g.date)} &middot; {g.items.length}
+              </p>
+              {g.items.map(e => (
+                <EdgeCard key={`${e.game_id}:${e.book}`} edge={e} />
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EdgeCard({ edge: e }: { edge: EdgeRow }) {
+  const takeHome = e.pick_side === 'home'
+  const pickTeam = takeHome ? e.home_team : e.away_team
+  const pickSpread = takeHome ? e.market_home_spread : -e.market_home_spread
+  const confColor = e.confidence === 'high' ? 'text-emerald-300 border-emerald-800 bg-emerald-950/40'
+                  : e.confidence === 'medium' ? 'text-amber-300 border-amber-800 bg-amber-950/30'
+                  : 'text-slate-400 border-slate-700 bg-slate-900'
+  const kickoff = new Date(e.kickoff_at)
+  const time = kickoff.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/40 overflow-hidden">
+      {/* Header: matchup + Ceelo's pick badge */}
+      <div className="px-3 pt-3 pb-2 flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[12px] font-mono text-slate-100 font-semibold tabular-nums">
+            <span className="truncate">{e.away_team}</span>
+            <span className="text-[9px] font-mono text-slate-600">{e.away_record}</span>
+            <span className="text-slate-600 mx-1">@</span>
+            <span className="truncate">{e.home_team}</span>
+            <span className="text-[9px] font-mono text-slate-600">{e.home_record}</span>
+          </div>
+          <p className="text-[9px] font-mono text-slate-600 mt-0.5">
+            Today · {time} · {e.book}
+          </p>
+        </div>
+        <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border tabular-nums shrink-0 ${confColor}`}>
+          CEELO {pickTeam} {fmtSignedSpread(pickSpread)}
+        </span>
+      </div>
+
+      {/* Numeric grid: market line | open | model | edge | public */}
+      <div className="px-3 pb-3 pt-1 grid grid-cols-5 gap-2 border-t border-slate-800/60">
+        <EdgeStat label="LINE"    value={fmtSignedSpread(e.market_home_spread)} sub={e.home_team} />
+        <EdgeStat label="OPEN"    value={e.open_home_spread != null ? fmtSignedSpread(e.open_home_spread) : '—'} sub={e.home_team} />
+        <EdgeStat label="MODEL"   value={fmtSignedSpread(e.model_home_spread)} sub="Ceelo" emphasized />
+        <EdgeStat label="EDGE"    value={`${e.edge_points >= 0 ? '+' : ''}${e.edge_points.toFixed(1)}`} sub={`${(e.model_home_prob * 100).toFixed(0)}% home`} accent />
+        <EdgeStat label="PUBLIC"
+                  value={e.public_bets_pct != null ? `${e.public_bets_pct.toFixed(0)}%` : '—'}
+                  sub={e.public_money_pct != null ? `${e.public_money_pct.toFixed(0)}% $` : 'no data'} />
+      </div>
+    </div>
+  )
+}
+
+function EdgeStat({ label, value, sub, accent, emphasized }: {
+  label: string; value: string; sub?: string; accent?: boolean; emphasized?: boolean
+}) {
+  const cls = accent      ? 'text-emerald-300'
+            : emphasized  ? 'text-rose-300'
+            : 'text-slate-200'
+  return (
+    <div className="text-center">
+      <p className="text-[8px] font-mono text-slate-600 tracking-widest">{label}</p>
+      <p className={`text-[12px] font-mono font-semibold tabular-nums ${cls}`}>{value}</p>
+      {sub && <p className="text-[8px] font-mono text-slate-700 mt-0.5 truncate">{sub}</p>}
+    </div>
+  )
+}
+
+function fmtSignedSpread(s: number): string {
+  if (Math.abs(s) < 0.05) return 'PK'
+  return s > 0 ? `+${s.toFixed(1)}` : s.toFixed(1)
+}
+
+function fmtDateHeader(yyyymmdd: string): string {
+  const d = new Date(yyyymmdd + 'T12:00:00')
+  const today = new Date()
+  const diffDays = Math.floor((d.getTime() - today.getTime()) / 86_400_000)
+  if (diffDays === 0) return 'TODAY'
+  if (diffDays === 1) return 'TOMORROW'
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase()
 }
 
 function PicksView({ visible, data, reload }: {

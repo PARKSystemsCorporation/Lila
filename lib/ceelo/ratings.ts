@@ -1,16 +1,34 @@
-// Elo math for Ceelo's NFL power-ratings model.
-//
-// 538-style: K-factor with a margin-of-victory multiplier and a fixed
-// home-field-advantage bias. Single rating per team (no offense/defense
-// splits in v2 — those would need EPA data we're not ingesting yet).
-//
-// Conversion: ~25 Elo points = 1 spread point. So a 100-point rating gap
-// translates to roughly a 4-point favorite.
+import type { Sport } from './teams'
 
-export const HFA       = 55     // home-field advantage in Elo points (~2.2 spread points)
-export const K         = 20     // base K-factor
-export const ELO_PER_PT = 25    // Elo points per 1 spread point
+// Elo math for Ceelo's power-ratings model. 538-style: K-factor with a
+// margin-of-victory multiplier and a fixed home-field-advantage bias.
+//
+// Sport-specific tuning:
+//   NFL — HFA 55 Elo (~2.2 pts), K 20, 25 Elo per spread point.
+//   NBA — HFA 100 Elo (~3.5 pts), K 20, 28 Elo per spread point. Bigger
+//         HFA because home court is genuinely more impactful in NBA.
+//   MLB — HFA 24 Elo (~0.24 runs), K 4, 10 Elo per run-line point. K is
+//         tiny because 162-game seasons are noisy and we don't want any
+//         single game to whip the rating around.
+
 export const DEFAULT_RATING = 1500
+
+export interface SportConfig {
+  HFA: number
+  K: number
+  ELO_PER_PT: number
+}
+
+export const SPORT_CONFIG: Record<Sport, SportConfig> = {
+  NFL: { HFA: 55,  K: 20, ELO_PER_PT: 25 },
+  NBA: { HFA: 100, K: 20, ELO_PER_PT: 28 },
+  MLB: { HFA: 24,  K: 4,  ELO_PER_PT: 10 },
+}
+
+// Back-compat: NFL constants (callers that haven't been migrated).
+export const HFA       = SPORT_CONFIG.NFL.HFA
+export const K         = SPORT_CONFIG.NFL.K
+export const ELO_PER_PT = SPORT_CONFIG.NFL.ELO_PER_PT
 
 // Win probability given Elo difference (in favor of side A).
 export function winProb(eloDiff: number): number {
@@ -34,29 +52,30 @@ export interface RatingUpdate {
 }
 
 // Apply one game's result to home + away ratings.
-// `homeScore > awayScore` ⇒ home won.
+// `homeScore > awayScore` ⇒ home won. Sport defaults to NFL for back-compat.
 export function applyGame(args: {
   homeRating: number
   awayRating: number
   homeScore: number
   awayScore: number
   neutralSite?: boolean
+  sport?: Sport
 }): RatingUpdate {
   const { homeRating, awayRating, homeScore, awayScore } = args
-  const hfa = args.neutralSite ? 0 : HFA
+  const cfg = SPORT_CONFIG[args.sport ?? 'NFL']
+  const hfa = args.neutralSite ? 0 : cfg.HFA
 
   const expectedHome = winProb(homeRating + hfa - awayRating)
   const margin = homeScore - awayScore
   const actualHome = margin > 0 ? 1 : margin < 0 ? 0 : 0.5
 
-  // Elo diff in winner's favor for the MOV multiplier.
   const winnerEloEdge =
       margin > 0 ? (homeRating + hfa - awayRating)
     : margin < 0 ? (awayRating - homeRating - hfa)
     : 0
 
   const mult = movMultiplier(margin, winnerEloEdge)
-  const delta = K * mult * (actualHome - expectedHome)
+  const delta = cfg.K * mult * (actualHome - expectedHome)
 
   return {
     homeNew:   +(homeRating + delta).toFixed(3),
@@ -78,11 +97,13 @@ export function modelLine(args: {
   homeRating: number
   awayRating: number
   neutralSite?: boolean
+  sport?: Sport
 }): ModelLine {
-  const hfa = args.neutralSite ? 0 : HFA
-  const eloDiff = args.homeRating + hfa - args.awayRating  // positive = home favored
+  const cfg = SPORT_CONFIG[args.sport ?? 'NFL']
+  const hfa = args.neutralSite ? 0 : cfg.HFA
+  const eloDiff = args.homeRating + hfa - args.awayRating
   return {
-    modelSpread:   +(-eloDiff / ELO_PER_PT).toFixed(2),
+    modelSpread:   +(-eloDiff / cfg.ELO_PER_PT).toFixed(2),
     modelHomeProb: +winProb(eloDiff).toFixed(3),
   }
 }

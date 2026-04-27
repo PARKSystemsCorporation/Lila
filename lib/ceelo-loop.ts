@@ -4,8 +4,22 @@ import { cfg } from './config'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import * as Espn from './ceelo/espn'
 import * as Odds from './ceelo/odds'
-import { applyGame, modelLine, DEFAULT_RATING } from './ceelo/ratings'
-import { NFL_TEAMS } from './ceelo/teams'
+import { applyGame, modelLine, DEFAULT_RATING, SPORT_CONFIG } from './ceelo/ratings'
+import { ALL_SPORTS, NFL_TEAMS, NBA_TEAMS, MLB_TEAMS, type Sport } from './ceelo/teams'
+
+const TEAM_SET: Record<Sport, ReadonlySet<string>> = {
+  NFL: NFL_TEAMS,
+  NBA: NBA_TEAMS,
+  MLB: MLB_TEAMS,
+}
+
+// Edge threshold per sport (in line points) for C4. NBA needs a wider
+// gate because the lines move bigger; MLB run-line edge is tighter.
+const EDGE_PT_BY_SPORT: Record<Sport, number> = {
+  NFL: 1.0,
+  NBA: 1.5,
+  MLB: 0.5,
+}
 
 // ── Ceelo: NFL handicapper, autonomy loop ─────────────────────────────────
 //
@@ -28,7 +42,6 @@ import { NFL_TEAMS } from './ceelo/teams'
 
 const ODDS_REFRESH_MIN  = 30
 const SCHEDULE_REFRESH_MIN = 60
-const EDGE_THRESHOLD_PTS = 1.0
 
 export class CeeloLoop {
   private db: PoolClient
@@ -102,38 +115,47 @@ export class CeeloLoop {
     const { rows: [s] } = await this.db.query('SELECT last_schedule_at FROM ceelo_state WHERE id=1')
     if (s?.last_schedule_at && minutesSince(s.last_schedule_at) < SCHEDULE_REFRESH_MIN) return ''
 
-    let games: Espn.EspnGame[] = []
-    try {
-      games = await Espn.fetchCurrent()
-    } catch (e) {
-      return `C0 ESPN error: ${String(e).slice(0, 120)}`
+    let totalUpserted = 0
+    const sportNotes: string[] = []
+    for (const sport of ALL_SPORTS) {
+      let games: Espn.EspnGame[] = []
+      try {
+        // NBA + MLB are daily, so pull a wider window (a week ahead).
+        // NFL falls back to the default current-week scoreboard.
+        games = sport === 'NFL'
+          ? await Espn.fetchCurrent('NFL')
+          : await Espn.fetchUpcoming(sport, 7)
+      } catch (e) {
+        sportNotes.push(`${sport} ESPN err`)
+        continue
+      }
+
+      let upserted = 0
+      for (const g of games) {
+        if (!TEAM_SET[sport].has(g.home_team) || !TEAM_SET[sport].has(g.away_team)) continue
+        await this.db.query(
+          `INSERT INTO ceelo_games
+             (espn_id, sport, season, week, season_type, home_team, away_team, kickoff_at,
+              status, home_score, away_score, neutral_site, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+           ON CONFLICT (espn_id) DO UPDATE
+             SET status=EXCLUDED.status,
+                 home_score=EXCLUDED.home_score,
+                 away_score=EXCLUDED.away_score,
+                 kickoff_at=EXCLUDED.kickoff_at,
+                 sport=EXCLUDED.sport,
+                 updated_at=NOW()`,
+          [g.espn_id, sport, g.season, g.week, g.season_type, g.home_team, g.away_team,
+           g.kickoff_at, g.status, g.home_score, g.away_score, g.neutral_site]
+        )
+        upserted++
+      }
+      totalUpserted += upserted
+      if (upserted > 0) sportNotes.push(`${sport} ${upserted}`)
     }
 
-    let upserted = 0
-    for (const g of games) {
-      // Sanity: only ingest games where both teams normalized to known abbrs.
-      if (!NFL_TEAMS.has(g.home_team) || !NFL_TEAMS.has(g.away_team)) continue
-      await this.db.query(
-        `INSERT INTO ceelo_games
-           (espn_id, season, week, season_type, home_team, away_team, kickoff_at,
-            status, home_score, away_score, neutral_site, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
-         ON CONFLICT (espn_id) DO UPDATE
-           SET status=EXCLUDED.status,
-               home_score=EXCLUDED.home_score,
-               away_score=EXCLUDED.away_score,
-               kickoff_at=EXCLUDED.kickoff_at,
-               updated_at=NOW()`,
-        [g.espn_id, g.season, g.week, g.season_type, g.home_team, g.away_team,
-         g.kickoff_at, g.status, g.home_score, g.away_score, g.neutral_site]
-      )
-      upserted++
-    }
-
-    await this.db.query(
-      `UPDATE ceelo_state SET last_schedule_at=NOW() WHERE id=1`
-    )
-    return upserted > 0 ? `C0 ${upserted} games` : 'C0 no games'
+    await this.db.query(`UPDATE ceelo_state SET last_schedule_at=NOW() WHERE id=1`)
+    return totalUpserted > 0 ? `C0 ${sportNotes.join(' ')}` : 'C0 no games'
   }
 
   // ── C0b: refresh injury report (≤ once per 12h, per team) ───────────────
@@ -254,7 +276,7 @@ export class CeeloLoop {
 
   private async c1_gradeFinals(): Promise<string> {
     const { rows } = await this.db.query(
-      `SELECT id, home_team, away_team, home_score, away_score, neutral_site, kickoff_at
+      `SELECT id, sport, home_team, away_team, home_score, away_score, neutral_site, kickoff_at
        FROM ceelo_games
        WHERE status='final'
          AND graded_at IS NULL
@@ -267,17 +289,19 @@ export class CeeloLoop {
 
     let graded = 0
     for (const g of rows) {
-      const homeR = await this.getRating(g.home_team)
-      const awayR = await this.getRating(g.away_team)
+      const sport: Sport = (g.sport as Sport) ?? 'NFL'
+      const homeR = await this.getRating(sport, g.home_team)
+      const awayR = await this.getRating(sport, g.away_team)
       const upd = applyGame({
         homeRating: homeR,
         awayRating: awayR,
         homeScore: Number(g.home_score),
         awayScore: Number(g.away_score),
         neutralSite: Boolean(g.neutral_site),
+        sport,
       })
-      await this.upsertRating(g.home_team, upd.homeNew, g.kickoff_at)
-      await this.upsertRating(g.away_team, upd.awayNew, g.kickoff_at)
+      await this.upsertRating(sport, g.home_team, upd.homeNew, g.kickoff_at)
+      await this.upsertRating(sport, g.away_team, upd.awayNew, g.kickoff_at)
       await this.db.query(
         `UPDATE ceelo_games SET graded_at=NOW(), updated_at=NOW() WHERE id=$1`,
         [g.id]
@@ -296,64 +320,72 @@ export class CeeloLoop {
     const { rows: [s] } = await this.db.query('SELECT last_lines_at FROM ceelo_state WHERE id=1')
     if (s?.last_lines_at && minutesSince(s.last_lines_at) < ODDS_REFRESH_MIN) return ''
 
-    const lines = await Odds.fetchNflLines()
-    let stored = 0
-    for (const l of lines) {
-      // Match on (home, away, kickoff) since the Odds API doesn't share ESPN's id.
-      const { rows: [g] } = await this.db.query(
-        `SELECT id FROM ceelo_games
-         WHERE home_team=$1 AND away_team=$2
-           AND kickoff_at BETWEEN $3::timestamptz - INTERVAL '6 hours'
-                              AND $3::timestamptz + INTERVAL '6 hours'
-         ORDER BY ABS(EXTRACT(EPOCH FROM (kickoff_at - $3::timestamptz)))
-         LIMIT 1`,
-        [l.home_team, l.away_team, l.kickoff_at]
-      )
-      if (!g) continue
-      await this.db.query(
-        `INSERT INTO ceelo_lines
-           (game_id, book, market, home_line, total_line,
-            home_odds, away_odds, over_odds, under_odds, fetched_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-        [g.id, l.book, l.market, l.home_line, l.total_line,
-         l.home_odds, l.away_odds, l.over_odds, l.under_odds]
-      )
-      stored++
+    let totalStored = 0
+    const sportNotes: string[] = []
+    for (const sport of ALL_SPORTS) {
+      const lines = await Odds.fetchLines(sport).catch(() => [] as Odds.BookLine[])
+      let stored = 0
+      for (const l of lines) {
+        const { rows: [g] } = await this.db.query(
+          `SELECT id FROM ceelo_games
+           WHERE sport=$1 AND home_team=$2 AND away_team=$3
+             AND kickoff_at BETWEEN $4::timestamptz - INTERVAL '6 hours'
+                                AND $4::timestamptz + INTERVAL '6 hours'
+           ORDER BY ABS(EXTRACT(EPOCH FROM (kickoff_at - $4::timestamptz)))
+           LIMIT 1`,
+          [sport, l.home_team, l.away_team, l.kickoff_at]
+        )
+        if (!g) continue
+        await this.db.query(
+          `INSERT INTO ceelo_lines
+             (game_id, sport, book, market, home_line, total_line,
+              home_odds, away_odds, over_odds, under_odds, fetched_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+          [g.id, sport, l.book, l.market, l.home_line, l.total_line,
+           l.home_odds, l.away_odds, l.over_odds, l.under_odds]
+        )
+        stored++
+      }
+      totalStored += stored
+      if (stored > 0) sportNotes.push(`${sport} ${stored}`)
     }
     await this.db.query(`UPDATE ceelo_state SET last_lines_at=NOW() WHERE id=1`)
-    return stored > 0 ? `C2 ${stored} lines` : ''
+    return totalStored > 0 ? `C2 ${sportNotes.join(' ')}` : ''
   }
 
   // ── C3: compute model lines for upcoming games ──────────────────────────
 
   private async c3_computeModelLines(): Promise<string> {
     const { rows } = await this.db.query(
-      `SELECT id, home_team, away_team, neutral_site
+      `SELECT id, sport, home_team, away_team, neutral_site
        FROM ceelo_games
        WHERE status='scheduled'
          AND kickoff_at > NOW()
          AND kickoff_at < NOW() + INTERVAL '14 days'
-       ORDER BY kickoff_at ASC LIMIT 64`
+       ORDER BY kickoff_at ASC LIMIT 200`
     )
     if (!rows.length) return ''
 
     let computed = 0
     for (const g of rows) {
-      const homeR = await this.getRating(g.home_team)
-      const awayR = await this.getRating(g.away_team)
+      const sport: Sport = (g.sport as Sport) ?? 'NFL'
+      const homeR = await this.getRating(sport, g.home_team)
+      const awayR = await this.getRating(sport, g.away_team)
       const m = modelLine({
         homeRating: homeR,
         awayRating: awayR,
         neutralSite: Boolean(g.neutral_site),
+        sport,
       })
       await this.db.query(
-        `INSERT INTO ceelo_model_lines (game_id, model_spread, model_home_prob, computed_at)
-         VALUES ($1,$2,$3,NOW())
+        `INSERT INTO ceelo_model_lines (game_id, sport, model_spread, model_home_prob, computed_at)
+         VALUES ($1,$2,$3,$4,NOW())
          ON CONFLICT (game_id) DO UPDATE
            SET model_spread=EXCLUDED.model_spread,
                model_home_prob=EXCLUDED.model_home_prob,
+               sport=EXCLUDED.sport,
                computed_at=NOW()`,
-        [g.id, m.modelSpread, m.modelHomeProb]
+        [g.id, sport, m.modelSpread, m.modelHomeProb]
       )
       computed++
     }
@@ -365,7 +397,8 @@ export class CeeloLoop {
   private async c4_emitPicks(): Promise<string> {
     if (!Odds.isConfigured()) return ''   // can't gate without market lines
 
-    // Latest spread per (game, book), joined with model line.
+    // Latest spread per (game, book), joined with model line. Sport flows
+    // through from ceelo_games so we can apply per-sport edge thresholds.
     const { rows } = await this.db.query(
       `WITH latest AS (
          SELECT DISTINCT ON (game_id, book)
@@ -374,7 +407,7 @@ export class CeeloLoop {
          WHERE market='spread' AND home_line IS NOT NULL
          ORDER BY game_id, book, fetched_at DESC
        )
-       SELECT g.id AS game_id, g.home_team, g.away_team, g.kickoff_at,
+       SELECT g.id AS game_id, g.sport, g.home_team, g.away_team, g.kickoff_at,
               m.model_spread, m.model_home_prob,
               l.book, l.home_line AS book_spread
        FROM ceelo_games g
@@ -386,10 +419,12 @@ export class CeeloLoop {
 
     let inserted = 0
     for (const r of rows) {
+      const sport: Sport = (r.sport as Sport) ?? 'NFL'
       const model = Number(r.model_spread)
       const book  = Number(r.book_spread)
       const edge  = +(book - model).toFixed(2)   // positive ⇒ home undervalued ⇒ take HOME
-      if (Math.abs(edge) < EDGE_THRESHOLD_PTS) continue
+      const threshold = EDGE_PT_BY_SPORT[sport]
+      if (Math.abs(edge) < threshold) continue
 
       const takeHome = edge > 0
       const side = takeHome
@@ -397,7 +432,6 @@ export class CeeloLoop {
         : `${r.away_team} ${fmtSpread(-book)}`
       const game_label = `${r.away_team} @ ${r.home_team}`
 
-      // Skip if we already have an open pick on this exact game/market/side.
       const dup = await this.db.query(
         `SELECT 1 FROM ceelo_picks
          WHERE game_id=$1 AND market='spread' AND side=$2 AND status IN ('open','taken')
@@ -406,7 +440,9 @@ export class CeeloLoop {
       )
       if (dup.rows.length > 0) continue
 
-      const conf = Math.abs(edge) >= 2.5 ? 'high' : Math.abs(edge) >= 1.5 ? 'medium' : 'low'
+      const conf = Math.abs(edge) >= 2.5 * threshold ? 'high'
+                 : Math.abs(edge) >= 1.5 * threshold ? 'medium'
+                 : 'low'
       const reasoning = `Model ${fmtSpread(model)} (home), book ${fmtSpread(book)} from ${r.book}. Edge ${Math.abs(edge).toFixed(1)} pts toward ${takeHome ? 'home' : 'away'}.`
 
       await this.db.query(
@@ -415,9 +451,9 @@ export class CeeloLoop {
             model_prob, model_spread, book_spread, book_name,
             edge_points, fair_line, min_odds, edge_pct,
             reasoning, confidence, status, source)
-         VALUES ('NFL',$1,$2,$3,'spread',$4,$5,$6,$7,$8,$9,$10,-110,NULL,$11,$12,'open','model')`,
+         VALUES ($1,$2,$3,$4,'spread',$5,$6,$7,$8,$9,$10,$11,-110,NULL,$12,$13,'open','model')`,
         [
-          r.game_id, game_label, r.kickoff_at, side,
+          sport, r.game_id, game_label, r.kickoff_at, side,
           takeHome ? Number(r.model_home_prob) : +(1 - Number(r.model_home_prob)).toFixed(3),
           model, book, r.book, Math.abs(edge),
           fmtSpread(model), reasoning, conf,
@@ -485,9 +521,9 @@ export class CeeloLoop {
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
     const [topRated, openPicks, status, keyInjuries, epaTop, epaBottom, epaSeasonInfo] = await Promise.all([
       this.db.query(
-        `SELECT team, rating, games_played FROM ceelo_team_ratings
+        `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
          WHERE games_played > 0
-         ORDER BY rating DESC LIMIT 8`
+         ORDER BY rating DESC LIMIT 12`
       ),
       this.db.query(
         `SELECT game_label, market, side, model_spread, book_spread, edge_points, confidence
@@ -559,10 +595,10 @@ export class CeeloLoop {
     ])
 
     const topRatedStr = topRated.rows.length
-      ? topRated.rows.map((r: { team: string; rating: string; games_played: number }) =>
-          `${r.team} ${Number(r.rating).toFixed(0)} (${r.games_played}g)`
+      ? topRated.rows.map((r: { sport: string; team: string; rating: string; games_played: number }) =>
+          `${r.sport ?? 'NFL'}/${r.team} ${Number(r.rating).toFixed(0)} (${r.games_played}g)`
         ).join(', ')
-      : '(none yet — Elo cold-start)'
+      : '(none yet — Elo cold-start across all sports)'
     const openPicksStr = openPicks.rows.length
       ? openPicks.rows.map((p: { game_label: string; side: string; model_spread: string | null; book_spread: string | null; edge_points: string | null; confidence: string }) => {
           const m = p.model_spread != null ? Number(p.model_spread).toFixed(1) : '?'
@@ -682,23 +718,23 @@ Your reply only — no name prefix, no quotes.`
 
   // ── helpers ──────────────────────────────────────────────────────────────
 
-  private async getRating(team: string): Promise<number> {
+  private async getRating(sport: Sport, team: string): Promise<number> {
     const { rows: [r] } = await this.db.query(
-      `SELECT rating FROM ceelo_team_ratings WHERE team=$1`, [team]
+      `SELECT rating FROM ceelo_team_ratings WHERE sport=$1 AND team=$2`, [sport, team]
     )
     return r ? Number(r.rating) : DEFAULT_RATING
   }
 
-  private async upsertRating(team: string, rating: number, lastGameAt: string): Promise<void> {
+  private async upsertRating(sport: Sport, team: string, rating: number, lastGameAt: string): Promise<void> {
     await this.db.query(
-      `INSERT INTO ceelo_team_ratings (team, rating, games_played, last_game_at, updated_at)
-       VALUES ($1,$2,1,$3,NOW())
-       ON CONFLICT (team) DO UPDATE
+      `INSERT INTO ceelo_team_ratings (sport, team, rating, games_played, last_game_at, updated_at)
+       VALUES ($1,$2,$3,1,$4,NOW())
+       ON CONFLICT (sport, team) DO UPDATE
          SET rating=EXCLUDED.rating,
              games_played=ceelo_team_ratings.games_played + 1,
              last_game_at=GREATEST(ceelo_team_ratings.last_game_at, EXCLUDED.last_game_at),
              updated_at=NOW()`,
-      [team, rating, lastGameAt]
+      [sport, team, rating, lastGameAt]
     )
   }
 }

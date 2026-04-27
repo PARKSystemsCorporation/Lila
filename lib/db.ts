@@ -526,6 +526,39 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_ceelo_lines_game ON ceelo_lines(game_id, market, fetched_at DESC);
 
+    -- ── Multi-sport migration ─────────────────────────────────────────────
+    -- Default everything existing to 'NFL' (only sport before this change).
+    -- ceelo_team_ratings.team was the PK; with NBA + MLB, abbrs collide
+    -- (LAC = Chargers AND Clippers) so PK becomes (sport, team).
+    ALTER TABLE ceelo_games        ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
+    ALTER TABLE ceelo_team_ratings ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
+    ALTER TABLE ceelo_model_lines  ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
+    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
+
+    -- Public betting % from a future scrape source (covers / sbr). Stored
+    -- per-line so each fetch can update; null until the scraper lands.
+    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS public_bets_pct  NUMERIC(5,2);
+    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS public_money_pct NUMERIC(5,2);
+    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS public_side      TEXT;        -- 'home' | 'away'
+    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS open_home_line   NUMERIC(6,2);
+
+    -- Rebuild the team-ratings PK as composite (sport, team).
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ceelo_team_ratings_pkey'
+          AND conrelid = 'ceelo_team_ratings'::regclass
+      ) THEN
+        ALTER TABLE ceelo_team_ratings DROP CONSTRAINT ceelo_team_ratings_pkey;
+        ALTER TABLE ceelo_team_ratings ADD PRIMARY KEY (sport, team);
+      END IF;
+    EXCEPTION WHEN others THEN NULL;
+    END $$;
+
+    CREATE INDEX IF NOT EXISTS idx_ceelo_games_sport_kickoff
+      ON ceelo_games(sport, kickoff_at);
+
     -- Migrations: link picks to games + carry the math behind each pick.
     ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS game_id        INTEGER REFERENCES ceelo_games(id) ON DELETE SET NULL;
     ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_spread   NUMERIC(5,2);
