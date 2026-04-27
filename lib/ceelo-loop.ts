@@ -75,6 +75,7 @@ export class CeeloLoop {
     try { note(await this.c0_refreshSchedule()) }                     catch (e) { warned = true; note(`C0 ${err(e)}`) }
     try { note(await this.c0b_refreshInjuries()) }                    catch (e) { warned = true; note(`C0b ${err(e)}`) }
     try { note(await this.c0c_autoSeed()) }                           catch (e) { warned = true; note(`C0c ${err(e)}`) }
+    try { note(await this.c0d_refreshRosters()) }                     catch (e) { warned = true; note(`C0d ${err(e)}`) }
     try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
     try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
     try { note(await this.c3_computeModelLines()) }                   catch (e) { warned = true; note(`C3 ${err(e)}`) }
@@ -177,6 +178,54 @@ export class CeeloLoop {
     }
     await this.db.query(`UPDATE ceelo_state SET last_injury_at=NOW() WHERE id=1`)
     return total > 0 ? `C0b ${total} injuries` : ''
+  }
+
+  // ── C0d: refresh rosters (≤ once per 7 days, per team) ──────────────────
+
+  private async c0d_refreshRosters(): Promise<string> {
+    const { rows: [s] } = await this.db.query('SELECT last_roster_at FROM ceelo_state WHERE id=1')
+    if (s?.last_roster_at && minutesSince(s.last_roster_at) < 7 * 24 * 60) return ''
+
+    // Refresh teams with upcoming games first; if nothing scheduled, hit
+    // all 32 (offseason rosters are still useful for chat answers).
+    const { rows: teamRows } = await this.db.query(
+      `SELECT DISTINCT t FROM (
+         SELECT home_team AS t FROM ceelo_games
+         WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '21 days'
+         UNION
+         SELECT away_team AS t FROM ceelo_games
+         WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '21 days'
+       ) x`
+    )
+    const teams: string[] = teamRows.length
+      ? teamRows.map((r: { t: string }) => r.t).filter(Boolean)
+      : Array.from(NFL_TEAMS)
+
+    let total = 0
+    for (const team of teams) {
+      const list = await Espn.fetchTeamRoster(team).catch(() => [] as Espn.RosterEntry[])
+      if (!list.length) continue
+      // Wipe team's existing roster, then insert fresh.
+      await this.db.query(`DELETE FROM ceelo_rosters WHERE team=$1`, [team])
+      for (const r of list) {
+        await this.db.query(
+          `INSERT INTO ceelo_rosters (team, player, position, jersey, height, weight, experience, college, fetched_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+           ON CONFLICT (team, player) DO UPDATE
+             SET position=EXCLUDED.position,
+                 jersey=EXCLUDED.jersey,
+                 height=EXCLUDED.height,
+                 weight=EXCLUDED.weight,
+                 experience=EXCLUDED.experience,
+                 college=EXCLUDED.college,
+                 fetched_at=NOW()`,
+          [r.team, r.player, r.position, r.jersey, r.height, r.weight, r.experience, r.college]
+        )
+        total++
+      }
+    }
+    await this.db.query(`UPDATE ceelo_state SET last_roster_at=NOW() WHERE id=1`)
+    return total > 0 ? `C0d ${total} roster` : ''
   }
 
   // ── C0c: auto-seed historical data if empty ─────────────────────────────
@@ -450,7 +499,14 @@ export class CeeloLoop {
         `SELECT cycle,
                 (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
                 (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming,
-                (SELECT COUNT(*) FROM ceelo_injuries WHERE status IN ('Out','Doubtful','IR')) AS hurt
+                (SELECT COUNT(*) FROM ceelo_injuries WHERE status IN ('Out','Doubtful','IR')) AS hurt,
+                (SELECT COUNT(*) FROM ceelo_games WHERE status='final' AND closing_spread IS NOT NULL) AS historical_with_lines,
+                (SELECT COUNT(*) FROM ceelo_games WHERE status='final' AND graded_at IS NOT NULL) AS historical_graded,
+                (SELECT MIN(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS oldest_season,
+                (SELECT MAX(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS newest_season,
+                (SELECT COUNT(*) FROM ceelo_rosters) AS rostered_players,
+                (SELECT COUNT(DISTINCT team) FROM ceelo_rosters) AS rostered_teams,
+                (SELECT COUNT(*) FROM ceelo_lines) AS live_book_lines
          FROM ceelo_state WHERE id=1`
       ),
       // Surface key injuries — Out / Doubtful / IR — for teams with upcoming games.
@@ -502,21 +558,40 @@ export class CeeloLoop {
         ).join('\n  ')
       : '(no key injuries on tracked teams)'
 
+    const oldestSeason = s.oldest_season != null ? Number(s.oldest_season) : null
+    const newestSeason = s.newest_season != null ? Number(s.newest_season) : null
+    const seasonRange = oldestSeason && newestSeason
+      ? (oldestSeason === newestSeason ? `${oldestSeason}` : `${oldestSeason}-${newestSeason}`)
+      : 'none'
+
     const prompt = `You are Ceelo, the NFL handicapper on Lila's team. The operator is talking to you one-on-one.
 
-Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. If they ask something you can't answer from the model, say so directly.
+Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. Be CONFIDENT about what you have — don't undersell. Only say you're missing data if it's literally not in the inventory below.
 
-CURRENT MODEL STATE:
+DATA YOU ACTUALLY HAVE (use it — these are real, queried just now):
+- 32-team Elo ratings: ${Number(s.rated ?? 0)}/32 walked from real completed games (regular + postseason).
+- Historical games graded: ${Number(s.historical_graded ?? 0)} across seasons ${seasonRange}.
+- Historical closing spreads + closing totals: ${Number(s.historical_with_lines ?? 0)} games. (Source: nflverse — same dataset 538 / professional shops use.) These ARE the historical Vegas lines.
+- Current schedule + final scores from ESPN (refreshed hourly).
+- Current rosters: ${Number(s.rostered_players ?? 0)} players across ${Number(s.rostered_teams ?? 0)} teams (ESPN, refreshed weekly).
+- Active injury reports: ${Number(s.hurt ?? 0)} Out/Doubtful/IR/PUP entries on tracked teams.
+- Live book lines for upcoming games: ${Number(s.live_book_lines ?? 0)} entries (${Odds.isConfigured() ? 'Odds API ENGAGED — edge gate active' : 'Odds API NOT engaged — no live book lines, edge gate dark'}).
+- Model-derived spread + win-prob per upcoming game (computed each cycle from the Elo ratings).
+
+DATA YOU DO NOT HAVE (don't pretend you do):
+- Play-by-play / EPA-level data. (Could be added via nflverse pbp parquet later.)
+- Depth chart starter ranks. (Have rosters but not depth order.)
+- Coaching tendencies, weather forecasts, ref crews. (Not ingested.)
+
+CURRENT STATE:
 - Loop cycle: ${Number(s.cycle ?? 0)}
-- Rated teams: ${Number(s.rated ?? 0)}/32 (Elo-walked from real game results)
-- Upcoming games tracked: ${Number(s.upcoming ?? 0)}
 - Top-rated right now: ${topRatedStr}
 - Open picks (model-driven, sorted by edge):
   ${openPicksStr}
-- Key injuries (Out / Doubtful / IR / PUP) on tracked teams:
+- Key injuries on tracked teams:
   ${injuryStr}
-- Live book lines: ${Odds.isConfigured() ? 'engaged (Odds API key present)' : 'NOT engaged — no Odds API key, so the edge gate is dark'}
-- Historical seed: ${Number(s.rated ?? 0) > 0 ? 'ratings are seeded from completed seasons' : 'NO HISTORICAL SEED — operator should hit /api/ceelo/seed'}
+
+When the operator asks "what do you see" or "what do you have", answer concretely from the data inventory above. Don't say "I don't have data" when you have ratings + historical lines + rosters + injuries + a model — that's a complete handicapping kit. Be honest about what's missing (play-by-play, depth charts) but don't sandbag what you have.
 
 CONVERSATION:
 ${transcript}

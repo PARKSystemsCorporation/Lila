@@ -50,6 +50,55 @@ export async function fetchTeamInjuries(team: string): Promise<InjuryEntry[]> {
   return out
 }
 
+export interface RosterEntry {
+  team: string
+  player: string
+  position: string | null
+  jersey: string | null
+  height: string | null
+  weight: string | null
+  experience: number | null
+  college: string | null
+}
+
+// Pull current roster for a single team. Free + no-auth. Returns the
+// active 53 (plus practice squad / IR slots ESPN includes).
+export async function fetchTeamRoster(team: string): Promise<RosterEntry[]> {
+  const id = ESPN_TEAM_ID[team]
+  if (!id) return []
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${id}/roster`
+  const res = await fetch(url, { headers: { 'user-agent': 'Lila/Ceelo' } })
+  if (!res.ok) return []
+  const json = await res.json()
+  // ESPN groups by position bucket: { athletes: [{ position, items: [...] }, ...] }
+  const groups: unknown[] = Array.isArray(json?.athletes) ? json.athletes : []
+
+  const out: RosterEntry[] = []
+  for (const groupRaw of groups) {
+    const grp = groupRaw as Record<string, unknown>
+    const items: unknown[] = Array.isArray(grp.items) ? (grp.items as unknown[]) : []
+    for (const itRaw of items) {
+      const it = itRaw as Record<string, unknown>
+      const player = (it.displayName as string) ?? (it.fullName as string) ?? ''
+      if (!player) continue
+      const pos  = ((it.position as Record<string, unknown>)?.abbreviation as string) ?? null
+      const exp  = (it.experience as Record<string, unknown> | undefined)?.years
+      const college = ((it.college as Record<string, unknown>)?.name as string) ?? null
+      out.push({
+        team,
+        player,
+        position: pos,
+        jersey:   (it.jersey as string) ?? null,
+        height:   (it.displayHeight as string) ?? null,
+        weight:   (it.displayWeight as string) ?? null,
+        experience: typeof exp === 'number' ? exp : null,
+        college,
+      })
+    }
+  }
+  return out
+}
+
 // ESPN's public scoreboard endpoint. Free, no auth, JSON.
 //   https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard
 //

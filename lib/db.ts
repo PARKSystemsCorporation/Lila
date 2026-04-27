@@ -345,6 +345,25 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       graded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Current-season rosters. Refreshed weekly via ESPN's per-team endpoint.
+    -- One row per (team, player). Stale players get pruned when a fresh
+    -- fetch overwrites the team list.
+    CREATE TABLE IF NOT EXISTS ceelo_rosters (
+      id           SERIAL      PRIMARY KEY,
+      team         TEXT        NOT NULL,
+      player       TEXT        NOT NULL,
+      position     TEXT,
+      jersey       TEXT,
+      height       TEXT,
+      weight       TEXT,
+      experience   INTEGER,
+      college      TEXT,
+      fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (team, player)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_rosters_team ON ceelo_rosters(team, position);
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_roster_at TIMESTAMPTZ;
+
     -- Injury report snapshot. Refreshed daily via ESPN's per-team endpoint.
     -- We dedupe on (team, player) and keep the latest status; a fresh fetch
     -- replaces older rows for that team.

@@ -2667,6 +2667,39 @@ function TradingTab({ visible }: { visible: boolean }) {
     return { timestamps, values }
   }, [data?.dailyClosedPnl])
 
+  // Paper-mode equity curve: starts at paperBankroll, walks with cumulative
+  // realized P&L. We synthesize this client-side instead of using Alpaca's
+  // portfolio_history (which is anchored to the $100k paper-account default
+  // and shows nonsense numbers like $99,620 for our $100 working bankroll).
+  const paperEquityCurve = useMemo(() => {
+    const bankroll = data?.paperBankroll ?? 100
+    if (!data?.dailyClosedPnl?.length) {
+      // No closed trades yet — flat line at the bankroll for the last 30 days.
+      const now = Math.floor(Date.now() / 1000)
+      return {
+        timestamps: [now - 30 * 86400, now],
+        values:    [bankroll, bankroll],
+      }
+    }
+    let cum = 0
+    const timestamps: number[] = []
+    const values: number[] = []
+    // Anchor point: bankroll at the day before the first closed trade.
+    const firstDay = new Date(data.dailyClosedPnl[0].date + 'T00:00:00Z').getTime() / 1000
+    timestamps.push(Math.floor(firstDay - 86400))
+    values.push(+bankroll.toFixed(2))
+    for (const d of data.dailyClosedPnl) {
+      cum += d.pnl
+      const t = Math.floor(new Date(d.date + 'T00:00:00Z').getTime() / 1000)
+      timestamps.push(t)
+      values.push(+(bankroll + cum).toFixed(2))
+    }
+    // Trail with a "now" point so the line runs to the current moment.
+    timestamps.push(Math.floor(Date.now() / 1000))
+    values.push(+(bankroll + cum).toFixed(2))
+    return { timestamps, values }
+  }, [data?.dailyClosedPnl, data?.paperBankroll])
+
   const totalRealized = cumulativePnl.values.length ? cumulativePnl.values[cumulativePnl.values.length - 1] : 0
   const winRate = useMemo(() => {
     if (!data?.closedTrades.length) return null
@@ -2754,8 +2787,8 @@ function TradingTab({ visible }: { visible: boolean }) {
                 </div>
               </div>
               <EquityChart
-                timestamps={data.portfolioHistory?.timestamp ?? []}
-                values={data.portfolioHistory?.equity ?? []}
+                timestamps={isPaper ? paperEquityCurve.timestamps : (data.portfolioHistory?.timestamp ?? [])}
+                values={isPaper     ? paperEquityCurve.values     : (data.portfolioHistory?.equity    ?? [])}
                 color={dayPl >= 0 ? '#10b981' : '#ef4444'}
               />
             </div>
