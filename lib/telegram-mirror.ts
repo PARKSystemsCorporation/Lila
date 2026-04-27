@@ -39,6 +39,7 @@ export async function mirrorLilaToTelegram(db: PoolClient): Promise<MirrorResult
     `SELECT id, content
      FROM chat_messages
      WHERE thread='main' AND sender='lila'
+       AND kind='message'
        AND mirrored_at IS NULL
        AND created_at >= $1
      ORDER BY id ASC LIMIT 5`,

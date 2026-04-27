@@ -197,7 +197,7 @@ export class AnalystLoop {
       ? `Cycle ${cycle + 1} complete — ${queued} pick${queued > 1 ? 's' : ''} queued for Lila.`
       : `Cycle ${cycle + 1} complete — no trades this cycle.`
 
-    await this.chat('analyst', msg)
+    await this.chat('analyst', msg, 'status')
 
     // Mirror new picks to Telegram. Log success AND failure so the
     // operator can see what happened from the Activity log on Dash.
@@ -271,7 +271,7 @@ export class AnalystLoop {
       150
     )
     await this.note(`analyst/pnl/${today()}-analysis.md`, `# P&L ${today()}\n\n${analysis}\n\n## Positions\n${posStr}`)
-    await this.chat('analyst', `Maintenance P&L: ${analysis}`)
+    await this.chat('analyst', `Maintenance P&L: ${analysis}`, 'status')
     return `P&L sent to Lila. Trading total: $${totalPnl.toFixed(2)}.`
   }
 
@@ -305,8 +305,12 @@ export class AnalystLoop {
     )
   }
 
-  async chat(sender: string, content: string): Promise<void> {
-    await this.db.query('INSERT INTO chat_messages (sender, content) VALUES ($1,$2)', [sender, content])
+  // kind: 'message' (chat-visible) | 'status' (work update, hidden from Chat)
+  async chat(sender: string, content: string, kind: 'message' | 'status' = 'message'): Promise<void> {
+    await this.db.query(
+      `INSERT INTO chat_messages (sender, content, kind) VALUES ($1,$2,$3)`,
+      [sender, content, kind]
+    )
   }
 }
 

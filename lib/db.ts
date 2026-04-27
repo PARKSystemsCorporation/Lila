@@ -87,7 +87,25 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     -- have been pushed back to Telegram so we don't double-send.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS via          TEXT;
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS mirrored_at  TIMESTAMPTZ;
+    -- 'kind' separates true conversational messages from agent status posts
+    -- and system alerts. The Chat tab only renders kind='message' so the
+    -- conversation isn't drowned in cycle-completion / earnings rollups.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind         TEXT NOT NULL DEFAULT 'message';
+    -- Backfill: tag obvious agent status posts and broadcast alerts in
+    -- existing rows so the Chat tab cleans up immediately on deploy.
+    UPDATE chat_messages SET kind = 'alert'
+      WHERE kind = 'message' AND content LIKE '⚠%';
+    UPDATE chat_messages SET kind = 'status'
+      WHERE kind = 'message' AND (
+            content LIKE 'Cycle %complete%'
+         OR content LIKE 'Maintenance P&L:%'
+         OR content LIKE '%queued for Lila%'
+         OR content LIKE '%task%active.%'
+         OR content LIKE 'Earned $%'
+         OR content ~ '^[A-Z]{1,3}\d ?[A-Z]?:'
+      );
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_kind ON chat_messages(thread, kind, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_mirror ON chat_messages(thread, sender, mirrored_at)
       WHERE sender='lila' AND mirrored_at IS NULL;
 

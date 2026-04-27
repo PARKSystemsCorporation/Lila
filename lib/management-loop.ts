@@ -361,7 +361,7 @@ export class ManagementLoop {
       closed > 0 ? `Cut ${closed} position${closed === 1 ? '' : 's'}.` : null,
     ].filter(Boolean).join(' ')
 
-    await this.chat('lila', summary.slice(0, 500))
+    await this.chat('lila', summary.slice(0, 500), 'status')
     return {
       logMessage: `Lila trade cycle: ${queued} queued, ${closed} closed.`,
       logType: queued + closed > 0 ? 'success' : 'info',
@@ -550,8 +550,15 @@ export class ManagementLoop {
     )
   }
 
-  private async chat(sender: string, content: string): Promise<void> {
-    await this.db.query('INSERT INTO chat_messages (sender, content) VALUES ($1,$2)', [sender, content])
+  // kind:
+  //   'message' (default) — true conversational reply, surfaces in Chat tab
+  //   'status'            — work update / log; persisted but hidden from Chat
+  //   'alert'             — system alert; hidden from Chat (shown elsewhere)
+  private async chat(sender: string, content: string, kind: 'message' | 'status' | 'alert' = 'message'): Promise<void> {
+    await this.db.query(
+      `INSERT INTO chat_messages (sender, content, kind) VALUES ($1,$2,$3)`,
+      [sender, content, kind]
+    )
   }
 }
 

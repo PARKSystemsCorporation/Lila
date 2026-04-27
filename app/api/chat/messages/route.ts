@@ -19,6 +19,7 @@ export async function GET(req: Request) {
        FROM chat_messages
        WHERE sender IN ('analyst', 'lila', 'tasker')
          AND thread = 'main'
+         AND kind   = 'message'
          AND id > $1
        ORDER BY id ASC LIMIT 30`,
       [after]

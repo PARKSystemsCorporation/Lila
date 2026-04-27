@@ -351,7 +351,7 @@ export class BroadcastLoop {
 
       const msg = `⚠ Broadcast failed — ${f.channel}: ${(f.error ?? 'unknown error').slice(0, 280)}\n[${key}]`
       await this.db.query(
-        `INSERT INTO chat_messages (sender, content) VALUES ('lila', $1)`,
+        `INSERT INTO chat_messages (sender, content, kind) VALUES ('lila', $1, 'alert')`,
         [msg]
       )
       await this.db.query(

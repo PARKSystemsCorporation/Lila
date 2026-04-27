@@ -345,7 +345,7 @@ export class TaskerLoop {
         ? `Earned $${earned}. Last paid: ${lastPaid.title} (+$${parseFloat(lastPaid.payout ?? '0').toFixed(2)}).${targetLine}`
         : `Earned $${earned}.${targetLine || ' Scanning.'}`
 
-    await this.chat('tasker', msg.slice(0, 500))
+    await this.chat('tasker', msg.slice(0, 500), 'status')
     return { logMessage: 'Status posted.', logType: 'info' }
   }
 
@@ -386,8 +386,12 @@ export class TaskerLoop {
     try { return JSON.parse(raw) } catch { return fallback }
   }
 
-  private async chat(sender: string, content: string): Promise<void> {
-    await this.db.query('INSERT INTO chat_messages (sender, content) VALUES ($1,$2)', [sender, content])
+  // kind: 'message' (chat-visible) | 'status' (work update, hidden from Chat)
+  private async chat(sender: string, content: string, kind: 'message' | 'status' = 'message'): Promise<void> {
+    await this.db.query(
+      `INSERT INTO chat_messages (sender, content, kind) VALUES ($1,$2,$3)`,
+      [sender, content, kind]
+    )
   }
 
   private async mergeTasks(incoming: string[]): Promise<void> {
