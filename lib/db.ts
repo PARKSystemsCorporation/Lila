@@ -345,6 +345,34 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       graded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Per-team-per-season EPA aggregates from nflverse play-by-play.
+    -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).
+    -- We fetch the season pbp CSV in /api/ceelo/seed, aggregate to these
+    -- columns in memory, then upsert here. This is the gold-standard
+    -- handicapping signal — what 538 / sharp shops use.
+    CREATE TABLE IF NOT EXISTS ceelo_team_epa (
+      team               TEXT        NOT NULL,
+      season             INTEGER     NOT NULL,
+      -- Offense (team has the ball)
+      epa_per_play       NUMERIC(7,4),     -- avg EPA / play (pass + run only)
+      pass_epa           NUMERIC(7,4),
+      rush_epa           NUMERIC(7,4),
+      success_rate       NUMERIC(5,4),
+      plays_offense      INTEGER,
+      -- Defense (team is on D)
+      epa_allowed        NUMERIC(7,4),
+      pass_epa_allowed   NUMERIC(7,4),
+      rush_epa_allowed   NUMERIC(7,4),
+      success_allowed    NUMERIC(5,4),
+      plays_defense      INTEGER,
+      -- Net = offense_epa - defense_epa_allowed (higher = better team)
+      net_epa            NUMERIC(7,4),
+      computed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (team, season)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_team_epa_season ON ceelo_team_epa(season, net_epa DESC);
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_epa_at TIMESTAMPTZ;
+
     -- Current-season rosters. Refreshed weekly via ESPN's per-team endpoint.
     -- One row per (team, player). Stale players get pruned when a fresh
     -- fetch overwrites the team list.

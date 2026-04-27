@@ -483,7 +483,7 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
-    const [topRated, openPicks, status, keyInjuries] = await Promise.all([
+    const [topRated, openPicks, status, keyInjuries, epaTop, epaBottom, epaSeasonInfo] = await Promise.all([
       this.db.query(
         `SELECT team, rating, games_played FROM ceelo_team_ratings
          WHERE games_played > 0
@@ -535,6 +535,27 @@ export class CeeloLoop {
            i.team
          LIMIT 12`
       ),
+      // EPA top & bottom of the most recent season we have. Net EPA per
+      // play is the headline handicapping number — these are the cleanest
+      // priors for any matchup conversation.
+      this.db.query(
+        `SELECT team, season, net_epa, epa_per_play, epa_allowed
+         FROM ceelo_team_epa
+         WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
+         ORDER BY net_epa DESC LIMIT 5`
+      ),
+      this.db.query(
+        `SELECT team, season, net_epa, epa_per_play, epa_allowed
+         FROM ceelo_team_epa
+         WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
+         ORDER BY net_epa ASC LIMIT 5`
+      ),
+      this.db.query(
+        `SELECT MAX(season) AS latest_season,
+                COUNT(DISTINCT season) AS seasons,
+                COUNT(*) AS rows
+         FROM ceelo_team_epa`
+      ),
     ])
 
     const topRatedStr = topRated.rows.length
@@ -564,6 +585,22 @@ export class CeeloLoop {
       ? (oldestSeason === newestSeason ? `${oldestSeason}` : `${oldestSeason}-${newestSeason}`)
       : 'none'
 
+    // EPA inventory + leaderboard
+    const epaMeta = epaSeasonInfo.rows[0] ?? {}
+    const epaSeasons = Number(epaMeta.seasons ?? 0)
+    const epaRows = Number(epaMeta.rows ?? 0)
+    const epaLatestSeason = epaMeta.latest_season != null ? Number(epaMeta.latest_season) : null
+    const epaTopStr = epaTop.rows.length
+      ? epaTop.rows.map((r: { team: string; net_epa: string; epa_per_play: string; epa_allowed: string }) =>
+          `${r.team} net=${signed(r.net_epa)} (off ${signed(r.epa_per_play)}, def_allowed ${signed(r.epa_allowed)})`
+        ).join('\n  ')
+      : '(no EPA data — operator should hit /api/ceelo/seed)'
+    const epaBottomStr = epaBottom.rows.length
+      ? epaBottom.rows.map((r: { team: string; net_epa: string; epa_per_play: string; epa_allowed: string }) =>
+          `${r.team} net=${signed(r.net_epa)}`
+        ).join(', ')
+      : ''
+
     const prompt = `You are Ceelo, the NFL handicapper on Lila's team. The operator is talking to you one-on-one.
 
 Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. Be CONFIDENT about what you have — don't undersell. Only say you're missing data if it's literally not in the inventory below.
@@ -572,6 +609,7 @@ DATA YOU ACTUALLY HAVE (use it — these are real, queried just now):
 - 32-team Elo ratings: ${Number(s.rated ?? 0)}/32 walked from real completed games (regular + postseason).
 - Historical games graded: ${Number(s.historical_graded ?? 0)} across seasons ${seasonRange}.
 - Historical closing spreads + closing totals: ${Number(s.historical_with_lines ?? 0)} games. (Source: nflverse — same dataset 538 / professional shops use.) These ARE the historical Vegas lines.
+- EPA / play-by-play aggregates: ${epaRows} team-season rows across ${epaSeasons} seasons${epaLatestSeason ? ` (latest ${epaLatestSeason})` : ''}. Per-team: net_epa, epa_per_play (offense), pass_epa, rush_epa, success_rate, epa_allowed (defense). This is the gold-standard handicapping signal.
 - Current schedule + final scores from ESPN (refreshed hourly).
 - Current rosters: ${Number(s.rostered_players ?? 0)} players across ${Number(s.rostered_teams ?? 0)} teams (ESPN, refreshed weekly).
 - Active injury reports: ${Number(s.hurt ?? 0)} Out/Doubtful/IR/PUP entries on tracked teams.
@@ -579,19 +617,21 @@ DATA YOU ACTUALLY HAVE (use it — these are real, queried just now):
 - Model-derived spread + win-prob per upcoming game (computed each cycle from the Elo ratings).
 
 DATA YOU DO NOT HAVE (don't pretend you do):
-- Play-by-play / EPA-level data. (Could be added via nflverse pbp parquet later.)
 - Depth chart starter ranks. (Have rosters but not depth order.)
 - Coaching tendencies, weather forecasts, ref crews. (Not ingested.)
+- In-season weekly EPA snapshots. (Have season totals; no week-by-week trend yet.)
 
 CURRENT STATE:
 - Loop cycle: ${Number(s.cycle ?? 0)}
-- Top-rated right now: ${topRatedStr}
-- Open picks (model-driven, sorted by edge):
+- Top-rated by Elo: ${topRatedStr}
+- Top-5 by net EPA${epaLatestSeason ? ` (${epaLatestSeason})` : ''}:
+  ${epaTopStr}
+${epaBottomStr ? `- Bottom-5 by net EPA: ${epaBottomStr}\n` : ''}- Open picks (model-driven, sorted by edge):
   ${openPicksStr}
 - Key injuries on tracked teams:
   ${injuryStr}
 
-When the operator asks "what do you see" or "what do you have", answer concretely from the data inventory above. Don't say "I don't have data" when you have ratings + historical lines + rosters + injuries + a model — that's a complete handicapping kit. Be honest about what's missing (play-by-play, depth charts) but don't sandbag what you have.
+When the operator asks "what do you see" or "what do you have", answer concretely from the data inventory above. Don't say "I don't have data" when you have Elo + historical lines + rosters + injuries + EPA + a model — that's a complete handicapping kit. Be honest about what's missing (depth charts, weekly EPA trend) but don't sandbag what you have.
 
 CONVERSATION:
 ${transcript}
@@ -677,6 +717,14 @@ function err(e: unknown): string {
 // Format a home spread. Negative = home favored.
 //   -3.5 → "-3.5"
 //    2.5 → "+2.5"
+// Format a numeric EPA-ish value with leading sign (and short precision).
+function signed(v: string | number | null | undefined): string {
+  if (v == null) return '?'
+  const n = typeof v === 'number' ? v : parseFloat(v)
+  if (!Number.isFinite(n)) return '?'
+  return (n >= 0 ? '+' : '') + n.toFixed(3)
+}
+
 function fmtSpread(s: number): string {
   if (s === 0) return 'PK'
   return s > 0 ? `+${s.toFixed(1)}` : s.toFixed(1)

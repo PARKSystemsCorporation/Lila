@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
 import * as Nflverse from '@/lib/ceelo/nflverse'
+import * as Pbp from '@/lib/ceelo/pbp'
 import { applyGame, DEFAULT_RATING } from '@/lib/ceelo/ratings'
 
 export const dynamic = 'force-dynamic'
@@ -74,6 +75,8 @@ export async function POST(req: Request) {
 
     let totalIngested = 0
     let totalGraded = 0
+    let totalEpaTeams = 0
+    const epaErrors: string[] = []
 
     for (const season of todo) {
       const seasonGames = all
@@ -139,10 +142,47 @@ export async function POST(req: Request) {
            SET games_in=EXCLUDED.games_in, graded_at=NOW()`,
         [season, seasonGames.length]
       )
+
+      // 4. Compute EPA aggregates from nflverse play-by-play. Skip silently
+      //    if the fetch fails (some seasons may not be released yet, and
+      //    Elo + closing lines are still useful without EPA).
+      try {
+        const aggs = await Pbp.fetchSeasonAggregates(season)
+        for (const a of aggs) {
+          await db.query(
+            `INSERT INTO ceelo_team_epa
+               (team, season, epa_per_play, pass_epa, rush_epa, success_rate, plays_offense,
+                epa_allowed, pass_epa_allowed, rush_epa_allowed, success_allowed, plays_defense,
+                net_epa, computed_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+             ON CONFLICT (team, season) DO UPDATE
+               SET epa_per_play=EXCLUDED.epa_per_play,
+                   pass_epa=EXCLUDED.pass_epa,
+                   rush_epa=EXCLUDED.rush_epa,
+                   success_rate=EXCLUDED.success_rate,
+                   plays_offense=EXCLUDED.plays_offense,
+                   epa_allowed=EXCLUDED.epa_allowed,
+                   pass_epa_allowed=EXCLUDED.pass_epa_allowed,
+                   rush_epa_allowed=EXCLUDED.rush_epa_allowed,
+                   success_allowed=EXCLUDED.success_allowed,
+                   plays_defense=EXCLUDED.plays_defense,
+                   net_epa=EXCLUDED.net_epa,
+                   computed_at=NOW()`,
+            [
+              a.team, a.season, a.epa_per_play, a.pass_epa, a.rush_epa, a.success_rate, a.plays_offense,
+              a.epa_allowed, a.pass_epa_allowed, a.rush_epa_allowed, a.success_allowed, a.plays_defense,
+              a.net_epa,
+            ]
+          )
+          totalEpaTeams++
+        }
+      } catch (e) {
+        epaErrors.push(`${season}: ${String(e).slice(0, 100)}`)
+      }
     }
 
     await db.query(
-      `UPDATE ceelo_state SET last_seed_at=NOW(), updated_at=NOW() WHERE id=1`
+      `UPDATE ceelo_state SET last_seed_at=NOW(), last_epa_at=NOW(), updated_at=NOW() WHERE id=1`
     )
 
     return NextResponse.json({
@@ -150,6 +190,8 @@ export async function POST(req: Request) {
       seasons_walked: todo,
       games_ingested: totalIngested,
       games_graded:   totalGraded,
+      epa_teams:      totalEpaTeams,
+      epa_errors:     epaErrors,
     })
   } finally { db.release() }
 }
@@ -171,8 +213,15 @@ export async function GET() {
               (EXTRACT(EPOCH FROM graded_at) * 1000)::bigint AS graded_ts
        FROM ceelo_backfill ORDER BY season DESC`
     )
+    const { rows: epa } = await db.query(
+      `SELECT season, COUNT(*) AS teams FROM ceelo_team_epa GROUP BY season ORDER BY season DESC`
+    )
     return NextResponse.json({
       ratedTeams: Number(rated[0]?.n ?? 0),
+      epaSeasons: epa.map((e: { season: number; teams: number }) => ({
+        season: Number(e.season),
+        teams:  Number(e.teams),
+      })),
       seasons: seasons.map((s: { season: number; games_in: number; graded_ts: bigint }) => ({
         season: Number(s.season),
         games_in: Number(s.games_in),
