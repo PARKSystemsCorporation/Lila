@@ -24,7 +24,7 @@ import { cfg } from './config'
 //        pending_review for Lila + log a scout_findings row.
 //        Otherwise log scout_findings as 'dismissed' so we skip next time.
 
-const SHALLOW_TRIAGE_PROMPT = `You are Scout, a high-volume security triage agent on Lila's team. Cipher does deep audits; you do FAST shallow scans for $1-5k bounties. Speed > thoroughness. Higher false-positive rate is acceptable — Lila reviews every draft before it goes out.
+const SHALLOW_TRIAGE_PROMPT = `You are Scout, a high-volume bounty hunter on Lila's team. Cipher does deep audits; you grind small wins fast. Speed > thoroughness. Higher false-positive rate is acceptable — Lila reviews every draft before it goes out. Goal: stack $50-5k payouts.
 
 Triage this target. You have ~60 seconds of model time, not 60 minutes.
 
@@ -35,26 +35,49 @@ TARGET:
   Chain:  {CHAIN}
   Scope:  {SCOPE}
 
-CHECKLIST (run through quickly, flag anything obvious):
-1. Access control — missing onlyOwner, public functions that mutate state, unprotected admin entries.
-2. Reentrancy — external calls before state writes, missing nonReentrant on payable / withdraw paths.
-3. Oracle / price manipulation — single-source price feeds, no TWAP, spot-price reads in liquidations.
-4. Integer issues — unchecked math in token amounts, rounding in shares/asset conversions.
-5. Token approvals — infinite approvals on aggregator paths, missing safeTransfer.
-6. Init / upgrade — uninitialized proxies, public initializers, missing storage gaps.
-7. Forked code drift — minor mods to a known protocol that break invariants the original relied on.
+CATEGORIES YOU CAN FLAG (any one is fair game — small wins compound):
+
+A) Security (the classic security_reports payload, $500-$5000):
+   1. Access control — missing onlyOwner, public functions that mutate state, unprotected admin entries.
+   2. Reentrancy — external calls before state writes, missing nonReentrant on payable / withdraw paths.
+   3. Oracle / price manipulation — single-source feeds, no TWAP, spot reads in liquidations.
+   4. Integer issues — unchecked math, rounding errors in shares/asset conversions.
+   5. Token approvals — infinite approvals on aggregator paths, missing safeTransfer.
+   6. Init / upgrade — uninitialized proxies, public initializers, missing storage gaps.
+   7. Forked code drift — minor mods to a known protocol that break invariants.
+
+B) Gas optimization ($50-$500 — Immunefi calls these "low-hanging fruit"):
+   8. Storage slot packing — variables declared in wrong order, wasted slots.
+   9. Redundant SLOAD — same storage var read multiple times in a function.
+   10. unchecked{} blocks missing on safe arithmetic (post-0.8 Solidity).
+   11. Public → external on functions never called internally.
+   12. immutable / constant on values set once at deploy.
+   13. Custom errors instead of revert strings.
+
+C) Quick-fix code bounties ($50-$200 — Gitcoin / Code4rena micro-tickets):
+   14. Off-by-one in loops or array indexing.
+   15. Broken require / assert messages, swapped argument order.
+   16. Stale documentation that disagrees with the implementation.
+   17. Unsanitized inputs that produce confusing errors (not a vuln, just UX).
 
 Output strict JSON:
 {
+  "category": "security" | "gas" | "code",
   "severity": "critical" | "high" | "medium" | "low" | "none",
   "summary":  "one-sentence finding (or 'no obvious issues')",
   "details":  "2-4 sentences: what + why + suggested fix. Empty if severity=none.",
   "confidence": 0.0..1.0
 }
 
-If you can't tell from the surface info alone, return severity="none" with summary="needs deeper scan — punt to Cipher". Don't fabricate findings.`
+Severity mapping rough guide:
+  - security:  critical = chain-of-funds risk, high = significant loss, medium = griefing/limited loss, low = best-practice
+  - gas:       high = >5000 gas saved per call, medium = 500-5000, low = <500
+  - code:      high = correctness bug operator-visible, medium = test-detectable defect, low = polish
+
+If you can't tell from the surface info alone, return severity="none" + summary="needs deeper scan — punt to Cipher". Don't fabricate findings — Lila will reject and your hit rate drops.`
 
 interface RawTriage {
+  category?: string
   severity?: string
   summary?: string
   details?: string
@@ -110,32 +133,37 @@ export class ScoutLoop {
       return { logMessage: `Scout triage error: ${String(e).slice(0, 120)}`, logType: 'warn' }
     }
 
+    const category = normalizeCategory(triage.category)
     const severity = normalizeSeverity(triage.severity)
     const summary = String(triage.summary ?? '').slice(0, 280).trim()
     const details = String(triage.details ?? '').slice(0, 4000).trim()
     const confidence = clamp01(triage.confidence) ?? 0.4
 
-    // S2: log + (maybe) file report.
-    const shouldReport = ['critical', 'high', 'medium'].includes(severity) && summary && details
+    // S2: log + (maybe) file report. We file gas/code low-severity too —
+    // Lila's whole point of Scout is grinding $50-$500 quick wins.
+    const minSeverity = category === 'security' ? ['critical', 'high', 'medium'] : ['high', 'medium', 'low']
+    const shouldReport = minSeverity.includes(severity) && summary && details
     let reportId: number | null = null
 
     if (shouldReport) {
+      const reportKind = category === 'security' ? 'security' : 'code'
       const { rows: [row] } = await this.db.query(
         `INSERT INTO security_reports
            (bounty_id, platform, platform_label, title, reward, chain, url,
-            content, confidence, status, source)
-         VALUES ($1, 'scout', 'Scout (volume)', $2, $3, $4, $5, $6, $7, 'pending_review', 'scout')
+            content, confidence, status, source, kind)
+         VALUES ($1, 'scout', 'Scout (volume)', $2, $3, $4, $5, $6, $7, 'pending_review', 'scout', $8)
          ON CONFLICT (bounty_id) DO UPDATE
            SET content=$6, confidence=$7, status='pending_review', updated_at=NOW()
          RETURNING id`,
         [
-          `scout:${target.id}:${severity}`,
-          `[Scout/${severity}] ${target.name}: ${summary.slice(0, 120)}`,
-          guessReward(severity),
+          `scout:${target.id}:${category}:${severity}`,
+          `[Scout/${category}/${severity}] ${target.name}: ${summary.slice(0, 100)}`,
+          guessReward(category, severity),
           target.chain ?? null,
           target.url ?? null,
-          renderReportBody(target, severity, summary, details, confidence),
+          renderReportBody(target, category, severity, summary, details, confidence),
           confidence,
+          reportKind,
         ]
       )
       reportId = Number(row.id)
@@ -238,6 +266,13 @@ function normalizeSeverity(s: string | undefined): string {
   return 'none'
 }
 
+function normalizeCategory(c: string | undefined): 'security' | 'gas' | 'code' {
+  const v = String(c ?? '').toLowerCase().trim()
+  if (v === 'gas')  return 'gas'
+  if (v === 'code') return 'code'
+  return 'security'
+}
+
 function clamp01(n: unknown): number | null {
   if (n == null || !Number.isFinite(n as number)) return null
   const v = Number(n)
@@ -246,29 +281,53 @@ function clamp01(n: unknown): number | null {
   return +v.toFixed(2)
 }
 
-// Heuristic max-bounty by severity for the security_reports.reward column.
-// Scout's targets are smaller protocols, so the brackets are tighter than
-// Cipher's deep-audit drafts.
-function guessReward(severity: string): number {
+// Heuristic max-bounty by category × severity. Scout's targets are smaller
+// protocols and tighter brackets than Cipher's deep-audit drafts.
+//   security: standard Immunefi-style brackets
+//   gas:      Immunefi "low-hanging fruit" + Code4rena gas pools, ~$50-500
+//   code:     Gitcoin / Code4rena micro-tickets, ~$50-200
+function guessReward(category: 'security' | 'gas' | 'code', severity: string): number {
+  if (category === 'security') {
+    switch (severity) {
+      case 'critical': return 5000
+      case 'high':     return 2500
+      case 'medium':   return 1000
+      case 'low':      return 250
+      default:         return 0
+    }
+  }
+  if (category === 'gas') {
+    switch (severity) {
+      case 'high':   return 500
+      case 'medium': return 200
+      case 'low':    return 75
+      default:       return 0
+    }
+  }
+  // code
   switch (severity) {
-    case 'critical': return 5000
-    case 'high':     return 2500
-    case 'medium':   return 1000
-    case 'low':      return 250
-    default:         return 0
+    case 'high':   return 200
+    case 'medium': return 100
+    case 'low':    return 50
+    default:       return 0
   }
 }
 
 function renderReportBody(
   target: TargetRow,
+  category: 'security' | 'gas' | 'code',
   severity: string,
   summary: string,
   details: string,
   confidence: number,
 ): string {
+  const kind = category === 'security' ? 'Security finding'
+             : category === 'gas'      ? 'Gas optimization'
+             : 'Quick-fix code bounty'
   return [
     `# ${target.name}`,
     '',
+    `Type: ${kind}`,
     `Severity: ${severity}`,
     `Confidence: ${(confidence * 100).toFixed(0)}%`,
     `Source: ${target.source}`,

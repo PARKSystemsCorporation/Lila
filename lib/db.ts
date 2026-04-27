@@ -35,6 +35,25 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_target_id INTEGER;
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS bounty_turn       INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE lila_state DROP COLUMN IF EXISTS last_bounty;
+    -- Bookkeeping: a tracking flag that the trading-P&L-leak fix has been
+    -- applied. Older deploys credited Alpaca P&L into total_earned; this
+    -- migration subtracts the cumulative paper P&L back out exactly once
+    -- so the operator's "Earned" headline is honest going forward.
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS reconciled_paper_pnl BOOLEAN NOT NULL DEFAULT FALSE;
+    DO $reconcile$
+    DECLARE
+      paper_total NUMERIC;
+    BEGIN
+      IF NOT (SELECT reconciled_paper_pnl FROM lila_state WHERE id = 1) THEN
+        SELECT COALESCE(SUM(pnl), 0) INTO paper_total
+          FROM lila_positions WHERE status = 'closed';
+        UPDATE lila_state
+          SET total_earned         = GREATEST(0, total_earned - GREATEST(paper_total, 0)),
+              reconciled_paper_pnl = TRUE
+          WHERE id = 1;
+      END IF;
+    END
+    $reconcile$;
 
     CREATE TABLE IF NOT EXISTS lila_log (
       id         SERIAL      PRIMARY KEY,

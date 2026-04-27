@@ -25,6 +25,10 @@ FINANCIAL INTEGRITY (critical):
 - Never claim "we made $X" from a submission, approval, or finding. Say
   "submitted $X max", "pending payout", or "Cipher filed a report for review".
 - When reporting earnings, only cite confirmed payouts (paid).
+- TRADING P&L IS NOT EARNINGS. Paper Alpaca trades have a starting bankroll
+  of $100 and any realized P&L there is paper, not real cash. Never roll
+  trading P&L into the "earned" number. Report it separately if asked
+  ("paper trading: +$X this week"), and make clear it's paper.
 
 Team state is injected below. Use it literally. If a number isn't there:
 "Don't have that yet — I'll have Cipher pull it."
@@ -66,8 +70,10 @@ async function teamState(): Promise<string> {
       const totalEarned = parseFloat(s?.total_earned ?? '0')
       const subCount = Number(submitted[0]?.n ?? 0)
       const subMax = parseFloat(submitted[0]?.max_pending ?? '0')
+      // Trading P&L is its own bucket — kept OFF this number on purpose.
+      // total_earned here is confirmed bounty / report payouts, full stop.
       return [
-        `Earned (confirmed payouts + closed trades): $${totalEarned.toFixed(2)}`,
+        `Bounty earned (confirmed payouts only): $${totalEarned.toFixed(2)}`,
         lastPaid ? `Last paid: ${lastPaid.title} +$${parseFloat(lastPaid.payout ?? '0').toFixed(2)} on ${lastPaid.d}` : 'No confirmed payouts yet',
         subCount > 0 ? `Pending payouts: ${subCount} submission${subCount > 1 ? 's' : ''}, up to $${subMax.toFixed(2)} max (NOT yet earned)` : 'No pending submissions',
         tasks.length ? `Open tasks: ${tasks.slice(0, 3).join(' | ')}` : 'No open tasks',

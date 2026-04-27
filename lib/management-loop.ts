@@ -349,9 +349,8 @@ export class ManagementLoop {
          WHERE symbol=$2 AND status='open'`,
         [pnl, a.symbol]
       )
-      if (pnl > 0) {
-        await this.db.query('UPDATE lila_state SET total_earned=total_earned+$1 WHERE id=1', [pnl])
-      }
+      // NOTE: do NOT credit lila_state.total_earned. That column is for
+      // confirmed bounty payouts only. Trading P&L stays in lila_positions.
       closed++
     }
 

@@ -67,9 +67,10 @@ export class TradingEngine {
           `UPDATE lila_positions SET status='closed', pnl=$1, closed_at=NOW() WHERE id=$2`,
           [pnl, tracked.id]
         )
-        if (hitTarget && pnl > 0) {
-          await db.query('UPDATE lila_state SET total_earned=total_earned+$1 WHERE id=1', [pnl])
-        }
+        // NOTE: do NOT credit lila_state.total_earned with this P&L. That
+        // column tracks confirmed bounty payouts only — real money the
+        // operator received. Paper / Alpaca P&L lives in lila_positions.pnl
+        // and is summed separately by the trading view + Vega briefings.
         const tag = hitTarget ? 'Target hit' : 'Stop hit'
         const sign = pnl >= 0 ? '+' : ''
         return {

@@ -2340,6 +2340,203 @@ function PortfolioCard() {
   )
 }
 
+// ─── Operator Brief ───────────────────────────────────────────────────────
+//
+// Lila's spec: one card with the four numbers we'd brief on if a partner
+// walked in cold — wallet, open positions, pending bounties, team queue.
+// No fluff. Pulls /api/brief which aggregates from lila_state +
+// security_reports + lila_positions + Alpaca + every agent's state table.
+
+interface BriefData {
+  wallet: {
+    confirmed_earned: number
+    paid_mtd: number
+    last_paid: { title: string; payout: number; on: string } | null
+  }
+  positions: {
+    paper: boolean
+    open: Array<{ symbol: string; qty: number; entry: number; pnl_pct: number }>
+    paper_realized: number
+  }
+  bounties: {
+    pending_review: number
+    approved: number
+    submitted: number
+    awaiting_payout_max: number
+  }
+  team: {
+    cipher: { step: string; cycles: number; target: string | null; last_ts: number | null } | null
+    scout:  { cycle: number; scanned: number; reported: number; last_ts: number | null } | null
+    vega:   { step: string; cycle: number; last_ts: number | null } | null
+    ceelo:  { cycle: number; rated: number; upcoming: number; last_ts: number | null } | null
+    lila:   { active_tasks: string[]; last_chat_ts: number | null }
+  }
+}
+
+function OperatorBrief({ visible, onNavigate }: {
+  visible: boolean
+  onNavigate: NavigateFn
+}) {
+  const [b, setB] = useState<BriefData | null>(null)
+
+  useEffect(() => {
+    if (!visible) return
+    const load = async () => {
+      try {
+        const res = await fetch('/api/brief')
+        if (res.ok) setB(await res.json())
+      } catch { /* ignore */ }
+    }
+    load()
+    const id = setInterval(load, 12_000)
+    return () => clearInterval(id)
+  }, [visible])
+
+  if (!b) return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-2">
+      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Operator Brief</p>
+      <p className="text-xs font-mono text-slate-700">Loading…</p>
+    </div>
+  )
+
+  const totalBountyAction = b.bounties.pending_review + b.bounties.approved + b.bounties.submitted
+
+  return (
+    <div className="rounded-2xl border border-emerald-900/50 bg-emerald-950/10 p-4 space-y-3">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[10px] font-mono text-emerald-400 uppercase tracking-widest font-semibold">Operator Brief</p>
+        <p className="text-[9px] font-mono text-slate-600">live · refreshes every 12s</p>
+      </div>
+
+      {/* 1. Wallet (real cash) */}
+      <BriefRow
+        label="Wallet"
+        primary={`$${b.wallet.confirmed_earned.toFixed(2)}`}
+        secondary={
+          b.wallet.paid_mtd > 0
+            ? `+$${b.wallet.paid_mtd.toFixed(2)} MTD${b.wallet.last_paid ? ` · last: ${b.wallet.last_paid.title.slice(0, 28)}` : ''}`
+            : 'No paid bounties yet'
+        }
+        accent="emerald"
+      />
+
+      {/* 2. Open positions (Alpaca) */}
+      <BriefRow
+        label={`Positions${b.positions.paper ? ' (paper)' : ''}`}
+        primary={b.positions.open.length === 0 ? 'Flat' : `${b.positions.open.length} open`}
+        secondary={
+          b.positions.open.length === 0
+            ? `Realized P&L ${signedDollar(b.positions.paper_realized)}`
+            : b.positions.open.map(p => `${p.symbol} ${signedPct(p.pnl_pct)}`).join(' · ')
+        }
+        accent="blue"
+        onClick={() => onNavigate({ tab: 'trading' })}
+      />
+
+      {/* 3. Pending bounty submissions */}
+      <BriefRow
+        label="Bounties"
+        primary={totalBountyAction === 0 ? 'Clear' : `${totalBountyAction} in flight`}
+        secondary={
+          totalBountyAction === 0
+            ? 'No drafts, no submissions'
+            : [
+                b.bounties.pending_review > 0 ? `${b.bounties.pending_review} for Lila review` : null,
+                b.bounties.approved       > 0 ? `${b.bounties.approved} ready to submit`    : null,
+                b.bounties.submitted      > 0 ? `${b.bounties.submitted} awaiting payout (≤ $${b.bounties.awaiting_payout_max.toFixed(0)})` : null,
+              ].filter(Boolean).join(' · ')
+        }
+        accent="amber"
+        onClick={() => onNavigate({ tab: 'library', libraryMode: 'reports' })}
+      />
+
+      {/* 4. Team task queue */}
+      <div className="border-t border-emerald-900/30 pt-2 space-y-1">
+        <p className="text-[9px] font-mono text-slate-600 tracking-widest">TEAM QUEUE</p>
+        <BriefTeamRow color="text-amber-400" who="Cipher"
+          line={b.team.cipher
+            ? `${b.team.cipher.target ? `${b.team.cipher.target.slice(0, 24)} c${b.team.cipher.cycles}` : `step ${b.team.cipher.step}`}`
+            : 'idle'}
+          ts={b.team.cipher?.last_ts ?? null}
+        />
+        <BriefTeamRow color="text-cyan-400" who="Scout"
+          line={b.team.scout
+            ? `${b.team.scout.scanned} scanned · ${b.team.scout.reported} reported`
+            : 'idle'}
+          ts={b.team.scout?.last_ts ?? null}
+        />
+        <BriefTeamRow color="text-blue-400" who="Vega"
+          line={b.team.vega
+            ? `${vegaStepLabel(b.team.vega.step)} · cycle ${b.team.vega.cycle}`
+            : 'idle'}
+          ts={b.team.vega?.last_ts ?? null}
+        />
+        <BriefTeamRow color="text-rose-400" who="Ceelo"
+          line={b.team.ceelo
+            ? `${b.team.ceelo.rated}/32 rated · ${b.team.ceelo.upcoming} upcoming`
+            : 'idle'}
+          ts={b.team.ceelo?.last_ts ?? null}
+        />
+        <BriefTeamRow color="text-emerald-400" who="Lila"
+          line={b.team.lila.active_tasks.length
+            ? b.team.lila.active_tasks.slice(0, 2).join(' · ').slice(0, 60)
+            : 'standing by'}
+          ts={b.team.lila.last_chat_ts}
+        />
+      </div>
+    </div>
+  )
+}
+
+function BriefRow({ label, primary, secondary, accent, onClick }: {
+  label: string
+  primary: string
+  secondary: string
+  accent: 'emerald' | 'blue' | 'amber'
+  onClick?: () => void
+}) {
+  const accentColor = accent === 'emerald' ? 'text-emerald-300'
+                    : accent === 'blue'    ? 'text-blue-300'
+                    : 'text-amber-300'
+  const Wrap = onClick ? 'button' : 'div'
+  return (
+    <Wrap
+      onClick={onClick}
+      className={`w-full flex items-baseline gap-3 ${onClick ? 'active:opacity-70 text-left' : ''}`}
+    >
+      <span className="text-[9px] font-mono text-slate-600 tracking-widest w-20 shrink-0">{label.toUpperCase()}</span>
+      <div className="flex-1 min-w-0">
+        <p className={`text-base font-mono font-semibold tabular-nums ${accentColor}`}>{primary}</p>
+        <p className="text-[10px] font-mono text-slate-500 truncate">{secondary}</p>
+      </div>
+      {onClick && <span className="text-slate-700 text-[10px] font-mono shrink-0">→</span>}
+    </Wrap>
+  )
+}
+
+function BriefTeamRow({ color, who, line, ts }: {
+  color: string
+  who: string
+  line: string
+  ts: number | null
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`text-[9px] font-mono font-semibold tracking-wider w-12 shrink-0 ${color}`}>{who.toUpperCase()}</span>
+      <p className="text-[10px] font-mono text-slate-300 flex-1 min-w-0 truncate">{line}</p>
+      <span className="text-[9px] font-mono text-slate-700 shrink-0 tabular-nums">{ts ? fmtAge(ts) : '—'}</span>
+    </div>
+  )
+}
+
+function signedDollar(n: number): string {
+  return `${n >= 0 ? '+' : ''}$${n.toFixed(2)}`
+}
+
+function signedPct(n: number): string {
+  return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
+}
+
 // ─── Dashboard Tab ────────────────────────────────────────────────────────────
 
 function DashTab({ data, flash, visible, financials, onNavigate }: {
@@ -2352,15 +2549,16 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
       <div className="px-4 py-5 space-y-6">
-        {/* ── Always visible: the numbers that matter right now ─────────── */}
+        {/* ── Operator Brief — the four numbers Lila and you both want at a glance ─── */}
+        <OperatorBrief visible={visible} onNavigate={onNavigate} />
 
-        {/* Earned — now means confirmed payouts + closed-trade P&L */}
+        {/* Earned — bounty payouts ONLY. Trading P&L lives in the Trades tab. */}
         <div className={`rounded-2xl border p-5 transition-colors duration-300 ${flash ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-800 bg-slate-900'}`}>
-          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Confirmed earnings</p>
+          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Bounty earnings (real cash)</p>
           <p className={`text-5xl font-bold font-mono tabular-nums transition-colors duration-300 ${flash ? 'text-emerald-300' : 'text-emerald-400'}`}>
             ${data?.totalEarned.toFixed(2) ?? '—'}
           </p>
-          <p className="text-[10px] text-slate-700 font-mono mt-2">Paid bounties + closed-trade P&L only. Submissions don't count until money arrives.</p>
+          <p className="text-[10px] text-slate-700 font-mono mt-2">Confirmed payouts only. Submissions don&rsquo;t count until money arrives. Paper trading P&amp;L is separate (see Trades tab).</p>
           {financials && (financials.pendingCount > 0 || financials.paidMtd > 0) && (
             <div className="grid grid-cols-2 gap-3 mt-4 pt-3 border-t border-slate-800">
               <div>
