@@ -10,6 +10,7 @@ import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
 import { mirrorLilaToTelegram } from './telegram-mirror'
 import { runNoonArticles } from './article-engine'
+import { runAlerts } from './alerts'
 import { runRetention } from './retention'
 import { cfg } from './config'
 
@@ -176,6 +177,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       const msg = `Noon articles filed: ${articleResult.generated.join(', ')}.`
       await logEvent(db, msg, 'success')
       logs.push(msg)
+    }
+
+    // 6c. Telegram alerts — paid bounties, ready-to-submit Scout drafts,
+    //     high-confidence Ceelo edges, meaningful trade closes. Per-row
+    //     dedup via tg_alerted_at. Silent if Telegram isn't configured.
+    const alertResult = await runAlerts(db).catch((e: unknown) => ({
+      sent: 0, failed: 0, classes: {},
+      logMessage: `Alert error: ${String(e).slice(0, 80)}`,
+      logType: 'warn' as const,
+    }))
+    if (alertResult?.logMessage) {
+      await logEvent(db, alertResult.logMessage, alertResult.logType ?? 'info')
+      logs.push(alertResult.logMessage)
     }
 
     // 7. Retention — once per 24h, trims stale log/usage/chat/broadcast rows.

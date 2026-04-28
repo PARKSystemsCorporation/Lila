@@ -4069,6 +4069,23 @@ function BankrollCard({ summary }: { summary: PicksData['summary'] }) {
 // the operator answer "is Ceelo better at NFL or NBA right now?" at a
 // glance.
 
+interface BacktestRow {
+  sport: 'NFL' | 'NBA' | 'MLB'
+  total_games: number
+  ats_wins: number | null
+  ats_losses: number | null
+  ats_pushes: number | null
+  ats_accuracy: number | null
+  edge_wins: number | null
+  edge_losses: number | null
+  edge_accuracy: number | null
+  edge_threshold: number | null
+  margin_mae: number | null
+  season_range: string | null
+  notes: string | null
+  ran_ts: number
+}
+
 function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
   // Render fixed NFL/NBA/MLB order even if the API returns them differently.
   const order: Array<'NFL' | 'NBA' | 'MLB'> = ['NFL', 'NBA', 'MLB']
@@ -4077,6 +4094,34 @@ function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
     NFL: 'text-amber-300',
     NBA: 'text-blue-300',
     MLB: 'text-emerald-300',
+  }
+
+  // Latest backtest result per sport. Loaded once + on demand.
+  const [backtests, setBacktests] = useState<Map<string, BacktestRow>>(new Map())
+  const [running, setRunning] = useState(false)
+
+  const loadBacktests = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ceelo/backtest')
+      if (!res.ok) return
+      const body = await res.json()
+      const m = new Map<string, BacktestRow>()
+      for (const r of body.results ?? []) m.set(r.sport, r as BacktestRow)
+      setBacktests(m)
+    } catch { /* ignore */ }
+  }, [])
+  useEffect(() => { loadBacktests() }, [loadBacktests])
+
+  const runBacktest = async () => {
+    if (running) return
+    if (!confirm('Run Ceelo backtest across NFL + NBA + MLB?\n\nWalks every completed game in chronological order, computing his model line BEFORE each result and grading against the actual outcome. ~30s for the full set.')) return
+    setRunning(true)
+    try {
+      const res = await fetch('/api/ceelo/backtest?sport=ALL', { method: 'POST' })
+      if (res.ok) await loadBacktests()
+      else alert(`Backtest failed (${res.status}).`)
+    } catch { alert('Backtest failed (network).') }
+    finally { setRunning(false) }
   }
 
   return (
@@ -4131,9 +4176,46 @@ function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
                     : (m.pending > 0 ? `${m.pending} pending` : 'no flags yet')}
                 </p>
               </div>
+
+              {/* Backtest stats — historical ATS on completed seasons */}
+              {(() => {
+                const bt = backtests.get(sport)
+                if (!bt) return null
+                const accVal = bt.edge_accuracy ?? bt.ats_accuracy
+                const accColor = accVal != null
+                  ? (accVal >= 55 ? 'text-emerald-300' : accVal >= 50 ? 'text-amber-300' : 'text-red-300')
+                  : 'text-slate-500'
+                const wins   = bt.edge_wins   ?? bt.ats_wins   ?? 0
+                const losses = bt.edge_losses ?? bt.ats_losses ?? 0
+                const total  = wins + losses
+                return (
+                  <div className="text-center pt-1 border-t border-slate-800/60">
+                    <p className="text-[8px] font-mono text-slate-600 tracking-widest">BACKTEST</p>
+                    <p className={`text-[11px] font-mono font-semibold tabular-nums ${accColor}`}>
+                      {accVal != null ? `${accVal.toFixed(0)}%` : (bt.margin_mae != null ? `${bt.margin_mae.toFixed(1)} MAE` : '—')}
+                    </p>
+                    <p className="text-[8px] font-mono text-slate-700 tabular-nums">
+                      {total > 0 ? `${wins}-${losses}` : `${bt.total_games} games`}
+                      {bt.season_range && bt.season_range !== 'none' ? ` · ${bt.season_range}` : ''}
+                    </p>
+                  </div>
+                )
+              })()}
             </div>
           )
         })}
+      </div>
+      <div className="px-3 py-2 border-t border-slate-800 flex items-center gap-2">
+        <button
+          onClick={runBacktest}
+          disabled={running}
+          className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-800 rounded-lg py-1.5 active:bg-slate-900 disabled:opacity-50 tracking-wider"
+        >
+          {running ? 'BACKTESTING…' : backtests.size > 0 ? 'RE-RUN BACKTEST' : 'RUN BACKTEST'}
+        </button>
+        <p className="text-[9px] font-mono text-slate-700">
+          {backtests.size > 0 ? 'historical ATS via shadow-Elo replay' : 'verify Ceelo on prior season'}
+        </p>
       </div>
     </div>
   )

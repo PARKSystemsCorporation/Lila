@@ -415,6 +415,37 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       graded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Backtest results — per-sport historical accuracy. One row per
+    -- (sport, ran_at). UI reads the most-recent row. ATS columns only
+    -- populate for sports with closing_spread data (NFL via nflverse);
+    -- margin_mae populates for all three (model spread vs actual margin).
+    CREATE TABLE IF NOT EXISTS ceelo_backtest (
+      id              SERIAL      PRIMARY KEY,
+      sport           TEXT        NOT NULL,
+      ran_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      total_games     INTEGER     NOT NULL DEFAULT 0,
+      ats_wins        INTEGER,
+      ats_losses      INTEGER,
+      ats_pushes      INTEGER,
+      ats_accuracy    NUMERIC(5,2),
+      edge_wins       INTEGER,           -- subset where |model - close| ≥ threshold
+      edge_losses     INTEGER,
+      edge_accuracy   NUMERIC(5,2),
+      edge_threshold  NUMERIC(5,2),
+      margin_mae      NUMERIC(5,2),      -- mean abs error on predicted home-margin
+      season_range    TEXT,
+      notes           TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_backtest_sport_ran ON ceelo_backtest(sport, ran_at DESC);
+
+    -- Telegram alert dedup — stamped when a row's first
+    -- alert-eligible state change has been pushed to the operator's
+    -- chat. NULL = never alerted. Schema additions only; alert worker
+    -- decides which transitions deserve a ping.
+    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
+    ALTER TABLE ceelo_picks      ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
+    ALTER TABLE lila_positions   ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
+
     -- Per-team-per-season EPA aggregates from nflverse play-by-play.
     -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).
     -- We fetch the season pbp CSV in /api/ceelo/seed, aggregate to these
