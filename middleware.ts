@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { verifyViewerCookie } from '@/lib/viewer-auth'
 
 const PASSWORD = process.env.AUTH_PASSWORD ?? ''
+const VIEWER_SECRET = process.env.VIEWER_COOKIE_SECRET ?? ''
 
 async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input)
@@ -15,9 +17,21 @@ function getAuthHash() {
   return authHashPromise
 }
 
+// Routes a viewer cookie can reach. Anything else stays operator-only.
+function isViewerPath(pathname: string): boolean {
+  return (
+    pathname === '/viewer' ||
+    pathname.startsWith('/viewer/') ||
+    pathname === '/api/viewer/edges' ||
+    pathname === '/api/viewer/articles' ||
+    pathname === '/api/viewer/login' // POST allowed; GET is harmless
+  )
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // Public / always-allowed paths.
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/login') ||
@@ -25,6 +39,9 @@ export async function middleware(request: NextRequest) {
     // Telegram inbound webhook — Telegram's servers can't log in. The route
     // itself is gated on TELEGRAM_WEBHOOK_SECRET + owner chat_id.
     pathname.startsWith('/api/telegram/webhook') ||
+    // Viewer login is the only way an unauthenticated viewer can hit the
+    // server (to redeem their license key). Always allow POST through.
+    pathname === '/api/viewer/login' ||
     pathname.startsWith('/specs') ||
     pathname.startsWith('/_next') ||
     pathname === '/manifest.json' ||
@@ -39,10 +56,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  const cookie = request.cookies.get('lila_auth')
+  // Operator cookie passes everything.
+  const operatorCookie = request.cookies.get('lila_auth')
   const authHash = await getAuthHash()
-  if (cookie?.value === authHash) {
+  if (operatorCookie?.value === authHash) {
     return NextResponse.next()
+  }
+
+  // Viewer cookie passes the viewer-allowed paths only.
+  if (isViewerPath(pathname) && VIEWER_SECRET) {
+    const viewerCookie = request.cookies.get('lila_viewer')
+    const payload = await verifyViewerCookie(viewerCookie?.value, VIEWER_SECRET)
+    if (payload) return NextResponse.next()
   }
 
   return NextResponse.redirect(new URL('/login', request.url))

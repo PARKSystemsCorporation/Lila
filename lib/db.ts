@@ -482,6 +482,24 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_desk_items_approved  ON desk_items(status, reported_at)
       WHERE status='approved' AND reported_at IS NULL;
 
+    -- Public-viewer subscribers — Gumroad license-key gated. Each row is
+    -- a paying viewer; the cookie carries the key and an exp timestamp.
+    -- The middleware verifies the HMAC sig + exp on every request; the
+    -- /api/viewer/login route re-verifies the key against Gumroad's
+    -- license API on first sign-in and after VIEWER_REVERIFY_HOURS.
+    CREATE TABLE IF NOT EXISTS viewers (
+      id                       SERIAL      PRIMARY KEY,
+      license_key              TEXT        NOT NULL UNIQUE,
+      gumroad_product_id       TEXT,
+      gumroad_subscription_id  TEXT,
+      verified_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      active                   BOOLEAN     NOT NULL DEFAULT TRUE,
+      email                    TEXT,                              -- captured from Gumroad if returned
+      created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_viewers_active ON viewers(active, verified_at DESC);
+
     -- Per-team-per-season EPA aggregates from nflverse play-by-play.
     -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).
     -- We fetch the season pbp CSV in /api/ceelo/seed, aggregate to these
