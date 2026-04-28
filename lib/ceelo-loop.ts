@@ -641,7 +641,51 @@ export class CeeloLoop {
          )
        RETURNING id`
     )
-    return started.rowCount ? `C5 voided ${started.rowCount} (kicked off)` : ''
+
+    // Auto-grade model picks (source='model') against final scores.
+    // Separate from operator's W/L tracking — measures Ceelo's hypothetical
+    // accuracy per sport regardless of whether the operator took the bet.
+    const { rows: ungraded } = await this.db.query(
+      `SELECT p.id, p.side, p.book_spread, p.game_id,
+              g.home_team, g.away_team, g.home_score, g.away_score
+       FROM ceelo_picks p
+       JOIN ceelo_games g ON g.id = p.game_id
+       WHERE p.source = 'model'
+         AND p.model_outcome IS NULL
+         AND g.status = 'final'
+         AND g.home_score IS NOT NULL AND g.away_score IS NOT NULL
+       LIMIT 200`
+    )
+
+    let modelGraded = 0
+    for (const r of ungraded) {
+      const homeSpread = r.book_spread != null ? Number(r.book_spread) : null
+      if (homeSpread == null) continue
+      const margin = Number(r.home_score) - Number(r.away_score)
+      // pick.side begins with the team the pick is on. Match by abbr.
+      const side = String(r.side ?? '').trim()
+      const onHome = side.startsWith(r.home_team + ' ')
+      const onAway = side.startsWith(r.away_team + ' ')
+      if (!onHome && !onAway) continue   // can't tell which side — skip
+
+      // For a HOME pick at home_spread S (e.g. -3.5): wins if margin + S > 0.
+      // For an AWAY pick at away_spread -S: equivalently, wins if margin + S < 0.
+      // Push when margin + S === 0 (only possible on whole-number spreads).
+      const adjusted = onHome ? (margin + homeSpread) : -(margin + homeSpread)
+      const outcome = adjusted > 0.001 ? 'win' : adjusted < -0.001 ? 'loss' : 'push'
+      await this.db.query(
+        `UPDATE ceelo_picks
+         SET model_outcome = $1, model_graded_at = NOW()
+         WHERE id = $2`,
+        [outcome, r.id]
+      )
+      modelGraded++
+    }
+
+    const parts: string[] = []
+    if (started.rowCount) parts.push(`voided ${started.rowCount} (kicked off)`)
+    if (modelGraded)      parts.push(`graded ${modelGraded} model picks`)
+    return parts.length ? `C5 ${parts.join(' · ')}` : ''
   }
 
   // ── chat: one-on-one with the operator (thread='ceelo') ─────────────────

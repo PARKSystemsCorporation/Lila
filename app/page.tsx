@@ -3357,6 +3357,21 @@ interface CeeloStatus {
   cycle: number
 }
 
+interface SportRollup {
+  sport: 'NFL' | 'NBA' | 'MLB'
+  operator: {
+    open: number; active: number
+    wins: number; losses: number; pushes: number
+    staked: number; pnl: number; roi: number
+    win_pct: number | null
+  }
+  model: {
+    wins: number; losses: number; pushes: number
+    settled: number; pending: number
+    accuracy: number | null
+  }
+}
+
 interface PicksData {
   picks: PickRow[]
   summary: {
@@ -3365,6 +3380,7 @@ interface PicksData {
     record: { wins: number; losses: number; pushes: number }
     bankroll: { staked: number; returned: number; pnl: number; roi: number }
   }
+  bySport: SportRollup[]
   status: CeeloStatus | null
 }
 
@@ -3815,15 +3831,16 @@ function PicksView({ visible, data, reload }: {
           <span className="text-rose-400"><IconPicks /></span>
           <div>
             <p className="text-xs font-mono text-slate-300 font-semibold">
-              Ceelo &mdash; NFL Handicapper
+              Ceelo &mdash; Multi-Sport Handicapper
             </p>
             <p className="text-[10px] font-mono text-slate-600">
-              Math-driven picks. You decide what to take.
+              NFL · NBA · MLB. Math-driven picks. You decide what to take.
             </p>
           </div>
         </div>
 
         {data && <BankrollCard summary={data.summary} />}
+        {data?.bySport && data.bySport.length > 0 && <SportBreakdown rollups={data.bySport} />}
         {data?.status && <CeeloStatusCard status={data.status} />}
         {data?.picks && data.picks.length > 0 && <EdgeGraph picks={open.concat(taken)} />}
 
@@ -4042,6 +4059,81 @@ function BankrollCard({ summary }: { summary: PicksData['summary'] }) {
         <Stat label="Win%"   value={winPct != null ? `${winPct}%` : '—'} />
         <Stat label="Staked" value={`$${bankroll.staked.toFixed(2)}`} />
         <Stat label="Open / Active" value={`${open} / ${active}`} />
+      </div>
+    </div>
+  )
+}
+
+// Per-sport rollup card. Three columns (NFL / NBA / MLB), each showing
+// operator's real-bet record + Ceelo's auto-graded model accuracy. Lets
+// the operator answer "is Ceelo better at NFL or NBA right now?" at a
+// glance.
+
+function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
+  // Render fixed NFL/NBA/MLB order even if the API returns them differently.
+  const order: Array<'NFL' | 'NBA' | 'MLB'> = ['NFL', 'NBA', 'MLB']
+  const map = new Map(rollups.map(r => [r.sport, r]))
+  const SPORT_COLOR: Record<string, string> = {
+    NFL: 'text-amber-300',
+    NBA: 'text-blue-300',
+    MLB: 'text-emerald-300',
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+      <div className="px-3 py-2 border-b border-slate-800 flex items-baseline justify-between">
+        <p className="text-[10px] font-mono text-slate-400 tracking-widest font-semibold">BY SPORT</p>
+        <p className="text-[9px] font-mono text-slate-600">operator vs model accuracy</p>
+      </div>
+      <div className="grid grid-cols-3 divide-x divide-slate-800">
+        {order.map(sport => {
+          const r = map.get(sport)
+          const color = SPORT_COLOR[sport] ?? 'text-slate-300'
+          if (!r) return (
+            <div key={sport} className="p-3 text-center">
+              <p className={`text-[11px] font-mono font-semibold tracking-wider ${color}`}>{sport}</p>
+              <p className="text-[9px] font-mono text-slate-700 mt-2">no data</p>
+            </div>
+          )
+          const op = r.operator
+          const m = r.model
+          const opTotal = op.wins + op.losses
+          const opPnl = op.pnl
+          const pnlColor = opPnl > 0 ? 'text-emerald-300' : opPnl < 0 ? 'text-red-300' : 'text-slate-400'
+          const accColor = m.accuracy != null
+            ? (m.accuracy >= 55 ? 'text-emerald-300' : m.accuracy >= 50 ? 'text-amber-300' : 'text-red-300')
+            : 'text-slate-500'
+          return (
+            <div key={sport} className="p-3 space-y-2">
+              <p className={`text-[11px] font-mono font-semibold tracking-wider text-center ${color}`}>{sport}</p>
+
+              {/* Operator stats */}
+              <div className="text-center pt-1 border-t border-slate-800/60">
+                <p className="text-[8px] font-mono text-slate-600 tracking-widest">YOU</p>
+                <p className={`text-[11px] font-mono font-semibold tabular-nums ${pnlColor}`}>
+                  {opPnl >= 0 ? '+' : ''}${opPnl.toFixed(2)}
+                </p>
+                <p className="text-[8px] font-mono text-slate-700 tabular-nums">
+                  {opTotal > 0 ? `${op.wins}-${op.losses}${op.pushes ? `-${op.pushes}` : ''}` : 'no bets yet'}
+                  {op.win_pct != null && ` · ${op.win_pct.toFixed(0)}%`}
+                </p>
+              </div>
+
+              {/* Model stats — auto-graded ATS accuracy */}
+              <div className="text-center pt-1 border-t border-slate-800/60">
+                <p className="text-[8px] font-mono text-slate-600 tracking-widest">CEELO</p>
+                <p className={`text-[11px] font-mono font-semibold tabular-nums ${accColor}`}>
+                  {m.accuracy != null ? `${m.accuracy.toFixed(0)}%` : '—'}
+                </p>
+                <p className="text-[8px] font-mono text-slate-700 tabular-nums">
+                  {m.settled > 0
+                    ? `${m.wins}-${m.losses}${m.pushes ? `-${m.pushes}` : ''}`
+                    : (m.pending > 0 ? `${m.pending} pending` : 'no flags yet')}
+                </p>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

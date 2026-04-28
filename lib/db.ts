@@ -592,6 +592,19 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS book_name      TEXT;
     ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS edge_points    NUMERIC(5,2);
     ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS source         TEXT NOT NULL DEFAULT 'llm';
+    -- Auto-graded model accuracy. Separate from operator's W/L tracking
+    -- (status='won'|'lost' = operator-marked). model_outcome is the
+    -- model's hypothetical performance — graded after the game finishes
+    -- regardless of whether the operator took the pick. Lets the
+    -- operator measure Ceelo per-sport without requiring real bets.
+    --   'win'  — pick covered
+    --   'loss' — pick didn't cover
+    --   'push' — actual margin matched the spread exactly
+    --   NULL   — game not yet final OR pick not from a model source
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_outcome  TEXT;
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_graded_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_sport_model_outcome
+      ON ceelo_picks(sport, model_outcome) WHERE source='model';
                                                   -- 'llm' (v1) | 'model' (v2 math-driven)
   `)
   schemaReady = true
