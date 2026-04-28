@@ -142,19 +142,37 @@ export class ManagementLoop {
     const reply = await this.replyToOperator()
     if (reply) return reply
 
-    // Priority 2: review any pending_review report (one per run)
+    // Priority 2: read & report on any approved desk items the operator
+    // hasn't been briefed on yet. One pass per run; processes up to 3
+    // items so a backlog clears in a few cycles.
+    const desk = await this.processDeskApprovals()
+    if (desk) return desk
+
+    // Priority 3: review any pending_review report (one per run)
     const review = await this.reviewOne()
     if (review) return review
 
-    // Priority 3: trade cycle, 15-min gated
+    // Priority 4: trade cycle, 15-min gated
     if (await this.shouldTrade()) {
       const trade = await this.runTradeCycle()
       if (trade) return trade
     }
 
-    // Priority 4: proactive check-in, 5-min gated
+    // Priority 5: proactive check-in, 5-min gated
     if (!(await this.shouldCheckIn())) return null
     return await this.proactiveCheckIn()
+  }
+
+  // ── Priority 2: desk approvals → chat reports ─────────────────────────
+  private async processDeskApprovals(): Promise<ManagementResult | null> {
+    const Desk = await import('./desk')
+    const r = await Desk.processApprovedItems(this.db)
+    if (r.reported === 0) return null
+    return {
+      logMessage: r.logMessage ?? `Lila reported on ${r.reported} desk item(s).`,
+      logType: 'success',
+      posted: true,
+    }
   }
 
   // ── Priority 1: operator reply ─────────────────────────────────────────────

@@ -272,6 +272,19 @@ export class AnalystLoop {
     )
     await this.note(`analyst/pnl/${today()}-analysis.md`, `# P&L ${today()}\n\n${analysis}\n\n## Positions\n${posStr}`)
     await this.chat('analyst', `Maintenance P&L: ${analysis}`, 'status')
+
+    // Also drop a desk item — the operator should see Vega's read on
+    // each maintenance cycle (and can deny with a "wrong direction"
+    // comment that future briefings will absorb).
+    const Desk = await import('./desk')
+    await Desk.submit(this.db, {
+      from: 'vega',
+      kind: 'briefing',
+      title: `Vega P&L briefing — ${today()}`,
+      summary: analysis.slice(0, 140),
+      body: `# P&L briefing — ${today()}\n\n${analysis}\n\n## Positions\n${posStr}\n\n## Snapshot\n- Trading P&L: $${totalPnl.toFixed(2)}\n- Bounty earnings: $${parseFloat(earned?.total_earned ?? '0').toFixed(2)}`,
+    }).catch(() => { /* desk submit shouldn't break the loop */ })
+
     return `P&L sent to Lila. Trading total: $${totalPnl.toFixed(2)}.`
   }
 

@@ -446,6 +446,36 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE ceelo_picks      ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
     ALTER TABLE lila_positions   ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
 
+    -- Operator's desk — agents push docs here for review. Workflow:
+    --   pending  → agent just filed it; operator hasn't acted
+    --   approved → operator hit approve; Lila will read + report on next tick
+    --   reported → Lila has read it and posted her report to chat
+    --   denied   → operator rejected; comment captured so the agent's
+    --              future drafts can avoid the dead-end direction
+    --
+    -- 'kind' is a free-form tag — 'doc' / 'memo' / 'pitch' / 'finding' /
+    -- 'plan' / 'briefing'. Used only for the UI badge color.
+    CREATE TABLE IF NOT EXISTS desk_items (
+      id              SERIAL      PRIMARY KEY,
+      from_agent      TEXT        NOT NULL,                 -- 'lila' | 'cipher' | 'vega' | 'scout' | 'ceelo'
+      title           TEXT        NOT NULL,
+      summary         TEXT,                                  -- one-liner for the list view
+      body            TEXT        NOT NULL,                  -- markdown
+      kind            TEXT        NOT NULL DEFAULT 'doc',
+      status          TEXT        NOT NULL DEFAULT 'pending',
+      operator_comment TEXT,
+      approved_at     TIMESTAMPTZ,
+      denied_at       TIMESTAMPTZ,
+      reported_at     TIMESTAMPTZ,
+      report_message  TEXT,                                  -- the chat reply Lila posted
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_desk_items_status    ON desk_items(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_desk_items_from      ON desk_items(from_agent, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_desk_items_approved  ON desk_items(status, reported_at)
+      WHERE status='approved' AND reported_at IS NULL;
+
     -- Per-team-per-season EPA aggregates from nflverse play-by-play.
     -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).
     -- We fetch the season pbp CSV in /api/ceelo/seed, aggregate to these

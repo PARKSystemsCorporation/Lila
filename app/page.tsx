@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'library' | 'picks' | 'terminal'
+type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'library' | 'picks' | 'desk'
 
 interface UnifiedBounty {
   id: string
@@ -279,11 +279,13 @@ const IconNotes = () => (
   </svg>
 )
 
-const IconTerminal = () => (
+const IconDesk = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
-    <rect x="3" y="4" width="18" height="16" rx="2" />
-    <polyline points="7 10 10 12 7 14" />
-    <line x1="13" y1="14" x2="17" y2="14" />
+    {/* a clipboard / inbox: docs landing on the operator's desk */}
+    <rect x="6" y="3" width="12" height="3" rx="1" />
+    <path d="M5 6h14v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6z" />
+    <line x1="9"  y1="11" x2="15" y2="11" />
+    <line x1="9"  y1="15" x2="15" y2="15" />
   </svg>
 )
 
@@ -310,7 +312,7 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
   { key: 'library',  label: 'Library', Icon: IconNotes    },
   { key: 'picks',    label: 'Picks',   Icon: IconPicks    },
-  { key: 'terminal', label: 'Term',    Icon: IconTerminal },
+  { key: 'desk',     label: 'Desk',    Icon: IconDesk     },
 ]
 
 function BottomNav({ tab, onTab, badges }: {
@@ -5478,6 +5480,279 @@ const TERM_HELP = [
   '  help                this list',
 ].join('\n')
 
+// ─── Desk Tab ────────────────────────────────────────────────────────────
+//
+// Inbox where Lila / Cipher / Vega / Scout / Ceelo file docs for the
+// operator. Workflow:
+//   approve → Lila reads it on her next tick and posts a 2-4 sentence
+//             report to the chat (kind='message', shows up as Lila's
+//             reply in the Chat tab + Telegram bridge).
+//   deny    → operator captures a comment so the agent's future drafts
+//             can avoid the dead-end direction. (Agent prompts can pull
+//             recentDenials() from lib/desk.ts when generating.)
+//
+// Replaces the old Terminal tab — operator never used the CLI.
+
+type DeskAgent = 'lila' | 'cipher' | 'vega' | 'scout' | 'ceelo'
+type DeskStatus = 'pending' | 'approved' | 'reported' | 'denied'
+
+interface DeskItem {
+  id: number
+  from_agent: DeskAgent
+  title: string
+  summary: string | null
+  body: string
+  kind: string
+  status: DeskStatus
+  operator_comment: string | null
+  report_message: string | null
+  created_ts: number | null
+  approved_ts: number | null
+  denied_ts: number | null
+  reported_ts: number | null
+}
+
+interface DeskPayload {
+  items: DeskItem[]
+  counts: { pending: number; approved: number; reported: number; denied: number }
+}
+
+const DESK_AGENT_STYLE: Record<DeskAgent, string> = {
+  lila:   'bg-emerald-950/40 border-emerald-800 text-emerald-300',
+  cipher: 'bg-amber-950/40 border-amber-800 text-amber-300',
+  vega:   'bg-blue-950/40 border-blue-800 text-blue-300',
+  scout:  'bg-cyan-950/40 border-cyan-800 text-cyan-300',
+  ceelo:  'bg-rose-950/40 border-rose-800 text-rose-300',
+}
+
+function DeskTab({ visible }: { visible: boolean }) {
+  const [filter, setFilter] = useState<DeskStatus | 'all'>('pending')
+  const [data, setData] = useState<DeskPayload | null>(null)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/desk?status=${filter}`)
+      if (res.ok) setData(await res.json())
+    } catch { /* ignore */ }
+  }, [filter])
+
+  useEffect(() => {
+    if (!visible) return
+    load()
+    const id = setInterval(load, 15_000)
+    return () => clearInterval(id)
+  }, [visible, load])
+
+  const post = useCallback(async (id: number, body: object) => {
+    await fetch(`/api/desk/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    await load()
+  }, [load])
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 py-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <span className="text-emerald-500"><IconDesk /></span>
+          <div>
+            <p className="text-xs font-mono text-slate-300 font-semibold">Operator&rsquo;s Desk</p>
+            <p className="text-[10px] font-mono text-slate-600">
+              Lila, Cipher, Vega, Scout, Ceelo file docs here. Approve → Lila reads + reports. Deny + comment → agent avoids that direction next time.
+            </p>
+          </div>
+        </div>
+
+        {/* Filter pills */}
+        {data && (
+          <div className="flex flex-wrap gap-1.5">
+            {(['pending','approved','reported','denied','all'] as const).map(k => (
+              <button
+                key={k}
+                onClick={() => setFilter(k)}
+                className={`text-[9px] font-mono px-2 py-1 rounded border tracking-wider ${
+                  filter === k
+                    ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                    : 'text-slate-500 border-slate-800 active:bg-slate-800'
+                }`}
+              >
+                {k.toUpperCase()} · {k === 'all' ? Object.values(data.counts).reduce((a,b) => a+b, 0) : (data.counts[k] ?? 0)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Items */}
+        {!data ? (
+          <p className="text-xs font-mono text-slate-700">Loading…</p>
+        ) : data.items.length === 0 ? (
+          <EmptyState
+            title={filter === 'pending' ? 'No items waiting.' : `No ${filter} items.`}
+            subtitle="Agents will file docs here as they generate them. Approve to have Lila read + report; deny to flag a direction as dead so the agent doesn't re-pitch."
+          />
+        ) : (
+          <div className="space-y-2">
+            {data.items.map(it => (
+              <DeskCard
+                key={it.id}
+                item={it}
+                expanded={expandedId === it.id}
+                onToggle={() => setExpandedId(expandedId === it.id ? null : it.id)}
+                onApprove={() => post(it.id, { action: 'approve' })}
+                onDeny={(comment) => post(it.id, { action: 'deny', comment })}
+                onReset={() => post(it.id, { action: 'reset' })}
+                onDelete={() => post(it.id, { action: 'delete' })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DeskCard({ item, expanded, onToggle, onApprove, onDeny, onReset, onDelete }: {
+  item: DeskItem
+  expanded: boolean
+  onToggle: () => void
+  onApprove: () => void
+  onDeny: (comment: string) => void
+  onReset: () => void
+  onDelete: () => void
+}) {
+  const [showDeny, setShowDeny] = useState(false)
+  const [denyComment, setDenyComment] = useState('')
+
+  const cls = DESK_AGENT_STYLE[item.from_agent] ?? 'bg-slate-900 border-slate-800 text-slate-300'
+  const status = item.status
+  const statusColor =
+      status === 'reported' ? 'text-emerald-400 border-emerald-900'
+    : status === 'approved' ? 'text-blue-400 border-blue-900'
+    : status === 'denied'   ? 'text-red-400 border-red-900'
+    : 'text-amber-400 border-amber-900'
+
+  const submitDeny = () => {
+    onDeny(denyComment.trim() || 'no reason provided')
+    setShowDeny(false)
+    setDenyComment('')
+  }
+
+  return (
+    <div className="border border-slate-800 rounded-xl bg-slate-900 overflow-hidden">
+      <button className="w-full p-3 text-left" onClick={onToggle}>
+        <div className="flex items-start gap-2">
+          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${cls}`}>
+            {item.from_agent.toUpperCase()}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] font-mono text-slate-100 font-semibold truncate">{item.title}</p>
+            {item.summary && (
+              <p className="text-[10px] font-mono text-slate-500 mt-0.5 line-clamp-2 leading-snug">
+                {item.summary}
+              </p>
+            )}
+            <p className="text-[9px] font-mono text-slate-700 mt-1">
+              {item.kind} · {item.created_ts ? fmtAge(item.created_ts) : 'just now'}
+            </p>
+          </div>
+          <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${statusColor}`}>
+            {status.toUpperCase()}
+          </span>
+          <span className={`text-slate-600 text-xs font-mono shrink-0 mt-0.5 transition-transform ${expanded ? 'rotate-180' : ''}`}>▾</span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-800 px-3 py-3 space-y-3">
+          <pre className="text-[10px] font-mono text-slate-300 leading-relaxed bg-slate-950 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words max-h-[55vh] overflow-y-auto select-text">
+            {item.body}
+          </pre>
+
+          {/* Lila's report when reported */}
+          {item.status === 'reported' && item.report_message && (
+            <div className="rounded-lg border border-emerald-900 bg-emerald-950/30 p-3 space-y-1">
+              <p className="text-[9px] font-mono text-emerald-400 tracking-wider">LILA REPORTED</p>
+              <p className="text-[11px] font-mono text-emerald-100 whitespace-pre-wrap leading-relaxed">{item.report_message}</p>
+            </div>
+          )}
+
+          {/* Denial comment */}
+          {item.status === 'denied' && item.operator_comment && (
+            <div className="rounded-lg border border-red-900 bg-red-950/30 p-3 space-y-1">
+              <p className="text-[9px] font-mono text-red-400 tracking-wider">DENIED · YOUR COMMENT</p>
+              <p className="text-[11px] font-mono text-red-100 whitespace-pre-wrap leading-relaxed">{item.operator_comment}</p>
+            </div>
+          )}
+
+          {/* Action row */}
+          {item.status === 'pending' && (
+            showDeny ? (
+              <div className="space-y-2">
+                <textarea
+                  rows={2}
+                  value={denyComment}
+                  onChange={(e) => setDenyComment(e.target.value)}
+                  placeholder="Why is this dead? (agent reads this on next cycle)"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-red-700"
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitDeny}
+                    className="flex-1 text-[10px] font-mono text-red-300 border border-red-800 bg-red-950/40 rounded-lg py-2 active:opacity-70"
+                  >
+                    Confirm deny
+                  </button>
+                  <button
+                    onClick={() => { setShowDeny(false); setDenyComment('') }}
+                    className="flex-1 text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={onApprove}
+                  className="flex-1 text-[10px] font-mono text-emerald-300 border border-emerald-800 bg-emerald-950/40 rounded-lg py-2 active:opacity-70"
+                >
+                  Approve · send to Lila
+                </button>
+                <button
+                  onClick={() => setShowDeny(true)}
+                  className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
+                >
+                  Deny + comment
+                </button>
+              </div>
+            )
+          )}
+          {(item.status === 'approved' || item.status === 'reported' || item.status === 'denied') && (
+            <div className="flex gap-2">
+              <button
+                onClick={onReset}
+                className="flex-1 text-[10px] font-mono text-slate-300 border border-slate-700 rounded-lg py-2 active:bg-slate-800"
+              >
+                Reset to pending
+              </button>
+              <button
+                onClick={() => { if (confirm('Delete this desk item?')) onDelete() }}
+                className="flex-1 text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:opacity-70"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TerminalTab({ visible }: { visible: boolean }) {
   const [history, setHistory] = useState<TermLine[]>([])
   const [input, setInput] = useState('')
@@ -6311,7 +6586,7 @@ export default function Home() {
           onNotesFilterChange={setNotesFilter}
         />
         <PicksTab visible={tab === 'picks'} />
-        <TerminalTab visible={tab === 'terminal'} />
+        <DeskTab visible={tab === 'desk'} />
       </main>
 
       <BottomNav
