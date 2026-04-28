@@ -74,12 +74,24 @@ export async function processApprovedItems(db: PoolClient): Promise<{ reported: 
   if (!process.env.DEEPSEEK_API_KEY) return { reported: 0 }
   const ai = new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })
 
+  // Don't stack desk reports on top of fresh chat activity. If Lila
+  // posted in chat within the last 60 seconds (a reply to the operator,
+  // a previous desk report, etc.) we let the queue wait one more tick.
+  // Keeps the chat from feeling like Lila is firing 3 messages at once.
+  const { rows: recentLila } = await db.query(
+    `SELECT 1 FROM chat_messages
+     WHERE thread='main' AND sender='lila' AND kind='message'
+       AND created_at > NOW() - INTERVAL '60 seconds'
+     LIMIT 1`
+  )
+  if (recentLila.length > 0) return { reported: 0 }
+
   const { rows } = await db.query(
     `SELECT id, from_agent, title, summary, body, kind
      FROM desk_items
      WHERE status='approved' AND reported_at IS NULL
      ORDER BY approved_at ASC
-     LIMIT 3`
+     LIMIT 1`
   )
   if (rows.length === 0) return { reported: 0 }
 

@@ -200,12 +200,30 @@ export class ManagementLoop {
       .map((m: { sender: string; content: string }) => `[${m.sender.toUpperCase()}]: ${m.content}`)
       .join('\n')
 
+    const userMsgCreatedAt = rows[lastUserIdx].created_at
+
     const msg = await this.llm(
       'lila.reply',
       REPLY_PROMPT.replace('{CONTEXT}', context).replace('{TRANSCRIPT}', transcript),
       220
     )
     if (!msg) return null
+
+    // Re-check before insert: another process / tick / streaming /api/chat
+    // call may have inserted a Lila reply during our 5-10s LLM call. The
+    // initial dedup at the top of this method passed, but the world moves
+    // during the LLM round-trip. Without this re-check, multi-instance
+    // deploys (Railway rolling deploys, scale-up) will double-reply.
+    const { rows: recheck } = await this.db.query(
+      `SELECT 1 FROM chat_messages
+       WHERE thread='main' AND sender='lila'
+         AND created_at > $1::timestamptz
+       LIMIT 1`,
+      [userMsgCreatedAt]
+    )
+    if (recheck.length > 0) {
+      return { logMessage: 'Reply skipped — another reply landed during LLM call', logType: 'info', posted: false }
+    }
 
     await this.chat('lila', msg.slice(0, 500))
     return { logMessage: 'Lila replied to operator.', logType: 'info', posted: true }
@@ -478,6 +496,23 @@ export class ManagementLoop {
 
     if (!event) return { logMessage: 'Nothing notable.', logType: 'info', posted: false }
 
+    // Event-fingerprint dedup: same trigger within the last hour ⇒ skip.
+    // Without this, "X approved report ready" / "Y warnings in 30m" /
+    // "no new earnings" fire every MANAGEMENT_CHECK_SEC and Lila spams
+    // chat with the same observation. Fingerprint is the first 80 chars
+    // of the canonical event string (stable across LLM phrasing).
+    const fingerprint = event.slice(0, 80)
+    const { rows: [prev] } = await this.db.query(
+      `SELECT last_proactive_event, last_proactive_at FROM management_state WHERE id=1`
+    )
+    if (
+      prev?.last_proactive_event === fingerprint &&
+      prev.last_proactive_at &&
+      (Date.now() - new Date(prev.last_proactive_at).getTime()) < 60 * 60 * 1000
+    ) {
+      return { logMessage: `Check-in dedup: same event as last (${fingerprint.slice(0, 40)})`, logType: 'info', posted: false }
+    }
+
     const context = await this.context(totalEarned)
     const msg = await this.llm(
       'lila.proactive',
@@ -486,7 +521,25 @@ export class ManagementLoop {
     )
     if (!msg) return { logMessage: `Check-in: ${event}`, logType: 'info', posted: false }
 
+    // Final dedup gate: if Lila has already posted a 'message'-kind chat
+    // within the last 60 seconds (e.g. desk processor or the streaming
+    // /api/chat reply finished after this run started), skip the post
+    // rather than stacking another message on top.
+    const { rows: recent } = await this.db.query(
+      `SELECT 1 FROM chat_messages
+       WHERE thread='main' AND sender='lila' AND kind='message'
+         AND created_at > NOW() - INTERVAL '60 seconds'
+       LIMIT 1`
+    )
+    if (recent.length > 0) {
+      return { logMessage: `Check-in suppressed: lila posted recently`, logType: 'info', posted: false }
+    }
+
     await this.chat('lila', msg.slice(0, 500))
+    await this.db.query(
+      `UPDATE management_state SET last_proactive_event=$1, last_proactive_at=NOW() WHERE id=1`,
+      [fingerprint]
+    )
     return { logMessage: `Lila check-in: ${event.slice(0, 80)}`, logType: 'success', posted: true }
   }
 

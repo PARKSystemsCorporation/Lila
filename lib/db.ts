@@ -173,6 +173,12 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     INSERT INTO management_state (id) VALUES (1) ON CONFLICT DO NOTHING;
     ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_trade_at     TIMESTAMPTZ;
     ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_retention_at TIMESTAMPTZ;
+    -- Fingerprint of the last fired proactive-check-in event so the same
+    -- trigger ('1 approved report waiting', '5 errors in last 30m') doesn't
+    -- spam chat every MANAGEMENT_CHECK_SEC. Compared against current event
+    -- with a 1h cooldown — same fingerprint within 1h ⇒ skip.
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_proactive_event TEXT;
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_proactive_at    TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS security_reports (
       id             SERIAL        PRIMARY KEY,
