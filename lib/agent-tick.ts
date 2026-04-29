@@ -12,6 +12,7 @@ import { mirrorLilaToTelegram } from './telegram-mirror'
 import { runNoonArticles } from './article-engine'
 import { runAlerts } from './alerts'
 import { runRetention } from './retention'
+import { runSubmitter } from './github-pr'
 import { cfg } from './config'
 
 // Single entry point for an autonomy tick. Called from /api/agent (UI poll)
@@ -177,6 +178,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       const msg = `Noon articles filed: ${articleResult.generated.join(', ')}.`
       await logEvent(db, msg, 'success')
       logs.push(msg)
+    }
+
+    // 6b2. GitHub PR submitter — opens one PR per tick from approved
+    //      bounty_picks rows. No-op unless GITHUB_TOKEN + LILA_AUTO_SUBMIT
+    //      are both set (kill-switch lives in env, not in code).
+    const submitResult = await runSubmitter(db).catch((e: unknown) => ({
+      ran: true, submitted: 0, failed: 1,
+      logMessage: `Submitter error: ${String(e).slice(0, 120)}`,
+      logType: 'warn' as const,
+    }))
+    if (submitResult?.logMessage) {
+      await logEvent(db, submitResult.logMessage, submitResult.logType ?? 'info')
+      logs.push(submitResult.logMessage)
     }
 
     // 6c. Telegram alerts — paid bounties, ready-to-submit Scout drafts,

@@ -74,6 +74,41 @@ Respond with ONLY valid JSON:
 
 Approve only if you'd submit this yourself. Reject with the actual reason. No "looks good" — give a reason either way.`
 
+const BOUNTY_REVIEW_PROMPT = `You are Lila, COO of PARKSystems Corporation. Scout just drafted a pull-request submission for a sub-$500 GitHub bounty. You are the only review gate before this PR is opened under the company GitHub account. Be strict. A bad submission damages the company's reputation; a fabricated diff or a low-effort write-up gets us blacklisted from the platform.
+
+Bounty: {TITLE} · {REWARD} on {SOURCE}
+Repo:   {REPO}
+Issue:  #{ISSUE_NUMBER}
+
+Scout's draft confidence: {CONFIDENCE}
+
+PR title (Scout's draft): {DRAFT_TITLE}
+
+PR body (Scout's draft):
+---
+{DRAFT_BODY}
+---
+
+Diff (truncated):
+---
+{DRAFT_DIFF}
+---
+
+Evaluate, in this order:
+1. Does the draft actually address what the issue asked for, or is Scout speculating?
+2. Is the diff plausible? Real-looking paths, syntactically reasonable, no obviously invented APIs.
+3. Are claims in the body consistent with what the diff actually changes? No "fixed X" without a corresponding hunk.
+4. Would you, as COO, be comfortable having this PR opened under our company name?
+
+Approve only if you'd ship it yourself. Reject anything that's vague, fabricated, or scope-mismatched. The cost of rejecting is one cycle; the cost of submitting garbage is reputation. Default lean: reject when uncertain.
+
+Respond with ONLY valid JSON:
+{
+  "decision":   "approve" | "reject",
+  "confidence": 0.0-1.0,
+  "notes":      "one sentence — what Scout got right or where it failed"
+}`
+
 const DOCS_REVIEW_PROMPT = `You are Lila reviewing technical documentation Cipher just drafted for a paid bounty. Before it reaches the operator it passes through you.
 
 Bounty: {TITLE} · ${'${REWARD}'} on {PLATFORM}
@@ -151,6 +186,10 @@ export class ManagementLoop {
     // Priority 3: review any pending_review report (one per run)
     const review = await this.reviewOne()
     if (review) return review
+
+    // Priority 3b: review one drafted bounty (Scout's queue)
+    const bountyReview = await this.reviewBountyDraft()
+    if (bountyReview) return bountyReview
 
     // Priority 4: trade cycle, 15-min gated
     if (await this.shouldTrade()) {
@@ -288,6 +327,70 @@ export class ManagementLoop {
       logMessage: `Lila ${newStatus} ${kind} "${r.title}" — ${notes.slice(0, 80)}`,
       logType: newStatus === 'approved' ? 'success' : 'warn',
       posted: true,
+    }
+  }
+
+  // ── Priority 3b: bounty draft review ──────────────────────────────────────
+
+  private async reviewBountyDraft(): Promise<ManagementResult | null> {
+    const { rows } = await this.db.query(
+      `SELECT id, source, url, title, repo_url, issue_number, payout_usd, payout_token,
+              draft_title, draft_body, draft_diff, review_confidence
+         FROM bounty_picks
+        WHERE status='drafted'
+        ORDER BY drafted_at ASC
+        LIMIT 1`
+    )
+    if (!rows.length) return null
+    const r = rows[0]
+
+    const reward = r.payout_usd
+      ? `$${parseFloat(r.payout_usd).toFixed(2)}${r.payout_token ? ' ' + r.payout_token : ''}`
+      : '(unspecified)'
+
+    const raw = await this.llm(
+      'lila.review.bounty',
+      BOUNTY_REVIEW_PROMPT
+        .replace('{TITLE}',         r.title)
+        .replace('{REWARD}',        reward)
+        .replace('{SOURCE}',        r.source)
+        .replace('{REPO}',          r.repo_url ?? '(no repo)')
+        .replace('{ISSUE_NUMBER}',  String(r.issue_number ?? '?'))
+        .replace('{CONFIDENCE}',    parseFloat(r.review_confidence ?? '0').toFixed(2))
+        .replace('{DRAFT_TITLE}',   r.draft_title ?? '')
+        .replace('{DRAFT_BODY}',    String(r.draft_body ?? '').slice(0, 5000))
+        .replace('{DRAFT_DIFF}',    String(r.draft_diff ?? '(no diff)').slice(0, 6000)),
+      300
+    )
+    const parsed = this.parse<{ decision: 'approve' | 'reject'; confidence: number; notes: string }>(
+      raw, { decision: 'reject', confidence: 0, notes: 'Bounty review returned no parseable verdict.' }
+    )
+
+    const newStatus = parsed.decision === 'approve' ? 'approved' : 'rejected'
+    const notes = String(parsed.notes ?? '').slice(0, 500)
+    const conf  = Math.min(Math.max(parsed.confidence ?? 0, 0), 1)
+
+    await this.db.query(
+      `UPDATE bounty_picks
+         SET status=$1, review_decision=$2, review_notes=$3,
+             review_confidence=$4, reviewed_at=NOW(), updated_at=NOW()
+       WHERE id=$5`,
+      [newStatus, parsed.decision, notes, conf, r.id]
+    )
+
+    if (newStatus === 'approved') {
+      await this.chat(
+        'lila',
+        `Approved Scout draft: "${r.draft_title ?? r.title}" — ${reward} on ${r.source}. ${notes}`,
+        'status'
+      )
+    }
+    // Rejected drafts stay quiet — Scout files plenty; chat would get spammed.
+
+    return {
+      logMessage: `Lila ${newStatus} bounty "${(r.draft_title ?? r.title).slice(0, 60)}" — ${notes.slice(0, 80)}`,
+      logType: newStatus === 'approved' ? 'success' : 'info',
+      posted: newStatus === 'approved',
     }
   }
 

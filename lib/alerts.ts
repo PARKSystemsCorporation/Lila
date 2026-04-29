@@ -6,10 +6,13 @@ import * as Telegram from './channels/telegram'
 // row's first alert-eligible state, we never re-ping.
 //
 // Alert classes (all silent if Telegram isn't configured):
-//   1. Bounty paid           security_reports.status='paid' + payout > 0
-//   2. Scout draft ready     security_reports.source='scout' + status='approved'
-//   3. Ceelo green flip      ceelo_picks.source='model' + confidence='high'
-//   4. Trade closed (≥ \$10) lila_positions.status='closed' + |pnl| ≥ 10
+//   1. Bounty paid             security_reports.status='paid' + payout > 0
+//   2. Scout draft ready       security_reports.source='scout' + status='approved'
+//   3. Ceelo green flip        ceelo_picks.source='model' + confidence='high'
+//   4. Trade closed (≥ \$10)   lila_positions.status='closed' + |pnl| ≥ 10
+//   5. Bounty pick approved    bounty_picks.status='approved' (Lila green-lit)
+//   6. Bounty PR submitted     bounty_picks.status='submitted' (PR opened)
+//   7. Bounty pick paid        bounty_picks.status='paid' (income confirmed)
 //
 // Each class is gated on tg_alerted_at IS NULL on the relevant row,
 // then stamped after a successful Telegram send (or after a failed one
@@ -30,7 +33,7 @@ export async function runAlerts(db: PoolClient): Promise<AlertResult | null> {
 
   let sent = 0
   let failed = 0
-  const classes: Record<string, number> = { paid: 0, scout: 0, ceelo: 0, trade: 0 }
+  const classes: Record<string, number> = { paid: 0, scout: 0, ceelo: 0, trade: 0, bounty_approved: 0, bounty_submitted: 0, bounty_paid: 0 }
 
   // 1. Bounty paid
   const { rows: paid } = await db.query(
@@ -109,6 +112,64 @@ export async function runAlerts(db: PoolClient): Promise<AlertResult | null> {
     classes.trade++
   }
 
+  // 5. Bounty pick approved (Lila green-lit; if auto-submit is OFF, operator
+  //    needs to copy + open the PR; if ON, this fires before #6).
+  const { rows: bountyApproved } = await db.query(
+    `SELECT id, source, draft_title, payout_usd, payout_token, url
+     FROM bounty_picks
+     WHERE status = 'approved'
+       AND tg_alerted_at IS NULL
+     ORDER BY reviewed_at DESC
+     LIMIT 5`
+  )
+  for (const r of bountyApproved) {
+    const reward = r.payout_usd
+      ? `$${parseFloat(r.payout_usd).toFixed(0)}${r.payout_token ? ' ' + r.payout_token : ''}`
+      : '?'
+    const msg = `✅ Lila approved bounty (${reward} · ${r.source}): ${String(r.draft_title).slice(0, 120)}\n${r.url}`
+    await pingAndStamp(db, 'bounty_picks', r.id, msg)
+      .then(ok => { ok ? sent++ : failed++ })
+    classes.bounty_approved++
+  }
+
+  // 6. Bounty PR submitted (Lila opened the PR autonomously).
+  const { rows: bountySubmitted } = await db.query(
+    `SELECT id, source, draft_title, payout_usd, payout_token, pr_url
+     FROM bounty_picks
+     WHERE status = 'submitted'
+       AND pr_url IS NOT NULL
+       AND submitted_at IS NOT NULL
+       AND (tg_alerted_at IS NULL OR tg_alerted_at < submitted_at)
+     ORDER BY submitted_at DESC
+     LIMIT 5`
+  )
+  for (const r of bountySubmitted) {
+    const reward = r.payout_usd
+      ? `$${parseFloat(r.payout_usd).toFixed(0)}${r.payout_token ? ' ' + r.payout_token : ''}`
+      : '?'
+    const msg = `🚀 PR opened (${reward} · ${r.source}): ${String(r.draft_title).slice(0, 120)}\n${r.pr_url}`
+    await pingAndStamp(db, 'bounty_picks', r.id, msg)
+      .then(ok => { ok ? sent++ : failed++ })
+    classes.bounty_submitted++
+  }
+
+  // 7. Bounty pick paid (real income confirmed).
+  const { rows: bountyPaid } = await db.query(
+    `SELECT id, source, draft_title, paid_amount_usd, pr_url
+     FROM bounty_picks
+     WHERE status = 'paid'
+       AND paid_amount_usd IS NOT NULL AND paid_amount_usd > 0
+       AND (tg_alerted_at IS NULL OR tg_alerted_at < paid_at)
+     ORDER BY paid_at DESC
+     LIMIT 5`
+  )
+  for (const r of bountyPaid) {
+    const msg = `💰 Bounty PAID: $${parseFloat(r.paid_amount_usd).toFixed(2)} (${r.source}) — ${String(r.draft_title ?? '').slice(0, 100)}${r.pr_url ? '\n' + r.pr_url : ''}`
+    await pingAndStamp(db, 'bounty_picks', r.id, msg)
+      .then(ok => { ok ? sent++ : failed++ })
+    classes.bounty_paid++
+  }
+
   if (sent === 0 && failed === 0) return null
 
   const parts: string[] = []
@@ -116,6 +177,9 @@ export async function runAlerts(db: PoolClient): Promise<AlertResult | null> {
   if (classes.scout) parts.push(`${classes.scout} scout`)
   if (classes.ceelo) parts.push(`${classes.ceelo} ceelo`)
   if (classes.trade) parts.push(`${classes.trade} trade`)
+  if (classes.bounty_approved)  parts.push(`${classes.bounty_approved} bounty-ok`)
+  if (classes.bounty_submitted) parts.push(`${classes.bounty_submitted} bounty-PR`)
+  if (classes.bounty_paid)      parts.push(`${classes.bounty_paid} bounty-paid`)
   const summary = `Alerts: ${parts.join(' · ')}` + (failed > 0 ? ` (${failed} failed)` : '')
 
   return {
@@ -129,7 +193,7 @@ export async function runAlerts(db: PoolClient): Promise<AlertResult | null> {
 // forever on a broken Telegram config.
 async function pingAndStamp(
   db: PoolClient,
-  table: 'security_reports' | 'ceelo_picks' | 'lila_positions',
+  table: 'security_reports' | 'ceelo_picks' | 'lila_positions' | 'bounty_picks',
   id: number,
   msg: string,
 ): Promise<boolean> {
