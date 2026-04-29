@@ -39,6 +39,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/login') ||
     pathname.startsWith('/api/health') ||
+    pathname.startsWith('/api/public/') ||
     // Telegram inbound webhook — Telegram's servers can't log in. The route
     // itself is gated on TELEGRAM_WEBHOOK_SECRET + owner chat_id.
     pathname.startsWith('/api/telegram/webhook') ||
