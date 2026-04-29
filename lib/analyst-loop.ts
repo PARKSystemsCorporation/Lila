@@ -148,6 +148,16 @@ export class AnalystLoop {
     const bars = await Alpaca.getBars(ALL, SR_LOOKBACK_BARS).catch(() => [] as Alpaca.BarData[])
     if (bars.length < 3) return { msg: 'Insufficient data.', trade: false }
 
+    // Defensive: free Alpaca / IEX feeds sometimes return a much shorter
+    // history than requested. The S/R math still works on whatever we got
+    // but the operator should know the lookback is truncated.
+    const minBars = bars.reduce((a, b) => Math.min(a, b.rangeBars), Infinity)
+    if (Number.isFinite(minBars) && minBars < SR_LOOKBACK_BARS * 0.5) {
+      await this.warn(
+        `Alpaca bars truncated: requested ${SR_LOOKBACK_BARS}d, got ${minBars}. S/R range is shorter than 52w.`
+      )
+    }
+
     const commoditySet = new Set<string>(WATCHLIST.commodity)
     // Commodities first so the major-watchlist book is what the LLM
     // sees at the top — leveraged + macro stay in the picture as a
@@ -395,6 +405,24 @@ That's it. No "themes to watch" header, no preamble, no multi-sentence prose.`,
 
   private parse<T>(raw: string, fallback: T): T {
     try { return JSON.parse(raw) } catch { return fallback }
+  }
+
+  // Surface a one-line warn into lila_log. Dedupes within an hour so a
+  // sustained issue (e.g. truncated Alpaca history) doesn't spam the log.
+  private async warn(message: string): Promise<void> {
+    const fingerprint = message.slice(0, 80)
+    const { rows } = await this.db.query(
+      `SELECT 1 FROM lila_log
+       WHERE type='warn' AND message LIKE $1
+         AND created_at > NOW() - INTERVAL '1 hour'
+       LIMIT 1`,
+      [fingerprint + '%']
+    )
+    if (rows.length > 0) return
+    await this.db.query(
+      `INSERT INTO lila_log (message, type) VALUES ($1, 'warn')`,
+      [message]
+    )
   }
 
   async note(path: string, content: string): Promise<void> {

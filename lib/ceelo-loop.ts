@@ -574,6 +574,29 @@ export class CeeloLoop {
   private async c4_emitPicks(): Promise<string> {
     if (!Odds.isConfigured()) return ''   // can't gate without market lines
 
+    // Cold-start guard: don't fire picks for a sport whose ratings haven't
+    // had time to walk away from the 1500 default. Without this, NHL (or
+    // any newly-seeded sport) will spit out garbage edges in the first
+    // few cycles after autoseed. Require ≥ 60% of the league rated AND
+    // an average ≥ 8 games per rated team.
+    const { rows: warmupRows } = await this.db.query(
+      `SELECT sport, COUNT(*) AS rated, AVG(games_played)::numeric(8,2) AS avg_games
+       FROM ceelo_team_ratings WHERE games_played > 0 GROUP BY sport`
+    )
+    const warm = new Map<string, { rated: number; avgGames: number }>(
+      warmupRows.map((r: { sport: string; rated: number; avg_games: string }) => [
+        r.sport, { rated: Number(r.rated), avgGames: Number(r.avg_games) },
+      ])
+    )
+    const LEAGUE_SIZE: Record<Sport, number> = {
+      NFL: 32, NBA: 30, MLB: 30, NHL: 32,
+    }
+    const isWarm = (sport: Sport): boolean => {
+      const w = warm.get(sport)
+      if (!w) return false
+      return w.rated >= Math.ceil(LEAGUE_SIZE[sport] * 0.6) && w.avgGames >= 8
+    }
+
     // Latest spread per (game, book), joined with model line. Sport flows
     // through from ceelo_games so we can apply per-sport edge thresholds.
     const { rows } = await this.db.query(
@@ -595,8 +618,10 @@ export class CeeloLoop {
     if (!rows.length) return ''
 
     let inserted = 0
+    let skippedCold = 0
     for (const r of rows) {
       const sport: Sport = (r.sport as Sport) ?? 'NFL'
+      if (!isWarm(sport)) { skippedCold++; continue }
       const model = Number(r.model_spread)
       const book  = Number(r.book_spread)
       const edge  = +(book - model).toFixed(2)   // positive ⇒ home undervalued ⇒ take HOME
@@ -647,7 +672,10 @@ export class CeeloLoop {
 
       inserted++
     }
-    return inserted > 0 ? `C4 ${inserted} picks` : ''
+    const parts: string[] = []
+    if (inserted)    parts.push(`${inserted} picks`)
+    if (skippedCold) parts.push(`${skippedCold} cold-start skipped`)
+    return parts.length ? `C4 ${parts.join(' · ')}` : ''
   }
 
   // ── C5: reconcile open picks (stale lines, kicked-off games) ────────────
