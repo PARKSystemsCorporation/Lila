@@ -5,6 +5,7 @@ const SPORT_PATH: Record<Sport, string> = {
   NFL: 'football/nfl',
   NBA: 'basketball/nba',
   MLB: 'baseball/mlb',
+  NHL: 'hockey/nhl',
 }
 
 // ESPN's numeric team IDs — needed for the per-team endpoints (rosters,
@@ -198,6 +199,15 @@ export function defaultPriorSeasonRange(sport: Sport): { start: string; end: str
   if (sport === 'NBA') {
     // NBA runs Oct Y → June (Y+1). Previous season ended in June of
     // current year (or last year if we're before July).
+    const ended = now.getUTCMonth() >= 6 ? Y : Y - 1
+    return {
+      start: `${ended - 1}-10-01`,
+      end:   `${ended}-06-30`,
+      label: `${ended - 1}-${String(ended).slice(2)}`,
+    }
+  }
+  if (sport === 'NHL') {
+    // NHL runs Oct Y → June (Y+1). Same calendar shape as NBA.
     const ended = now.getUTCMonth() >= 6 ? Y : Y - 1
     return {
       start: `${ended - 1}-10-01`,

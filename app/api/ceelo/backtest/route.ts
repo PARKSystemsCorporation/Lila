@@ -6,7 +6,7 @@ import { ALL_SPORTS } from '@/lib/ceelo/teams'
 
 export const dynamic = 'force-dynamic'
 
-// POST /api/ceelo/backtest?sport=NFL|NBA|MLB|ALL
+// POST /api/ceelo/backtest?sport=NFL|NBA|MLB|NHL|ALL
 //
 // Walks every completed game chronologically, computing Ceelo's model
 // spread BEFORE applying each result, then comparing against the actual
@@ -27,6 +27,7 @@ const EDGE_THRESHOLD: Record<Sport, number> = {
   NFL: 1.5,
   NBA: 1.5,
   MLB: 0.75,
+  NHL: 0.75,
 }
 
 export async function POST(req: Request) {

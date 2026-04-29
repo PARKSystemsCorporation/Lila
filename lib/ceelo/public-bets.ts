@@ -15,6 +15,7 @@ const SPORT_PATH: Record<Sport, string> = {
   NFL: 'nfl',
   NBA: 'nba',
   MLB: 'mlb',
+  NHL: 'nhl',
 }
 
 // ESPN-canonical abbr lookup keyed on Action Network's city + name.
@@ -53,10 +54,25 @@ const MLB_TEAM_BY_NAME: Record<string, string> = {
   'Blue Jays': 'TOR', 'Nationals': 'WSH',
 }
 
+const NHL_TEAM_BY_NAME: Record<string, string> = {
+  'Ducks': 'ANA', 'Bruins': 'BOS', 'Sabres': 'BUF', 'Flames': 'CGY',
+  'Hurricanes': 'CAR', 'Blackhawks': 'CHI', 'Avalanche': 'COL',
+  'Blue Jackets': 'CBJ', 'Stars': 'DAL', 'Red Wings': 'DET',
+  'Oilers': 'EDM', 'Panthers': 'FLA', 'Kings': 'LA', 'Wild': 'MIN',
+  'Canadiens': 'MTL', 'Predators': 'NSH', 'Devils': 'NJ',
+  'Islanders': 'NYI', 'Rangers': 'NYR', 'Senators': 'OTT',
+  'Flyers': 'PHI', 'Penguins': 'PIT', 'Sharks': 'SJ',
+  'Kraken': 'SEA', 'Blues': 'STL', 'Lightning': 'TB',
+  'Maple Leafs': 'TOR', 'Mammoth': 'UTA', 'Hockey Club': 'UTA',
+  'Canucks': 'VAN', 'Golden Knights': 'VGK', 'Capitals': 'WSH',
+  'Jets': 'WPG',
+}
+
 const NAME_MAP: Record<Sport, Record<string, string>> = {
   NFL: NFL_TEAM_BY_NAME,
   NBA: NBA_TEAM_BY_NAME,
   MLB: MLB_TEAM_BY_NAME,
+  NHL: NHL_TEAM_BY_NAME,
 }
 
 export interface PublicBetEntry {

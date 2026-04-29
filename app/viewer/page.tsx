@@ -9,10 +9,10 @@ import { useRouter } from 'next/navigation'
 // Gumroad-license-gated; the operator at / sees the full app, viewers at
 // /viewer see only what's listed below. No chat, no config, no telemetry.
 //
-// Two tabs: EDGES (NFL / NBA / MLB game cards with predicted scores +
+// Two tabs: EDGES (NFL / NBA / MLB / NHL game cards with predicted scores +
 // traffic-light) and ARTICLES (published-only Substack drafts inline).
 
-type Sport = 'NFL' | 'NBA' | 'MLB'
+type Sport = 'NFL' | 'NBA' | 'MLB' | 'NHL'
 type Mode = 'edges' | 'articles'
 
 interface ViewerGame {
@@ -145,7 +145,7 @@ function EdgesPanel({ visible }: { visible: boolean }) {
       <div className="px-4 py-4 space-y-3">
         {/* Sport selector */}
         <div className="flex gap-2">
-          {(['NFL', 'NBA', 'MLB'] as Sport[]).map(s => (
+          {(['NFL', 'NBA', 'MLB', 'NHL'] as Sport[]).map(s => (
             <button
               key={s}
               onClick={() => setSport(s)}

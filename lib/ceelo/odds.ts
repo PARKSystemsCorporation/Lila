@@ -16,6 +16,7 @@ const SPORT_KEY: Record<Sport, string> = {
   NFL: 'americanfootball_nfl',
   NBA: 'basketball_nba',
   MLB: 'baseball_mlb',
+  NHL: 'icehockey_nhl',
 }
 
 export interface BookLine {
@@ -105,10 +106,31 @@ const MLB_NAME_TO_ABBR: Record<string, string> = {
   'Washington Nationals': 'WSH',
 }
 
+const NHL_NAME_TO_ABBR: Record<string, string> = {
+  'Anaheim Ducks': 'ANA', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF',
+  'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR', 'Chicago Blackhawks': 'CHI',
+  'Colorado Avalanche': 'COL', 'Columbus Blue Jackets': 'CBJ',
+  'Dallas Stars': 'DAL', 'Detroit Red Wings': 'DET', 'Edmonton Oilers': 'EDM',
+  'Florida Panthers': 'FLA', 'Los Angeles Kings': 'LA', 'Minnesota Wild': 'MIN',
+  'Montreal Canadiens': 'MTL', 'Montréal Canadiens': 'MTL',
+  'Nashville Predators': 'NSH', 'New Jersey Devils': 'NJ',
+  'New York Islanders': 'NYI', 'New York Rangers': 'NYR',
+  'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI',
+  'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'SJ',
+  'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'St Louis Blues': 'STL',
+  'Tampa Bay Lightning': 'TB', 'Toronto Maple Leafs': 'TOR',
+  // Coyotes relocated to Utah (Mammoth) — Odds API may emit either
+  // legacy or current name during the transition window.
+  'Utah Hockey Club': 'UTA', 'Utah Mammoth': 'UTA', 'Arizona Coyotes': 'UTA',
+  'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK',
+  'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG',
+}
+
 const NAME_TO_ABBR_BY_SPORT: Record<Sport, Record<string, string>> = {
   NFL: NFL_NAME_TO_ABBR,
   NBA: NBA_NAME_TO_ABBR,
   MLB: MLB_NAME_TO_ABBR,
+  NHL: NHL_NAME_TO_ABBR,
 }
 
 // Sport-aware fetch. Dispatches on sport key + name map.

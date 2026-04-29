@@ -3360,7 +3360,7 @@ interface CeeloStatus {
 }
 
 interface SportRollup {
-  sport: 'NFL' | 'NBA' | 'MLB'
+  sport: 'NFL' | 'NBA' | 'MLB' | 'NHL'
   operator: {
     open: number; active: number
     wins: number; losses: number; pushes: number
@@ -3463,7 +3463,7 @@ function PicksTab({ visible }: { visible: boolean }) {
 //   ● grey   — no model or no books yet
 // Operator can sort by time or by edge size, and filter to green-only.
 
-type EdgeSport = 'NFL' | 'NBA' | 'MLB'
+type EdgeSport = 'NFL' | 'NBA' | 'MLB' | 'NHL'
 
 interface BookLine { book: string; home_line: number }
 
@@ -3564,7 +3564,7 @@ function EdgeBoard({ visible }: { visible: boolean }) {
       <div className="px-4 py-4 space-y-3">
         {/* Sport selector */}
         <div className="flex gap-2">
-          {(['NFL', 'NBA', 'MLB'] as EdgeSport[]).map(s => (
+          {(['NFL', 'NBA', 'MLB', 'NHL'] as EdgeSport[]).map(s => (
             <button
               key={s}
               onClick={() => setSport(s)}
@@ -3979,7 +3979,7 @@ function CeeloChatView({ visible }: { visible: boolean }) {
         <span className="w-6 h-6 rounded-full bg-rose-950 border border-rose-800 flex items-center justify-center text-[10px] font-mono text-rose-400 font-semibold">C</span>
         <div className="flex-1 min-w-0">
           <p className="text-xs font-mono text-slate-200 font-semibold">Ceelo</p>
-          <p className="text-[9px] font-mono text-slate-600">NFL handicapper · grounded in his model</p>
+          <p className="text-[9px] font-mono text-slate-600">NFL · NBA · MLB · NHL handicapper · grounded in his model</p>
         </div>
       </div>
 
@@ -4072,7 +4072,7 @@ function BankrollCard({ summary }: { summary: PicksData['summary'] }) {
 // glance.
 
 interface BacktestRow {
-  sport: 'NFL' | 'NBA' | 'MLB'
+  sport: 'NFL' | 'NBA' | 'MLB' | 'NHL'
   total_games: number
   ats_wins: number | null
   ats_losses: number | null
@@ -4089,13 +4089,14 @@ interface BacktestRow {
 }
 
 function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
-  // Render fixed NFL/NBA/MLB order even if the API returns them differently.
-  const order: Array<'NFL' | 'NBA' | 'MLB'> = ['NFL', 'NBA', 'MLB']
+  // Render fixed NFL/NBA/MLB/NHL order even if the API returns them differently.
+  const order: Array<'NFL' | 'NBA' | 'MLB' | 'NHL'> = ['NFL', 'NBA', 'MLB', 'NHL']
   const map = new Map(rollups.map(r => [r.sport, r]))
   const SPORT_COLOR: Record<string, string> = {
     NFL: 'text-amber-300',
     NBA: 'text-blue-300',
     MLB: 'text-emerald-300',
+    NHL: 'text-cyan-300',
   }
 
   // Latest backtest result per sport. Loaded once + on demand.
@@ -4116,7 +4117,7 @@ function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
 
   const runBacktest = async () => {
     if (running) return
-    if (!confirm('Run Ceelo backtest across NFL + NBA + MLB?\n\nWalks every completed game in chronological order, computing his model line BEFORE each result and grading against the actual outcome. ~30s for the full set.')) return
+    if (!confirm('Run Ceelo backtest across NFL + NBA + MLB + NHL?\n\nWalks every completed game in chronological order, computing his model line BEFORE each result and grading against the actual outcome. ~30s for the full set.')) return
     setRunning(true)
     try {
       const res = await fetch('/api/ceelo/backtest?sport=ALL', { method: 'POST' })

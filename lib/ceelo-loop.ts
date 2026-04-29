@@ -7,20 +7,24 @@ import * as Odds from './ceelo/odds'
 import * as PublicBets from './ceelo/public-bets'
 import * as Nflverse from './ceelo/nflverse'
 import { applyGame, modelLine, DEFAULT_RATING, SPORT_CONFIG } from './ceelo/ratings'
-import { ALL_SPORTS, NFL_TEAMS, NBA_TEAMS, MLB_TEAMS, type Sport } from './ceelo/teams'
+import { ALL_SPORTS, NFL_TEAMS, NBA_TEAMS, MLB_TEAMS, NHL_TEAMS, type Sport } from './ceelo/teams'
 
 const TEAM_SET: Record<Sport, ReadonlySet<string>> = {
   NFL: NFL_TEAMS,
   NBA: NBA_TEAMS,
   MLB: MLB_TEAMS,
+  NHL: NHL_TEAMS,
 }
 
 // Edge threshold per sport (in line points) for C4. NBA needs a wider
 // gate because the lines move bigger; MLB run-line edge is tighter.
+// NHL puck line is fixed at ±1.5, so the edge gate operates on goal
+// differential — a half-goal threshold mirrors MLB's run-line cadence.
 const EDGE_PT_BY_SPORT: Record<Sport, number> = {
   NFL: 1.0,
   NBA: 1.5,
   MLB: 0.5,
+  NHL: 0.5,
 }
 
 // ── Ceelo: NFL handicapper, autonomy loop ─────────────────────────────────
@@ -329,8 +333,8 @@ export class CeeloLoop {
       } catch (e) { notes.push(`NFL ${err(e).slice(0,30)}`) }
     }
 
-    // NBA + MLB — ESPN date-range seed.
-    for (const sport of ['NBA', 'MLB'] as const) {
+    // NBA + MLB + NHL — ESPN date-range seed.
+    for (const sport of ['NBA', 'MLB', 'NHL'] as const) {
       if ((ratedBySport.get(sport) ?? 0) > 0) continue
       try {
         const res = await fetch(`http://127.0.0.1:${port}/api/ceelo/seed-prev?sport=${sport}`, { method: 'POST' })
@@ -774,7 +778,7 @@ export class CeeloLoop {
                 (SELECT COUNT(DISTINCT game_id) FROM ceelo_lines l
                  WHERE l.sport=s.sport AND l.fetched_at > NOW() - INTERVAL '24 hours') AS lines_24h,
                 (SELECT MAX(fetched_at) FROM ceelo_lines l WHERE l.sport=s.sport) AS last_lines_at
-         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)`
+         FROM (VALUES ('NFL'),('NBA'),('MLB'),('NHL')) AS s(sport)`
       ),
       // Surface key injuries — Out / Doubtful / IR — for teams with upcoming games.
       // Caps at 12 entries; the LLM doesn't need every depth-chart-3 sprained ankle.
@@ -923,7 +927,7 @@ export class CeeloLoop {
       : ''
 
     const depthCount = Number(s.depth_chart_rows ?? 0)
-    const prompt = `You are Ceelo, the multi-sport handicapper on Lila's team (NFL + NBA + MLB). The operator is talking to you one-on-one.
+    const prompt = `You are Ceelo, the multi-sport handicapper on Lila's team (NFL + NBA + MLB + NHL). The operator is talking to you one-on-one.
 
 Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. Be CONFIDENT about what you have — don't undersell. Only say you're missing data if it's literally not in the inventory below.
 

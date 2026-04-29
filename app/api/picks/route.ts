@@ -112,7 +112,7 @@ export async function GET() {
                 COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='push')        AS model_pushes,
                 COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NOT NULL)   AS model_settled,
                 COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NULL)       AS model_pending
-         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)
+         FROM (VALUES ('NFL'),('NBA'),('MLB'),('NHL')) AS s(sport)
          LEFT JOIN ceelo_picks p ON p.sport = s.sport
          GROUP BY s.sport
          ORDER BY s.sport`

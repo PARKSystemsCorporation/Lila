@@ -333,7 +333,7 @@ The specific signal that would invalidate the thesis.
 
 Output the markdown article only.`
 
-const CEELO_PROMPT = `You are Ceelo, NFL/NBA/MLB handicapper at Lila's shop. Today's noon Substack — your edge report across the slates.
+const CEELO_PROMPT = `You are Ceelo, NFL/NBA/MLB/NHL handicapper at Lila's shop. Today's noon Substack — your edge report across the slates.
 
 DATE: {DATE}
 

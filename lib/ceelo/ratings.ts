@@ -10,6 +10,10 @@ import type { Sport } from './teams'
 //   MLB — HFA 24 Elo (~0.24 runs), K 4, 10 Elo per run-line point. K is
 //         tiny because 162-game seasons are noisy and we don't want any
 //         single game to whip the rating around.
+//   NHL — HFA 50 Elo (~0.16 goals), K 6, 8 Elo per goal of margin.
+//         Hockey-Reference's well-known calibration: 82 games is long
+//         enough that K=6 keeps ratings stable while still tracking
+//         in-season form.
 
 export const DEFAULT_RATING = 1500
 
@@ -23,6 +27,7 @@ export const SPORT_CONFIG: Record<Sport, SportConfig> = {
   NFL: { HFA: 55,  K: 20, ELO_PER_PT: 25 },
   NBA: { HFA: 100, K: 20, ELO_PER_PT: 28 },
   MLB: { HFA: 24,  K: 4,  ELO_PER_PT: 10 },
+  NHL: { HFA: 50,  K: 6,  ELO_PER_PT: 8  },
 }
 
 // Back-compat: NFL constants (callers that haven't been migrated).

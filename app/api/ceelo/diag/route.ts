@@ -62,7 +62,7 @@ export async function GET() {
                 (SELECT COUNT(*) FROM ceelo_lines l       WHERE l.sport=s.sport AND l.fetched_at > NOW() - INTERVAL '6 hours')        AS lines_recent,
                 (SELECT MAX(fetched_at)::text FROM ceelo_lines l WHERE l.sport=s.sport)                                                AS last_lines_at,
                 (SELECT COUNT(*) FROM ceelo_model_lines m JOIN ceelo_games g ON g.id=m.game_id WHERE g.sport=s.sport)                  AS model_lines
-         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)`
+         FROM (VALUES ('NFL'),('NBA'),('MLB'),('NHL')) AS s(sport)`
       )
       dbState = rows
     } finally { db.release() }
