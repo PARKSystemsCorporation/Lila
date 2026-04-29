@@ -2,91 +2,97 @@ import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
+import * as Gitcoin from './bounties/gitcoin'
+import * as Algora  from './bounties/algora'
+import type { GitcoinPick } from './bounties/gitcoin'
 
-// ── Scout: volume bounty hunter ───────────────────────────────────────────
+// ── Scout: volume bounty hunter (auto-submit) ────────────────────────────
 //
-// Sibling to Cipher. Cipher goes deep on speculative audits and complex
-// DeFi for $15k+ payouts. Scout goes shallow + fast on $1-5k targets:
-// recently-listed protocols, forks of majors, post-seed scrappy projects.
-// Higher miss rate is acceptable. Goal: 5-10 submissions per week.
+// Scout pulls sub-$500 GitHub-issue bounties from Gitcoin + Algora and
+// drafts the FULL submission deliverable: a PR description in markdown
+// plus a unified diff. Lila reviews each draft (management-loop), and
+// when LILA_AUTO_SUBMIT=true + GITHUB_TOKEN is set, github-pr.ts opens
+// the PR under the Parks GitHub account.
 //
-// Reads from watch_targets (Discovery's pool). Writes drafts to
-// security_reports tagged source='scout' so Lila reviews them in the
-// same Library queue as Cipher's drafts. She knows scouts are at speed.
-//
-// Loop is one target per cycle, time-gated by SCOUT_RUN_SEC (default 5min).
-//
-//   S0 — Pick the freshest unscanned target from watch_targets.
-//        Skip targets we've already scanned (in scout_findings).
-//   S1 — Shallow LLM triage. Single low-token call. Output: severity,
-//        one-line summary, fix sketch.
-//   S2 — If severity ≥ medium, draft a security_reports row in
-//        pending_review for Lila + log a scout_findings row.
-//        Otherwise log scout_findings as 'dismissed' so we skip next time.
+// One step per cycle, time-gated by SCOUT_RUN_SEC (default 5min):
+//   S0 — If queue has no 'discovered' rows OR last_fetch is >1h old:
+//        pull from Gitcoin + Algora, dedup by (source, external_id),
+//        insert new ones as status='discovered'.
+//   S1 — Else: take the oldest 'discovered' row, attempt a deep draft
+//        (full PR body + diff). File as status='drafted' for Lila.
+//        On parse failure, mark status='rejected' so we skip next time.
 
-const SHALLOW_TRIAGE_PROMPT = `You are Scout, a high-volume bounty hunter on Lila's team. Cipher does deep audits; you grind small wins fast. Speed > thoroughness. Higher false-positive rate is acceptable — Lila reviews every draft before it goes out. Goal: stack $50-5k payouts.
+const FETCH_INTERVAL_MS = 60 * 60 * 1000   // 1h between full source pulls
+const REPO_TREE_CAP     = 60                // file paths included in prompt
+const MAX_BODY_TOKENS   = 4000              // truncate issue body
+const DRAFT_MAX_TOKENS  = 2000              // body+diff combined budget
 
-Triage this target. You have ~60 seconds of model time, not 60 minutes.
+const DRAFT_PROMPT = `You are Scout, the volume bounty executor on Lila's autonomous team. You produce SUBMISSION-READY pull-request deliverables for sub-$500 GitHub-issue bounties. Lila (your manager, the COO) reviews everything before it's submitted — you do not need to gate yourself, but DO NOT fabricate file paths, function names, or APIs you can't verify from the inputs below.
 
-TARGET:
-  Name:   {NAME}
-  Source: {SOURCE}
-  URL:    {URL}
-  Chain:  {CHAIN}
-  Scope:  {SCOPE}
+BOUNTY:
+  Source:  {SOURCE}
+  Title:   {TITLE}
+  Reward:  {REWARD}
+  Repo:    {REPO}
+  Issue:   #{ISSUE_NUMBER}
+  Labels:  {LABELS}
+  Language: {LANGUAGE}
+  Difficulty: {DIFFICULTY}
 
-CATEGORIES YOU CAN FLAG (any one is fair game — small wins compound):
+ISSUE BODY:
+---
+{BODY}
+---
 
-A) Security (the classic security_reports payload, $500-$5000):
-   1. Access control — missing onlyOwner, public functions that mutate state, unprotected admin entries.
-   2. Reentrancy — external calls before state writes, missing nonReentrant on payable / withdraw paths.
-   3. Oracle / price manipulation — single-source feeds, no TWAP, spot reads in liquidations.
-   4. Integer issues — unchecked math, rounding errors in shares/asset conversions.
-   5. Token approvals — infinite approvals on aggregator paths, missing safeTransfer.
-   6. Init / upgrade — uninitialized proxies, public initializers, missing storage gaps.
-   7. Forked code drift — minor mods to a known protocol that break invariants.
+REPO FILE TREE (paths only, may be partial — fewer than the real tree):
+{TREE}
 
-B) Gas optimization ($50-$500 — Immunefi calls these "low-hanging fruit"):
-   8. Storage slot packing — variables declared in wrong order, wasted slots.
-   9. Redundant SLOAD — same storage var read multiple times in a function.
-   10. unchecked{} blocks missing on safe arithmetic (post-0.8 Solidity).
-   11. Public → external on functions never called internally.
-   12. immutable / constant on values set once at deploy.
-   13. Custom errors instead of revert strings.
+Your job: draft a complete PR that closes this issue.
 
-C) Quick-fix code bounties ($50-$200 — Gitcoin / Code4rena micro-tickets):
-   14. Off-by-one in loops or array indexing.
-   15. Broken require / assert messages, swapped argument order.
-   16. Stale documentation that disagrees with the implementation.
-   17. Unsanitized inputs that produce confusing errors (not a vuln, just UX).
-
-Output strict JSON:
+Output strict JSON, no commentary, no markdown fences:
 {
-  "category": "security" | "gas" | "code",
-  "severity": "critical" | "high" | "medium" | "low" | "none",
-  "summary":  "one-sentence finding (or 'no obvious issues')",
-  "details":  "2-4 sentences: what + why + suggested fix. Empty if severity=none.",
-  "confidence": 0.0..1.0
+  "draft_title":  "PR title (imperative mood, ≤72 chars)",
+  "draft_body":   "Full PR description in markdown. Sections: ## Summary, ## Changes, ## Why this works, ## Testing notes. Reference 'Closes #{ISSUE_NUMBER}' at the bottom. 200-600 words. No fluff, no marketing voice, no apologies.",
+  "draft_diff":   "Unified diff that applies cleanly with 'git apply'. Use 'a/' and 'b/' prefixes. Include sufficient context (3 lines). If you cannot produce a complete diff with the inputs given, write a SCAFFOLD diff — best-attempt patches against the most likely files in the tree above — and note the assumption inside draft_body. NEVER invent paths that aren't in the tree.",
+  "files_touched": ["path/to/file.ext"],
+  "confidence":   0.0..1.0
 }
 
-Severity mapping rough guide:
-  - security:  critical = chain-of-funds risk, high = significant loss, medium = griefing/limited loss, low = best-practice
-  - gas:       high = >5000 gas saved per call, medium = 500-5000, low = <500
-  - code:      high = correctness bug operator-visible, medium = test-detectable defect, low = polish
+Confidence calibration:
+  ≥ 0.8  diff applies cleanly, you are certain it closes the issue
+  0.5-0.8 diff is correct in spirit, may need a small adjustment
+  < 0.5  uncertain about scope or paths — Lila will probably reject
 
-If you can't tell from the surface info alone, return severity="none" + summary="needs deeper scan — punt to Cipher". Don't fabricate findings — Lila will reject and your hit rate drops.`
+If the issue is too vague to attempt (no reproduction, no clear deliverable), respond with confidence=0 and draft_body explaining what info is missing. Do not fabricate.`
 
-interface RawTriage {
-  category?: string
-  severity?: string
-  summary?: string
-  details?: string
+interface DraftResponse {
+  draft_title?: string
+  draft_body?: string
+  draft_diff?: string
+  files_touched?: string[]
   confidence?: number
 }
 
 interface ScoutResult {
   logMessage: string
   logType: 'info' | 'success' | 'warn'
+}
+
+interface DiscoveredRow {
+  id: number
+  source: string
+  external_id: string
+  url: string
+  title: string
+  summary: string | null
+  payout_usd: string | null
+  payout_token: string | null
+  repo_url: string | null
+  issue_number: number | null
+  issue_body: string | null
+  language: string | null
+  labels: string[] | null
+  difficulty: string | null
 }
 
 export class ScoutLoop {
@@ -108,170 +114,235 @@ export class ScoutLoop {
 
   async run(): Promise<ScoutResult | null> {
     if (!(await this.shouldRun())) return null
-    if (!this.ai) {
-      await this.markStep()
-      return { logMessage: 'Scout: no LLM key, skipping.', logType: 'warn' }
+
+    // S0 candidate: do we need to fetch new bounties?
+    const { rows: [counts] } = await this.db.query(
+      `SELECT
+         (SELECT COUNT(*) FROM bounty_picks WHERE status='discovered')                 AS discovered,
+         (SELECT MAX(last_pick_at) FROM scout_state WHERE id=1)                        AS last_fetch_at`
+    )
+    const discoveredCount = Number(counts?.discovered ?? 0)
+    const lastFetchAt = counts?.last_fetch_at ? new Date(counts.last_fetch_at).getTime() : 0
+    const fetchStale = Date.now() - lastFetchAt > FETCH_INTERVAL_MS
+
+    if (discoveredCount === 0 || fetchStale) {
+      const fetchResult = await this.fetchSources().catch(e => ({
+        inserted: 0, _error: String(e).slice(0, 120),
+      }))
+      await this.markStep({ stampFetch: true })
+      const errSuffix = (fetchResult as { _error?: string })._error
+        ? ` (err: ${(fetchResult as { _error?: string })._error})` : ''
+      return {
+        logMessage: `Scout fetched bounties: +${fetchResult.inserted} discovered${errSuffix}`,
+        logType: fetchResult.inserted > 0 ? 'success' : 'info',
+      }
     }
 
-    // S0: pick a target.
-    const target = await this.pickTarget()
+    // S1: draft one discovered bounty.
+    if (!this.ai) {
+      await this.markStep({})
+      return { logMessage: 'Scout: no LLM key, skipping draft.', logType: 'warn' }
+    }
+
+    const target = await this.pickToDraft()
     if (!target) {
-      await this.markStep()
+      await this.markStep({})
       return { logMessage: 'Scout: queue empty, idle.', logType: 'info' }
     }
 
-    // S1: shallow triage.
-    let triage: RawTriage
+    let draft: DraftResponse
     try {
-      triage = await this.triage(target)
+      const tree = await fetchRepoTree(target.repo_url)
+      draft = await this.draft(target, tree)
     } catch (e) {
       if (e instanceof LLMBudgetExceeded) {
-        await this.markStep()
+        await this.markStep({})
         return { logMessage: 'Scout: budget hit, skipping.', logType: 'warn' }
       }
-      await this.markStep()
-      return { logMessage: `Scout triage error: ${String(e).slice(0, 120)}`, logType: 'warn' }
+      // Mark as rejected so we don't retry forever.
+      await this.db.query(
+        `UPDATE bounty_picks
+           SET status='rejected', review_notes=$1, reviewed_at=NOW(), updated_at=NOW()
+         WHERE id=$2`,
+        [`Draft error: ${String(e).slice(0, 200)}`, target.id]
+      )
+      await this.markStep({})
+      return { logMessage: `Scout draft error on "${target.title.slice(0, 60)}": ${String(e).slice(0, 80)}`, logType: 'warn' }
     }
 
-    const category = normalizeCategory(triage.category)
-    const severity = normalizeSeverity(triage.severity)
-    const summary = String(triage.summary ?? '').slice(0, 280).trim()
-    const details = String(triage.details ?? '').slice(0, 4000).trim()
-    const confidence = clamp01(triage.confidence) ?? 0.4
+    const title = (draft.draft_title ?? '').slice(0, 200).trim()
+    const body  = (draft.draft_body  ?? '').slice(0, 12_000).trim()
+    const diff  = (draft.draft_diff  ?? '').slice(0, 24_000)
+    const conf  = clamp01(draft.confidence) ?? 0.4
+    const files = Array.isArray(draft.files_touched) ? draft.files_touched.slice(0, 30) : []
 
-    // S2: log + (maybe) file report. We file gas/code low-severity too —
-    // Lila's whole point of Scout is grinding $50-$500 quick wins.
-    const minSeverity = category === 'security' ? ['critical', 'high', 'medium'] : ['high', 'medium', 'low']
-    const shouldReport = minSeverity.includes(severity) && summary && details
-    let reportId: number | null = null
-
-    if (shouldReport) {
-      const reportKind = category === 'security' ? 'security' : 'code'
-      const { rows: [row] } = await this.db.query(
-        `INSERT INTO security_reports
-           (bounty_id, platform, platform_label, title, reward, chain, url,
-            content, confidence, status, source, kind)
-         VALUES ($1, 'scout', 'Scout (volume)', $2, $3, $4, $5, $6, $7, 'pending_review', 'scout', $8)
-         ON CONFLICT (bounty_id) DO UPDATE
-           SET content=$6, confidence=$7, status='pending_review', updated_at=NOW()
-         RETURNING id`,
-        [
-          `scout:${target.id}:${category}:${severity}`,
-          `[Scout/${category}/${severity}] ${target.name}: ${summary.slice(0, 100)}`,
-          guessReward(category, severity),
-          target.chain ?? null,
-          target.url ?? null,
-          renderReportBody(target, category, severity, summary, details, confidence),
-          confidence,
-          reportKind,
-        ]
+    // Junk-output guard: title or body missing → rejected, don't queue.
+    if (!title || !body || conf < 0.15) {
+      await this.db.query(
+        `UPDATE bounty_picks
+           SET status='rejected',
+               review_notes='Draft was too thin (Scout self-rejected pre-Lila).',
+               review_confidence=$1,
+               reviewed_at=NOW(), updated_at=NOW()
+         WHERE id=$2`,
+        [conf, target.id]
       )
-      reportId = Number(row.id)
+      await this.markStep({})
+      return {
+        logMessage: `Scout self-rejected "${target.title.slice(0, 60)}" (conf=${conf.toFixed(2)})`,
+        logType: 'info',
+      }
     }
 
     await this.db.query(
-      `INSERT INTO scout_findings
-         (target_id, target_name, target_url, severity, summary, details, report_id, status, scanned_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
-      [
-        target.id, target.name, target.url ?? null,
-        severity, summary || null, details || null,
-        reportId,
-        shouldReport ? 'reported' : 'dismissed',
-      ]
+      `UPDATE bounty_picks
+         SET status='drafted',
+             draft_title=$1,
+             draft_body=$2,
+             draft_diff=$3,
+             draft_files=$4::jsonb,
+             review_confidence=$5,
+             drafted_at=NOW(),
+             updated_at=NOW()
+       WHERE id=$6`,
+      [title, body, diff || null, JSON.stringify(files), conf, target.id]
     )
 
-    await this.markStep()
-
-    if (shouldReport) {
-      return {
-        logMessage: `Scout filed ${severity} on ${target.name}: ${summary.slice(0, 80)}`,
-        logType: 'success',
-      }
-    }
+    await this.markStep({})
     return {
-      logMessage: `Scout scanned ${target.name} — no flag (${severity}).`,
-      logType: 'info',
+      logMessage: `Scout drafted ${target.source} bounty: "${title.slice(0, 70)}" (conf=${conf.toFixed(2)})`,
+      logType: 'success',
     }
   }
 
-  // ── S0 ────────────────────────────────────────────────────────────────
+  // ── S0: source pull ───────────────────────────────────────────────────
 
-  private async pickTarget(): Promise<TargetRow | null> {
-    // Freshest watching target we haven't scanned yet. Prefer recent
-    // listings (they're likeliest to have shipped fast / unaudited).
+  private async fetchSources(): Promise<{ inserted: number }> {
+    const sources: { name: 'gitcoin' | 'algora'; picks: GitcoinPick[] }[] = []
+    try {
+      const g = await Gitcoin.fetchOpenBounties(500)
+      sources.push({ name: 'gitcoin', picks: g })
+    } catch { /* skip on error */ }
+    try {
+      const a = await Algora.fetchOpenBounties(500)
+      sources.push({ name: 'algora', picks: a })
+    } catch { /* skip on error */ }
+
+    let inserted = 0
+    for (const { name, picks } of sources) {
+      for (const p of picks) {
+        // GitHub-issue bounties only — submitter is GitHub-PR based.
+        if (!p.repo_url) continue
+        const { rowCount } = await this.db.query(
+          `INSERT INTO bounty_picks
+             (source, external_id, url, title, summary, payout_usd, payout_token,
+              payout_token_amount, repo_url, issue_number, issue_body, language,
+              labels, difficulty, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'discovered')
+           ON CONFLICT (source, external_id) DO NOTHING`,
+          [
+            name,
+            p.external_id,
+            p.url,
+            p.title,
+            p.summary,
+            p.payout_usd,
+            p.payout_token,
+            p.payout_token_amount,
+            p.repo_url,
+            p.issue_number,
+            p.issue_body,
+            p.language,
+            p.labels.length ? p.labels : null,
+            p.difficulty,
+          ]
+        )
+        if (rowCount && rowCount > 0) inserted++
+      }
+    }
+    return { inserted }
+  }
+
+  // ── S1: draft selection ───────────────────────────────────────────────
+
+  private async pickToDraft(): Promise<DiscoveredRow | null> {
     const { rows } = await this.db.query(
-      `SELECT id, source, external_id, name, url, chain, scope, listed_at, first_seen_at
-       FROM watch_targets
-       WHERE status = 'watching'
-         AND id NOT IN (SELECT target_id FROM scout_findings WHERE target_id IS NOT NULL)
-       ORDER BY COALESCE(listed_at, first_seen_at) DESC
-       LIMIT 1`
+      `SELECT id, source, external_id, url, title, summary, payout_usd,
+              payout_token, repo_url, issue_number, issue_body, language,
+              labels, difficulty
+         FROM bounty_picks
+        WHERE status='discovered'
+        ORDER BY
+          -- Prefer beginner > intermediate > advanced > unknown.
+          CASE difficulty
+            WHEN 'beginner'     THEN 0
+            WHEN 'intermediate' THEN 1
+            WHEN 'advanced'     THEN 2
+            ELSE 3
+          END,
+          -- Then by largest payout (most $/draft cost).
+          payout_usd DESC NULLS LAST,
+          created_at ASC
+        LIMIT 1`
     )
     return rows[0] ?? null
   }
 
-  // ── S1 ────────────────────────────────────────────────────────────────
+  // ── S1: deep draft ────────────────────────────────────────────────────
 
-  private async triage(target: TargetRow): Promise<RawTriage> {
-    const prompt = SHALLOW_TRIAGE_PROMPT
-      .replace('{NAME}',   target.name)
-      .replace('{SOURCE}', target.source)
-      .replace('{URL}',    target.url ?? '(no url)')
-      .replace('{CHAIN}',  target.chain ?? '(no chain)')
-      .replace('{SCOPE}',  (target.scope ?? '(no scope blurb)').slice(0, 800))
+  private async draft(target: DiscoveredRow, tree: string[]): Promise<DraftResponse> {
+    const reward = target.payout_usd
+      ? `$${parseFloat(target.payout_usd).toFixed(2)}${target.payout_token ? ' ' + target.payout_token : ''}`
+      : '(unspecified)'
+    const labels = (target.labels && target.labels.length) ? target.labels.join(', ') : '(none)'
+    const treeBlob = tree.length ? tree.slice(0, REPO_TREE_CAP).join('\n') : '(repo tree unavailable — work from issue body alone)'
+
+    const prompt = DRAFT_PROMPT
+      .replace(/\{SOURCE\}/g,       target.source)
+      .replace(/\{TITLE\}/g,        target.title)
+      .replace(/\{REWARD\}/g,       reward)
+      .replace(/\{REPO\}/g,         target.repo_url ?? '(no repo)')
+      .replace(/\{ISSUE_NUMBER\}/g, String(target.issue_number ?? '?'))
+      .replace(/\{LABELS\}/g,       labels)
+      .replace(/\{LANGUAGE\}/g,     target.language ?? '(unknown)')
+      .replace(/\{DIFFICULTY\}/g,   target.difficulty ?? '(unspecified)')
+      .replace(/\{BODY\}/g,         truncate(target.issue_body ?? target.summary ?? '(no body)', MAX_BODY_TOKENS))
+      .replace(/\{TREE\}/g,         treeBlob)
 
     const { content } = await llmCall({
       ai: this.ai!,
-      module: 'scout.triage',
+      module: 'scout.draft',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 350,
-      temperature: 0.2,
+      max_tokens: DRAFT_MAX_TOKENS,
+      temperature: 0.3,
     })
-    try {
-      return JSON.parse(content.replace(/```json|```/g, '').trim())
-    } catch {
-      return { severity: 'none', summary: 'malformed triage output', details: '', confidence: 0 }
-    }
+    return safeParse<DraftResponse>(content, {
+      draft_title: '',
+      draft_body: '',
+      draft_diff: '',
+      files_touched: [],
+      confidence: 0,
+    })
   }
 
   // ── helpers ───────────────────────────────────────────────────────────
 
-  private async markStep(): Promise<void> {
-    await this.db.query(
-      `UPDATE scout_state SET last_step_at=NOW(), cycle=cycle+1, updated_at=NOW() WHERE id=1`
-    )
+  private async markStep(opts: { stampFetch?: boolean }): Promise<void> {
+    if (opts.stampFetch) {
+      await this.db.query(
+        `UPDATE scout_state
+           SET last_step_at=NOW(), last_pick_at=NOW(), cycle=cycle+1, updated_at=NOW()
+         WHERE id=1`
+      )
+    } else {
+      await this.db.query(
+        `UPDATE scout_state SET last_step_at=NOW(), cycle=cycle+1, updated_at=NOW() WHERE id=1`
+      )
+    }
   }
 }
 
-// ── types ────────────────────────────────────────────────────────────────
-
-interface TargetRow {
-  id: number
-  source: string
-  external_id: string
-  name: string
-  url: string | null
-  chain: string | null
-  scope: string | null
-  listed_at: string | null
-  first_seen_at: string
-}
-
 // ── pure helpers ─────────────────────────────────────────────────────────
-
-function normalizeSeverity(s: string | undefined): string {
-  const v = String(s ?? '').toLowerCase().trim()
-  if (['critical', 'high', 'medium', 'low', 'none'].includes(v)) return v
-  return 'none'
-}
-
-function normalizeCategory(c: string | undefined): 'security' | 'gas' | 'code' {
-  const v = String(c ?? '').toLowerCase().trim()
-  if (v === 'gas')  return 'gas'
-  if (v === 'code') return 'code'
-  return 'security'
-}
 
 function clamp01(n: unknown): number | null {
   if (n == null || !Number.isFinite(n as number)) return null
@@ -281,65 +352,59 @@ function clamp01(n: unknown): number | null {
   return +v.toFixed(2)
 }
 
-// Heuristic max-bounty by category × severity. Scout's targets are smaller
-// protocols and tighter brackets than Cipher's deep-audit drafts.
-//   security: standard Immunefi-style brackets
-//   gas:      Immunefi "low-hanging fruit" + Code4rena gas pools, ~$50-500
-//   code:     Gitcoin / Code4rena micro-tickets, ~$50-200
-function guessReward(category: 'security' | 'gas' | 'code', severity: string): number {
-  if (category === 'security') {
-    switch (severity) {
-      case 'critical': return 5000
-      case 'high':     return 2500
-      case 'medium':   return 1000
-      case 'low':      return 250
-      default:         return 0
-    }
-  }
-  if (category === 'gas') {
-    switch (severity) {
-      case 'high':   return 500
-      case 'medium': return 200
-      case 'low':    return 75
-      default:       return 0
-    }
-  }
-  // code
-  switch (severity) {
-    case 'high':   return 200
-    case 'medium': return 100
-    case 'low':    return 50
-    default:       return 0
-  }
+function safeParse<T>(s: string, fallback: T): T {
+  const cleaned = s.replace(/```json|```/g, '').trim()
+  try { return JSON.parse(cleaned) as T } catch { return fallback }
 }
 
-function renderReportBody(
-  target: TargetRow,
-  category: 'security' | 'gas' | 'code',
-  severity: string,
-  summary: string,
-  details: string,
-  confidence: number,
-): string {
-  const kind = category === 'security' ? 'Security finding'
-             : category === 'gas'      ? 'Gas optimization'
-             : 'Quick-fix code bounty'
-  return [
-    `# ${target.name}`,
-    '',
-    `Type: ${kind}`,
-    `Severity: ${severity}`,
-    `Confidence: ${(confidence * 100).toFixed(0)}%`,
-    `Source: ${target.source}`,
-    target.chain ? `Chain: ${target.chain}` : null,
-    target.url   ? `URL: ${target.url}`     : null,
-    '',
-    `## Finding`,
-    summary,
-    '',
-    `## Details`,
-    details,
-    '',
-    `_Filed by Scout (volume triage). Lila to review at speed before submission._`,
-  ].filter(Boolean).join('\n')
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max) + '\n\n[…truncated]'
+}
+
+// Best-effort GitHub repo tree fetch. Public repos work unauth'd at 60
+// req/hr; with GITHUB_TOKEN we get 5000 req/hr. Returns up to a few
+// hundred file paths (capped by the API). Empty array on any error.
+async function fetchRepoTree(repoUrl: string | null): Promise<string[]> {
+  if (!repoUrl) return []
+  const m = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/)
+  if (!m) return []
+  const owner = m[1]
+  const repo  = m[2].replace(/\.git$/, '')
+
+  const headers: Record<string, string> = {
+    'accept': 'application/vnd.github+json',
+    'user-agent': 'Lila/Scout',
+  }
+  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+
+  try {
+    // Resolve default branch.
+    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers, signal: AbortSignal.timeout(10_000),
+    })
+    if (!repoRes.ok) return []
+    const repoJson = await repoRes.json() as { default_branch?: string }
+    const branch = repoJson.default_branch ?? 'main'
+
+    const treeRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+      { headers, signal: AbortSignal.timeout(15_000) }
+    )
+    if (!treeRes.ok) return []
+    const treeJson = await treeRes.json() as { tree?: { path?: string; type?: string }[] }
+    const paths = (treeJson.tree ?? [])
+      .filter(t => t.type === 'blob' && typeof t.path === 'string')
+      .map(t => t.path as string)
+      // Filter out huge / generated trees that don't help drafting.
+      .filter(p => !p.startsWith('node_modules/'))
+      .filter(p => !p.startsWith('vendor/'))
+      .filter(p => !p.startsWith('dist/'))
+      .filter(p => !p.startsWith('build/'))
+      .filter(p => !p.endsWith('.lock'))
+      .filter(p => !p.endsWith('.min.js'))
+    return paths
+  } catch {
+    return []
+  }
 }

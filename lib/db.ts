@@ -500,6 +500,69 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_viewers_active ON viewers(active, verified_at DESC);
 
+    -- Scout's volume-bounty pipeline. Sourced from Gitcoin + Algora (and
+    -- whichever sources we add later). Each row carries the FULL submission
+    -- deliverable (markdown PR body + unified diff) so Lila can review +
+    -- approve without operator involvement, and the GitHub PR worker (if
+    -- LILA_AUTO_SUBMIT=true and GITHUB_TOKEN configured) can open the PR
+    -- automatically.
+    --
+    -- Status flow:
+    --   discovered    → pulled from source, not yet drafted
+    --   drafted       → Scout produced a deliverable, awaiting Lila review
+    --   approved      → Lila approved; ready to submit (if auto-submit off,
+    --                   waits for operator; if on, PR worker takes it)
+    --   submitted     → PR opened (auto or manual)
+    --   paid          → bounty paid out (operator marks; eventually source-
+    --                   side webhook in a future iteration)
+    --   rejected      → Lila or operator rejected; soft-delete
+    CREATE TABLE IF NOT EXISTS bounty_picks (
+      id              SERIAL      PRIMARY KEY,
+      source          TEXT        NOT NULL,                  -- 'gitcoin' | 'algora'
+      external_id     TEXT        NOT NULL,                  -- source-specific id; uniqueness is per-source
+      url             TEXT        NOT NULL,
+      title           TEXT        NOT NULL,
+      summary         TEXT,
+      payout_usd      NUMERIC(12,2),                          -- listed reward in USD (best-effort)
+      payout_token    TEXT,                                   -- 'USDC' / 'ETH' / etc when crypto
+      payout_token_amount NUMERIC(20,6),                      -- raw token amount
+      repo_url        TEXT,                                   -- GitHub repo (if available)
+      issue_number    INTEGER,                                -- GitHub issue # (if linked)
+      issue_body      TEXT,                                   -- full issue text snapshot for drafting
+      language        TEXT,                                   -- primary language hint
+      labels          TEXT[],                                 -- source-side labels
+      difficulty      TEXT,                                   -- 'beginner' | 'intermediate' | 'advanced' | NULL
+      status          TEXT        NOT NULL DEFAULT 'discovered',
+      -- Drafted deliverable (Scout's S2 output)
+      draft_title     TEXT,
+      draft_body      TEXT,                                   -- full PR description in markdown
+      draft_diff      TEXT,                                   -- unified diff to apply
+      draft_files     JSONB,                                  -- [{ path, contents }] for non-diff workflows
+      draft_token_count INTEGER,
+      drafted_at      TIMESTAMPTZ,
+      -- Lila's review
+      review_decision TEXT,                                   -- 'approved' | 'rejected'
+      review_notes    TEXT,
+      review_confidence NUMERIC(3,2),
+      reviewed_at     TIMESTAMPTZ,
+      -- Submission state
+      pr_url          TEXT,
+      pr_number       INTEGER,
+      submitted_at    TIMESTAMPTZ,
+      submit_error    TEXT,
+      -- Payout state
+      paid_amount_usd NUMERIC(12,2),
+      paid_at         TIMESTAMPTZ,
+      -- Telemetry
+      tg_alerted_at   TIMESTAMPTZ,                            -- alerts.ts dedup
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (source, external_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bounty_picks_status   ON bounty_picks(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bounty_picks_pending  ON bounty_picks(status, drafted_at)
+      WHERE status='discovered' OR status='drafted';
+
     -- Per-team-per-season EPA aggregates from nflverse play-by-play.
     -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).
     -- We fetch the season pbp CSV in /api/ceelo/seed, aggregate to these
