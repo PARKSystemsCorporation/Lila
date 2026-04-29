@@ -146,14 +146,16 @@ Open positions:
 
 Rules:
 - Long only.
+- Strategy: BUY COMMODITY LOWS WITH HISTORICAL TRIGGERS. Edge is technical mean-reversion on the commodity ETF complex, not geopolitical narrative.
 - Sizing is agnostic; small-account trades are fine.
 - Every trade MUST have a TIGHT stop (close to entry, tight enough that a single bad candle takes you out, not a 7% stop).
 - Be aggressive cutting losers. Let winners run only if thesis holds.
+- Stance is one numeric line about the trading book — drawdown depth on commodities, what's near a 20-day low, what's reclaiming sma20. Do NOT write geopolitical commentary (no Hormuz, no oil-route, no tariff/war takes). If a Vega note is geopolitical, ignore it.
 
 Respond with ONLY valid JSON:
 {
-  "stance": "1-2 sentence read on the market and your posture today",
-  "trades": [{"symbol":"XYZ","entry":12.34,"target":13.20,"stop":12.10,"confidence":0.7,"reason":"one sentence"}],
+  "stance": "1-2 sentence read of the commodity book — levels and posture, no geopolitics",
+  "trades": [{"symbol":"XYZ","entry":12.34,"target":13.20,"stop":12.10,"confidence":0.7,"reason":"one sentence with numeric trigger"}],
   "positionActions": [{"symbol":"XYZ","action":"HOLD|CLOSE","reason":"one sentence"}]
 }`
 

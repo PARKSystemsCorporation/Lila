@@ -754,6 +754,16 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_ceelo_picks_sport_model_outcome
       ON ceelo_picks(sport, model_outcome) WHERE source='model';
                                                   -- 'llm' (v1) | 'model' (v2 math-driven)
+
+    -- Ceelo RL feedback: every projected game gets graded against the
+    -- final score so Ceelo can see model calibration in chat — not just
+    -- the picks that crossed the edge gate. The pre-kickoff model_spread
+    -- is preserved automatically (C3 only updates 'scheduled' rows).
+    ALTER TABLE ceelo_model_lines ADD COLUMN IF NOT EXISTS actual_margin NUMERIC(6,2);
+    ALTER TABLE ceelo_model_lines ADD COLUMN IF NOT EXISTS margin_error  NUMERIC(6,2);
+    ALTER TABLE ceelo_model_lines ADD COLUMN IF NOT EXISTS graded_at     TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS idx_ceelo_model_lines_graded
+      ON ceelo_model_lines(sport, graded_at DESC) WHERE graded_at IS NOT NULL;
   `)
   schemaReady = true
 }

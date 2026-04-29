@@ -108,7 +108,7 @@ export class AnalystLoop {
     const headlines = news.map(n => `- ${n.headline} (${n.symbols?.join(',') ?? ''})`).join('\n')
     const res = await this.llm(
       'analyst.t1',
-      `Vega reviewing macro/commodity/ETF news. No biotech, no retail.\n\n${headlines}\n\nBreaking thesis? JSON: { "thesis": true/false, "summary": "one sentence" }`,
+      `Vega reviewing macro/commodity/ETF news. Filter: only return thesis:true if the headline catalyzes a TECHNICAL setup on a commodity ETF already trading near a 20-day low. Do not summarize geopolitical narrative — geopolitics is not the thesis, the chart is. No biotech, no retail.\n\n${headlines}\n\nJSON: { "thesis": true/false, "summary": "one sentence — name the symbol + level, not the news theme" }`,
       100
     )
     const d = this.parse(res, { thesis: false, summary: 'No strong signal.' })
@@ -124,14 +124,53 @@ export class AnalystLoop {
     const bars = await Alpaca.getBars(ALL, 25).catch(() => [] as Alpaca.BarData[])
     if (bars.length < 3) return { msg: 'Insufficient data.', trade: false }
 
-    const data = bars
-      .map(b => `${b.symbol}: $${b.price.toFixed(2)} sma20=$${b.sma20.toFixed(2)} mom=${b.momentum.toFixed(1)}% vol=${b.volumeRatio.toFixed(2)}x`)
+    const commoditySet = new Set<string>(WATCHLIST.commodity)
+
+    // Tag each bar with its 20-day range position. The "commodity-low"
+    // trigger we want to surface: a commodity ETF within ~3% of its
+    // 20-day low and at least 6% off the high (a real drawdown, not chop).
+    // Volume ≥ 0.9x average filters dead tape from a real washout/reclaim.
+    const enriched = bars.map(b => {
+      const isCommodity = commoditySet.has(b.symbol)
+      const drawdown = b.pctFromHigh   // negative number
+      const offLow   = b.pctFromLow    // positive — 0 means AT the low
+      const trigger = isCommodity
+        && offLow <= 3
+        && drawdown <= -6
+        && b.volumeRatio >= 0.9
+      return { b, isCommodity, drawdown, offLow, trigger }
+    })
+
+    // Sort so the trigger candidates appear first — keeps the LLM
+    // anchored on the actionable setups instead of the leveraged-index
+    // momentum noise.
+    enriched.sort((x, y) => Number(y.trigger) - Number(x.trigger) || x.offLow - y.offLow)
+
+    const data = enriched
+      .map(({ b, isCommodity, drawdown, offLow, trigger }) => {
+        const tag = trigger ? '  ★COMMODITY-LOW TRIGGER' : isCommodity ? '  (commodity)' : ''
+        return `${b.symbol}: $${b.price.toFixed(2)} sma20=$${b.sma20.toFixed(2)} mom=${b.momentum.toFixed(1)}% vol=${b.volumeRatio.toFixed(2)}x dd=${drawdown.toFixed(1)}% offLow=${offLow.toFixed(1)}%${tag}`
+      })
       .join('\n')
+
+    const triggers = enriched.filter(e => e.trigger).map(e => e.b.symbol)
+    const triggerLine = triggers.length
+      ? `\nCOMMODITY-LOW TRIGGERS HOT: ${triggers.join(', ')}. These are the priority candidates today.`
+      : `\nNo commodity-low trigger fired today. If nothing else is screaming, return thesis:false.`
 
     const res = await this.llm(
       'analyst.t2',
-      `Vega scanning commodity ETFs, leveraged S&P/NQ, global macro. Long only, no biotech, no retail.\n\n${data}\n\nAny thesis? JSON: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"reason":"one sentence"}], "summary": "one sentence" }`,
-      250
+      `You are Vega. Strategy: BUY COMMODITY LOWS WITH HISTORICAL TRIGGERS. Long only. No biotech. No retail. No geopolitics — the edge is technical mean-reversion on the commodity ETF complex (GLD/SLV/USO/GDX/UNG/CPER/PDBC), with leveraged-index dips as a secondary book. Geopolitical narrative is forbidden output: pin theses to drawdown depth, position-in-range, volume profile, and an explicit historical analog.
+
+${data}${triggerLine}
+
+Filing rules:
+- Only file a pick when offLow ≤ 4% AND drawdown ≤ -6% AND volRatio ≥ 0.9 (washout/reclaim shape) — ideally a flagged COMMODITY-LOW TRIGGER row.
+- Each "reason" MUST cite the trigger numerically (e.g. "USO -9.4% off high, 1.8% off 20d low, 1.4x vol — 2020/2023 washout shape").
+- If nothing meets the filter, return { "thesis": false, "picks": [], "summary": "no trigger today" }.
+
+JSON only: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"reason":"one sentence with numeric trigger + historical analog"}], "summary": "one sentence" }`,
+      280
     )
     const d = this.parse(res, { thesis: false, picks: [], summary: 'No setup.' })
 
@@ -151,10 +190,25 @@ export class AnalystLoop {
   // ── T-3: Research ──────────────────────────────────────────────────────────
 
   private async t3(): Promise<string> {
+    // Pull fresh range data for the commodity book so the research note
+    // is anchored on actual drawdown numbers, not free-form macro prose.
+    const bars = await Alpaca.getBars(WATCHLIST.commodity, 25).catch(() => [] as Alpaca.BarData[])
+    const snapshot = bars.length
+      ? bars.map(b => `${b.symbol}: $${b.price.toFixed(2)} dd=${b.pctFromHigh.toFixed(1)}% offLow=${b.pctFromLow.toFixed(1)}% vol=${b.volumeRatio.toFixed(2)}x`).join('\n')
+      : '(no commodity bar data)'
+
     const res = await this.llm(
       'analyst.t3',
-      'You are Vega. No trade setup today. Write 3-5 bullet research notes: what to watch next and why. Focus on commodity ETFs, leveraged indices, global macro.',
-      180
+      `You are Vega. No trade fired this cycle. File a TIGHT watchlist note for the commodity ETF book — strictly technical, strictly numeric, NO geopolitics, NO macro essays, NO Hormuz/oil-route/Fed commentary.
+
+Current 20-day range:
+${snapshot}
+
+Output format — 3-5 bullets, each one symbol:
+- SYMBOL: trigger level $X.XX (≤3% off 20d low) · invalidation $Y.YY (below 20d low) · historical analog ("2020 washout", "2023 GDX double-bottom", etc.) — one phrase, no narrative.
+
+That's the entire output. No preamble, no "themes to watch", no oil/gold/dollar geopolitical context. If you find yourself typing the words "Hormuz", "tariff", "Fed", "war", "geopolitical" — stop and rewrite that bullet as a price level instead.`,
+      200
     )
     const date = today()
     await this.note(`analyst/notes/research-${date}.md`, `# Research ${date}\n\n${res}`)

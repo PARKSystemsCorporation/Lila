@@ -379,6 +379,24 @@ export class CeeloLoop {
         `UPDATE ceelo_games SET graded_at=NOW(), updated_at=NOW() WHERE id=$1`,
         [g.id]
       )
+
+      // RL feedback: grade the pre-kickoff model_spread against the
+      // actual home margin. C3 only refreshes 'scheduled' rows so the
+      // value sitting on ceelo_model_lines now is the last projection
+      // before the game tipped off.
+      //
+      // Convention: model_spread is a HOME spread (negative = home
+      // favored). Predicted home margin = -model_spread. Error is
+      // signed so a positive value = model was too low on the home team.
+      const actualMargin = Number(g.home_score) - Number(g.away_score)
+      await this.db.query(
+        `UPDATE ceelo_model_lines
+            SET actual_margin = $1,
+                margin_error  = $1 - (-model_spread),
+                graded_at     = NOW()
+          WHERE game_id = $2 AND model_spread IS NOT NULL AND graded_at IS NULL`,
+        [actualMargin, g.id]
+      )
       graded++
     }
     await this.db.query(`UPDATE ceelo_state SET last_grade_at=NOW() WHERE id=1`)
@@ -718,7 +736,7 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
-    const [topRated, openPicks, status, perSport, keyInjuries, epaTop, epaBottom, epaSeasonInfo] = await Promise.all([
+    const [topRated, openPicks, status, perSport, keyInjuries, epaTop, epaBottom, epaSeasonInfo, projAccuracy, projRecent] = await Promise.all([
       this.db.query(
         `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
          WHERE games_played > 0
@@ -805,6 +823,36 @@ export class CeeloLoop {
                 COUNT(*) AS rows
          FROM ceelo_team_epa`
       ),
+      // Projection-vs-actual aggregate per sport (last 60 days). This is
+      // Ceelo's RL feedback channel: every game he projected gets graded
+      // against the final score, so we can show him calibration drift —
+      // not just the picks that crossed the edge gate.
+      this.db.query(
+        `SELECT g.sport,
+                COUNT(*)                                AS games,
+                ROUND(AVG(ABS(m.margin_error))::numeric, 2) AS mae,
+                ROUND(AVG(m.margin_error)::numeric, 2)      AS bias,
+                COUNT(*) FILTER (
+                  WHERE SIGN(m.actual_margin) = SIGN(-m.model_spread)
+                )                                       AS side_correct
+         FROM ceelo_model_lines m
+         JOIN ceelo_games g ON g.id = m.game_id
+         WHERE m.graded_at IS NOT NULL
+           AND m.graded_at > NOW() - INTERVAL '60 days'
+         GROUP BY g.sport`
+      ),
+      // Worst-miss recent projections — concrete examples Ceelo can
+      // reference when explaining his model's calibration.
+      this.db.query(
+        `SELECT g.sport, g.home_team, g.away_team,
+                m.model_spread, m.actual_margin, m.margin_error
+         FROM ceelo_model_lines m
+         JOIN ceelo_games g ON g.id = m.game_id
+         WHERE m.graded_at IS NOT NULL
+           AND m.graded_at > NOW() - INTERVAL '14 days'
+         ORDER BY ABS(m.margin_error) DESC
+         LIMIT 5`
+      ),
     ])
 
     const topRatedStr = topRated.rows.length
@@ -858,6 +906,22 @@ export class CeeloLoop {
       return `  ${r.sport}: ${Number(r.rated)} teams rated · ${Number(r.upcoming)} upcoming · ${Number(r.lines_24h)} lines in last 24h (last fetch ${ageStr})`
     }).join('\n')
 
+    // Ceelo RL feedback — every projected game graded against actual.
+    // Surfaces calibration drift even when no pick was emitted.
+    const projAccuracyStr = projAccuracy.rows.length
+      ? projAccuracy.rows.map((r: { sport: string; games: number; mae: string; bias: string; side_correct: number }) => {
+          const games = Number(r.games)
+          const sidePct = games > 0 ? ((Number(r.side_correct) / games) * 100).toFixed(0) : '0'
+          return `  ${r.sport}: ${games}g · MAE ${Number(r.mae).toFixed(2)} pts · bias ${signed(r.bias)} (${Number(r.bias) > 0 ? 'home-skewed' : Number(r.bias) < 0 ? 'away-skewed' : 'centered'}) · side ${sidePct}%`
+        }).join('\n')
+      : '  (no graded projections yet — every C1 finalize stamps actual margin onto its model_lines row)'
+    const projRecentStr = projRecent.rows.length
+      ? projRecent.rows.map((r: { sport: string; home_team: string; away_team: string; model_spread: string; actual_margin: string; margin_error: string }) => {
+          const predictedMargin = -Number(r.model_spread)
+          return `  ${r.sport} ${r.away_team}@${r.home_team}: predicted ${signed(predictedMargin)} · actual ${signed(r.actual_margin)} · err ${signed(r.margin_error)}`
+        }).join('\n')
+      : ''
+
     const depthCount = Number(s.depth_chart_rows ?? 0)
     const prompt = `You are Ceelo, the multi-sport handicapper on Lila's team (NFL + NBA + MLB). The operator is talking to you one-on-one.
 
@@ -873,10 +937,17 @@ DATA YOU ACTUALLY HAVE (use it — these are real, queried just now):
 - Current rosters: ${Number(s.rostered_players ?? 0)} players across ${Number(s.rostered_teams ?? 0)} teams (ESPN, weekly).
 - Active injury reports: ${Number(s.hurt ?? 0)} Out/Doubtful/IR/PUP entries on tracked teams.
 - Model-derived spread + win-prob per upcoming game (computed each cycle from the Elo ratings).
+- Projection-vs-actual feedback: every game you projected gets graded against the final score (margin error stored on ceelo_model_lines). This is your reinforcement signal — use it to talk about calibration honestly.
 - Odds API: ${Odds.isConfigured() ? 'KEY PRESENT' : 'NO KEY — edge gate dark'}.
 
 PER-SPORT BREAKDOWN (be specific when asked about a single sport):
 ${perSportLines}
+
+MODEL CALIBRATION (last 60 days, per sport — this is your RL feedback):
+${projAccuracyStr}${projRecentStr ? `
+
+WORST RECENT MISSES (cite these if asked about the model's blind spots):
+${projRecentStr}` : ''}
 
 DATA YOU DO NOT HAVE (don't pretend you do):
 - NBA / MLB historical book lines, EPA, depth charts. NFL has all three; the others stop at Elo + games + rosters.

@@ -40,6 +40,12 @@ export interface BarData {
   volume: number
   avgVolume: number
   volumeRatio: number
+  // 20-day range — used by the Analyst to pick out commodity ETFs
+  // trading near multi-week lows (the historical-trigger setup).
+  low20: number
+  high20: number
+  pctFromLow: number   // % above the 20-day low (0 = AT the low)
+  pctFromHigh: number  // % below the 20-day high (negative = drawdown depth)
 }
 
 export async function getAccount(): Promise<AlpacaAccount> {
@@ -171,9 +177,19 @@ export async function getBars(symbols: string[], limit = 25): Promise<BarData[]>
     const volumes = b.map(x => x.v)
     const price = closes[closes.length - 1]
     const lookback = Math.min(closes.length, 20)
-    const sma20 = closes.slice(-lookback).reduce((a, c) => a + c, 0) / lookback
+    const window = closes.slice(-lookback)
+    const sma20 = window.reduce((a, c) => a + c, 0) / lookback
+    const low20 = Math.min(...window)
+    const high20 = Math.max(...window)
     const avgVol = volumes.slice(-lookback).reduce((a, v) => a + v, 0) / lookback
     const vol = volumes[volumes.length - 1]
-    return [{ symbol: sym, price, sma20, momentum: ((price / sma20) - 1) * 100, volume: vol, avgVolume: avgVol, volumeRatio: vol / avgVol }]
+    return [{
+      symbol: sym, price, sma20,
+      momentum: ((price / sma20) - 1) * 100,
+      volume: vol, avgVolume: avgVol, volumeRatio: vol / avgVol,
+      low20, high20,
+      pctFromLow:  low20  > 0 ? ((price / low20)  - 1) * 100 : 0,
+      pctFromHigh: high20 > 0 ? ((price / high20) - 1) * 100 : 0,
+    }]
   })
 }
