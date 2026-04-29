@@ -24,7 +24,7 @@ export default function Login() {
         body: JSON.stringify({ password: code }),
       })
       if (res.ok) {
-        router.replace('/')
+        router.replace('/lila')
       } else {
         setError('Wrong. Try again.')
         setCode('')
