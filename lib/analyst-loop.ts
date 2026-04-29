@@ -6,14 +6,36 @@ import { cfg } from './config'
 import * as Telegram from './channels/telegram'
 
 // ── Vega watchlist ─────────────────────────────────────────────────────────
-// No biotech, no retail. Commodity ETFs + leveraged index + global macro only.
+// Major commodities (the focus book). Strategy: trade these around
+// historical support/resistance with macro catalysts in the read — not
+// SMA / EMA crossings.
 
+const COMMODITY_LABELS: Record<string, string> = {
+  GLD:  'gold',
+  SLV:  'silver',
+  USO:  'crude oil (WTI)',
+  UNG:  'natural gas',
+  GDX:  'gold miners',
+  CPER: 'copper',
+  PDBC: 'broad commodities (no K-1)',
+  DBA:  'agriculture (corn / wheat / soy / sugar)',
+  URA:  'uranium',
+  WEAT: 'wheat',
+  CORN: 'corn',
+  PALL: 'palladium',
+  WOOD: 'lumber / timber',
+}
 const WATCHLIST = {
-  commodity: ['GLD', 'SLV', 'USO', 'GDX', 'UNG', 'CPER', 'PDBC'],
-  leveraged:  ['SPXL', 'TQQQ', 'UPRO', 'QLD', 'SOXL'],
-  macro:      ['TLT', 'HYG', 'UUP', 'EEM', 'EFA', 'FXI', 'EWJ', 'VWO'],
+  commodity: Object.keys(COMMODITY_LABELS),
+  leveraged: ['SPXL', 'TQQQ', 'UPRO', 'QLD', 'SOXL'],
+  macro:     ['TLT', 'HYG', 'UUP', 'EEM', 'EFA', 'FXI', 'EWJ', 'VWO'],
 }
 const ALL = [...WATCHLIST.commodity, ...WATCHLIST.leveraged, ...WATCHLIST.macro]
+
+// 52 trading weeks of daily bars — the support/resistance lookback for
+// commodity ETFs. Wider than this and the highs/lows stop being levels
+// the market is currently pricing against.
+const SR_LOOKBACK_BARS = 252
 
 const MAX_CYCLES = 11  // cycles before maintenance
 
@@ -108,7 +130,7 @@ export class AnalystLoop {
     const headlines = news.map(n => `- ${n.headline} (${n.symbols?.join(',') ?? ''})`).join('\n')
     const res = await this.llm(
       'analyst.t1',
-      `Vega reviewing macro/commodity/ETF news. Filter: only return thesis:true if the headline catalyzes a TECHNICAL setup on a commodity ETF already trading near a 20-day low. Do not summarize geopolitical narrative — geopolitics is not the thesis, the chart is. No biotech, no retail.\n\n${headlines}\n\nJSON: { "thesis": true/false, "summary": "one sentence — name the symbol + level, not the news theme" }`,
+      `Vega reviewing macro / commodity ETF news. Major-commodity book: ${WATCHLIST.commodity.join(', ')}. Return thesis:true only when a headline is a real catalyst against a level on one of those names. One-sentence summary should pair the symbol with the catalyst (e.g. "USO catalyst: OPEC+ cut headlines into the $X 52w-low retest"). No biotech, no retail.\n\n${headlines}\n\nJSON: { "thesis": true/false, "summary": "one sentence — symbol + catalyst" }`,
       100
     )
     const d = this.parse(res, { thesis: false, summary: 'No strong signal.' })
@@ -121,56 +143,54 @@ export class AnalystLoop {
   // ── T-2: Market scan ───────────────────────────────────────────────────────
 
   private async t2(): Promise<{ msg: string; trade: boolean }> {
-    const bars = await Alpaca.getBars(ALL, 25).catch(() => [] as Alpaca.BarData[])
+    // 52-week daily bars so range-low / range-high are real annual
+    // support/resistance levels, not 20-day chop boundaries.
+    const bars = await Alpaca.getBars(ALL, SR_LOOKBACK_BARS).catch(() => [] as Alpaca.BarData[])
     if (bars.length < 3) return { msg: 'Insufficient data.', trade: false }
 
     const commoditySet = new Set<string>(WATCHLIST.commodity)
+    // Commodities first so the major-watchlist book is what the LLM
+    // sees at the top — leveraged + macro stay in the picture as a
+    // supporting view but they're not the focus.
+    const ordered = [...bars].sort((a, b) =>
+      Number(commoditySet.has(b.symbol)) - Number(commoditySet.has(a.symbol))
+    )
 
-    // Tag each bar with its 20-day range position. The "commodity-low"
-    // trigger we want to surface: a commodity ETF within ~3% of its
-    // 20-day low and at least 6% off the high (a real drawdown, not chop).
-    // Volume ≥ 0.9x average filters dead tape from a real washout/reclaim.
-    const enriched = bars.map(b => {
-      const isCommodity = commoditySet.has(b.symbol)
-      const drawdown = b.pctFromHigh   // negative number
-      const offLow   = b.pctFromLow    // positive — 0 means AT the low
-      const trigger = isCommodity
-        && offLow <= 3
-        && drawdown <= -6
-        && b.volumeRatio >= 0.9
-      return { b, isCommodity, drawdown, offLow, trigger }
-    })
-
-    // Sort so the trigger candidates appear first — keeps the LLM
-    // anchored on the actionable setups instead of the leveraged-index
-    // momentum noise.
-    enriched.sort((x, y) => Number(y.trigger) - Number(x.trigger) || x.offLow - y.offLow)
-
-    const data = enriched
-      .map(({ b, isCommodity, drawdown, offLow, trigger }) => {
-        const tag = trigger ? '  ★COMMODITY-LOW TRIGGER' : isCommodity ? '  (commodity)' : ''
-        return `${b.symbol}: $${b.price.toFixed(2)} sma20=$${b.sma20.toFixed(2)} mom=${b.momentum.toFixed(1)}% vol=${b.volumeRatio.toFixed(2)}x dd=${drawdown.toFixed(1)}% offLow=${offLow.toFixed(1)}%${tag}`
+    const data = ordered
+      .map(b => {
+        const label = COMMODITY_LABELS[b.symbol]
+        const tag = label ? `  (${label})` : ''
+        return `${b.symbol}${tag}: $${b.price.toFixed(2)}  52w-range $${b.rangeLow.toFixed(2)}–$${b.rangeHigh.toFixed(2)}  fromLow ${b.pctFromRangeLow.toFixed(1)}%  fromHigh ${b.pctFromRangeHigh.toFixed(1)}%  vol ${b.volumeRatio.toFixed(2)}x`
       })
       .join('\n')
 
-    const triggers = enriched.filter(e => e.trigger).map(e => e.b.symbol)
-    const triggerLine = triggers.length
-      ? `\nCOMMODITY-LOW TRIGGERS HOT: ${triggers.join(', ')}. These are the priority candidates today.`
-      : `\nNo commodity-low trigger fired today. If nothing else is screaming, return thesis:false.`
+    // Pull a fresh slate of macro headlines — these are the catalysts
+    // Vega is supposed to weigh against the level read. Capped + tagged
+    // so they're catalyst context, not the whole thesis.
+    const news = await Alpaca.getNews(WATCHLIST.commodity.slice(0, 10), 12).catch(() => [] as Alpaca.NewsItem[])
+    const headlines = news.length
+      ? news.map(n => `- ${n.headline}${n.symbols?.length ? ` (${n.symbols.join(',')})` : ''}`).join('\n')
+      : '(no fresh headlines)'
 
     const res = await this.llm(
       'analyst.t2',
-      `You are Vega. Strategy: BUY COMMODITY LOWS WITH HISTORICAL TRIGGERS. Long only. No biotech. No retail. No geopolitics — the edge is technical mean-reversion on the commodity ETF complex (GLD/SLV/USO/GDX/UNG/CPER/PDBC), with leveraged-index dips as a secondary book. Geopolitical narrative is forbidden output: pin theses to drawdown depth, position-in-range, volume profile, and an explicit historical analog.
+      `You are Vega. Book: major commodity ETFs (${WATCHLIST.commodity.join(', ')}). Leveraged-index + macro are watch-only context. Long only. No biotech. No retail.
 
-${data}${triggerLine}
+How you trade: read price against historical support/resistance first, then weigh macro catalysts on top. NOT moving-average crosses. Examples of what the read should sound like:
+  - "GLD basing $X-Y, prior breakout level $Z, fresh war-premium catalyst supports continuation"
+  - "USO testing 52w lows near $X, OPEC+ headlines unsupportive but level held in 2023, scale-in candidate"
+  - "GDX held $X support twice in last 6mo, dollar weakness catalyst, target prior pivot $Y"
 
-Filing rules:
-- Only file a pick when offLow ≤ 4% AND drawdown ≤ -6% AND volRatio ≥ 0.9 (washout/reclaim shape) — ideally a flagged COMMODITY-LOW TRIGGER row.
-- Each "reason" MUST cite the trigger numerically (e.g. "USO -9.4% off high, 1.8% off 20d low, 1.4x vol — 2020/2023 washout shape").
-- If nothing meets the filter, return { "thesis": false, "picks": [], "summary": "no trigger today" }.
+Don't hyper-fixate on one geopolitical narrative — Hormuz / oil-route / tariff chatter is one input among several, not the entire thesis. If a level isn't being tested or you don't have a catalyst, sit out.
 
-JSON only: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"reason":"one sentence with numeric trigger + historical analog"}], "summary": "one sentence" }`,
-      280
+Levels:
+${data}
+
+Recent headlines (catalyst context):
+${headlines}
+
+JSON only: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.6,"reason":"one sentence — name the level + the catalyst"}], "summary": "one sentence" }`,
+      320
     )
     const d = this.parse(res, { thesis: false, picks: [], summary: 'No setup.' })
 
@@ -190,25 +210,38 @@ JSON only: { "thesis": true/false, "picks": [{"symbol":"X","confidence":0.7,"rea
   // ── T-3: Research ──────────────────────────────────────────────────────────
 
   private async t3(): Promise<string> {
-    // Pull fresh range data for the commodity book so the research note
-    // is anchored on actual drawdown numbers, not free-form macro prose.
-    const bars = await Alpaca.getBars(WATCHLIST.commodity, 25).catch(() => [] as Alpaca.BarData[])
+    // Pull 52-week range data for the commodity book so the research
+    // note is anchored on real S/R levels — not free-form macro prose,
+    // not SMA crosses.
+    const bars = await Alpaca.getBars(WATCHLIST.commodity, SR_LOOKBACK_BARS).catch(() => [] as Alpaca.BarData[])
     const snapshot = bars.length
-      ? bars.map(b => `${b.symbol}: $${b.price.toFixed(2)} dd=${b.pctFromHigh.toFixed(1)}% offLow=${b.pctFromLow.toFixed(1)}% vol=${b.volumeRatio.toFixed(2)}x`).join('\n')
+      ? bars.map(b => {
+          const label = COMMODITY_LABELS[b.symbol] ?? b.symbol
+          return `- ${b.symbol} (${label}): $${b.price.toFixed(2)} · 52w $${b.rangeLow.toFixed(2)}–$${b.rangeHigh.toFixed(2)} · fromLow ${b.pctFromRangeLow.toFixed(1)}% · fromHigh ${b.pctFromRangeHigh.toFixed(1)}%`
+        }).join('\n')
       : '(no commodity bar data)'
+    const news = await Alpaca.getNews(WATCHLIST.commodity.slice(0, 10), 10).catch(() => [] as Alpaca.NewsItem[])
+    const headlines = news.length
+      ? news.map(n => `- ${n.headline}${n.symbols?.length ? ` (${n.symbols.join(',')})` : ''}`).join('\n')
+      : '(no fresh headlines)'
 
     const res = await this.llm(
       'analyst.t3',
-      `You are Vega. No trade fired this cycle. File a TIGHT watchlist note for the commodity ETF book — strictly technical, strictly numeric, NO geopolitics, NO macro essays, NO Hormuz/oil-route/Fed commentary.
+      `You are Vega. No trade fired this cycle. File a tight watchlist note on the major commodity ETF book.
 
-Current 20-day range:
+Method: name the level + the catalyst. Support and resistance from the 52-week range below, plus macro catalysts from the headlines. Macro catalysts (geopolitics, dollar, central banks, OPEC+, weather) are FAIR GAME as catalyst color — just don't fixate on one narrative for paragraphs. One phrase per bullet, then move on.
+
+52-week range:
 ${snapshot}
 
-Output format — 3-5 bullets, each one symbol:
-- SYMBOL: trigger level $X.XX (≤3% off 20d low) · invalidation $Y.YY (below 20d low) · historical analog ("2020 washout", "2023 GDX double-bottom", etc.) — one phrase, no narrative.
+Headlines (catalyst color):
+${headlines}
 
-That's the entire output. No preamble, no "themes to watch", no oil/gold/dollar geopolitical context. If you find yourself typing the words "Hormuz", "tariff", "Fed", "war", "geopolitical" — stop and rewrite that bullet as a price level instead.`,
-      200
+Output 4-6 bullets, one per major commodity. Format:
+- SYMBOL (commodity): support $X.XX · resistance $Y.YY · current read in one phrase (level being tested + the relevant catalyst).
+
+That's it. No "themes to watch" header, no preamble, no multi-sentence prose.`,
+      220
     )
     const date = today()
     await this.note(`analyst/notes/research-${date}.md`, `# Research ${date}\n\n${res}`)

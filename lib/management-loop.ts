@@ -146,16 +146,16 @@ Open positions:
 
 Rules:
 - Long only.
-- Strategy: BUY COMMODITY LOWS WITH HISTORICAL TRIGGERS. Edge is technical mean-reversion on the commodity ETF complex, not geopolitical narrative.
+- Focus book: major commodity ETFs (GLD/SLV/USO/UNG/GDX/CPER/PDBC/DBA/URA/WEAT/CORN/PALL/WOOD). Trade around historical support/resistance with macro catalysts in the read — NOT moving-average crosses or EMA triggers.
 - Sizing is agnostic; small-account trades are fine.
 - Every trade MUST have a TIGHT stop (close to entry, tight enough that a single bad candle takes you out, not a 7% stop).
 - Be aggressive cutting losers. Let winners run only if thesis holds.
-- Stance is one numeric line about the trading book — drawdown depth on commodities, what's near a 20-day low, what's reclaiming sma20. Do NOT write geopolitical commentary (no Hormuz, no oil-route, no tariff/war takes). If a Vega note is geopolitical, ignore it.
+- Stance: one or two sentences naming a level (support/resistance) on at least one major commodity, paired with the macro catalyst. Macro catalysts (geopolitics, dollar, central banks, OPEC+, weather) are fair game as catalyst color — just don't hyper-fixate on one narrative. If Vega's note is one-note geopol prose, distill the level out and reframe the read.
 
 Respond with ONLY valid JSON:
 {
-  "stance": "1-2 sentence read of the commodity book — levels and posture, no geopolitics",
-  "trades": [{"symbol":"XYZ","entry":12.34,"target":13.20,"stop":12.10,"confidence":0.7,"reason":"one sentence with numeric trigger"}],
+  "stance": "1-2 sentence read — level + catalyst on a named commodity",
+  "trades": [{"symbol":"XYZ","entry":12.34,"target":13.20,"stop":12.10,"confidence":0.7,"reason":"one sentence — level + catalyst"}],
   "positionActions": [{"symbol":"XYZ","action":"HOLD|CLOSE","reason":"one sentence"}]
 }`
 

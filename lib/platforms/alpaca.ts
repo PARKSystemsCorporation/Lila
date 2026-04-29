@@ -40,12 +40,14 @@ export interface BarData {
   volume: number
   avgVolume: number
   volumeRatio: number
-  // 20-day range — used by the Analyst to pick out commodity ETFs
-  // trading near multi-week lows (the historical-trigger setup).
-  low20: number
-  high20: number
-  pctFromLow: number   // % above the 20-day low (0 = AT the low)
-  pctFromHigh: number  // % below the 20-day high (negative = drawdown depth)
+  // Whole-window support/resistance — the lookback the caller asked for
+  // (e.g. 252 bars ≈ 52 weeks). Used by the Analyst to talk about
+  // price relative to multi-year highs/lows, not 20-day SMA crosses.
+  rangeBars: number
+  rangeLow: number
+  rangeHigh: number
+  pctFromRangeLow: number   // % above range low (0 = AT support)
+  pctFromRangeHigh: number  // % below range high (negative = under resistance)
 }
 
 export async function getAccount(): Promise<AlpacaAccount> {
@@ -176,20 +178,29 @@ export async function getBars(symbols: string[], limit = 25): Promise<BarData[]>
     const closes = b.map(x => x.c)
     const volumes = b.map(x => x.v)
     const price = closes[closes.length - 1]
-    const lookback = Math.min(closes.length, 20)
-    const window = closes.slice(-lookback)
-    const sma20 = window.reduce((a, c) => a + c, 0) / lookback
-    const low20 = Math.min(...window)
-    const high20 = Math.max(...window)
-    const avgVol = volumes.slice(-lookback).reduce((a, v) => a + v, 0) / lookback
+    const sma20Lookback = Math.min(closes.length, 20)
+    const sma20Window = closes.slice(-sma20Lookback)
+    const sma20 = sma20Window.reduce((a, c) => a + c, 0) / sma20Lookback
+    const avgVol = volumes.slice(-sma20Lookback).reduce((a, v) => a + v, 0) / sma20Lookback
     const vol = volumes[volumes.length - 1]
+    // Support/resistance is computed over the full lookback the caller
+    // requested — pass limit=252 to get a 52-week range, limit=20 for
+    // short-term context. Avoid Math.min/max(...arr) on long arrays
+    // (call-stack risk for very long windows) by reducing.
+    const rangeBars = closes.length
+    let rangeLow = closes[0], rangeHigh = closes[0]
+    for (let i = 1; i < closes.length; i++) {
+      const c = closes[i]
+      if (c < rangeLow)  rangeLow  = c
+      if (c > rangeHigh) rangeHigh = c
+    }
     return [{
       symbol: sym, price, sma20,
       momentum: ((price / sma20) - 1) * 100,
       volume: vol, avgVolume: avgVol, volumeRatio: vol / avgVol,
-      low20, high20,
-      pctFromLow:  low20  > 0 ? ((price / low20)  - 1) * 100 : 0,
-      pctFromHigh: high20 > 0 ? ((price / high20) - 1) * 100 : 0,
+      rangeBars, rangeLow, rangeHigh,
+      pctFromRangeLow:  rangeLow  > 0 ? ((price / rangeLow)  - 1) * 100 : 0,
+      pctFromRangeHigh: rangeHigh > 0 ? ((price / rangeHigh) - 1) * 100 : 0,
     }]
   })
 }
