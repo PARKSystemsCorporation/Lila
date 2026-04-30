@@ -8,6 +8,7 @@ import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
+import { DmLoop } from './dm-loop'
 import { mirrorLilaToTelegram } from './telegram-mirror'
 import { runNoonArticles } from './article-engine'
 import { runAlerts } from './alerts'
@@ -130,6 +131,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (mirrorResult?.logMessage) {
       await logEvent(db, mirrorResult.logMessage, mirrorResult.logType ?? 'info')
       logs.push(mirrorResult.logMessage)
+    }
+
+    // 4c. Marketplace DMs — answer one queued viewer DM per tick. Per-agent
+    //     persona, grounded in real recent desk activity, budget-respecting.
+    const dms = new DmLoop(db)
+    const dmResult = await dms.run().catch((e: unknown) => ({
+      logMessage: `DM loop error: ${String(e).slice(0, 120)}`,
+      logType: 'warn' as const,
+    }))
+    if (dmResult) {
+      await logEvent(db, dmResult.logMessage, dmResult.logType)
+      logs.push(dmResult.logMessage)
     }
 
     // 5. Ceelo — NFL handicapper, time-gated (12h default).
