@@ -500,6 +500,23 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_viewers_active ON viewers(active, verified_at DESC);
 
+    -- Park Gates wallet — 50 free per calendar month for active viewers,
+    -- granted lazily on /api/viewer/login. Spend paths debit park_gates
+    -- and append a row to park_gates_ledger for audit.
+    ALTER TABLE viewers ADD COLUMN IF NOT EXISTS park_gates           INTEGER     NOT NULL DEFAULT 0;
+    ALTER TABLE viewers ADD COLUMN IF NOT EXISTS last_gate_grant_at   TIMESTAMPTZ;
+
+    CREATE TABLE IF NOT EXISTS park_gates_ledger (
+      id          BIGSERIAL   PRIMARY KEY,
+      viewer_id   INTEGER     NOT NULL REFERENCES viewers(id) ON DELETE CASCADE,
+      delta       INTEGER     NOT NULL,
+      reason      TEXT        NOT NULL,    -- 'monthly_grant' | 'spend' | 'admin_adjust'
+      ref         TEXT,                    -- subscription_id, edge_id, etc.
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_park_gates_ledger_viewer
+      ON park_gates_ledger(viewer_id, created_at DESC);
+
     -- Scout's volume-bounty pipeline. Sourced from Gitcoin + Algora (and
     -- whichever sources we add later). Each row carries the FULL submission
     -- deliverable (markdown PR body + unified diff) so Lila can review +

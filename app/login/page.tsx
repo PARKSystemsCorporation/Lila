@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation'
 type Mode = 'operator' | 'viewer'
 
 export default function Login() {
-  const [mode, setMode] = useState<Mode>('operator')
+  // Front tab is the member (Gumroad key) sign-in. Operator is the back tab.
+  const [mode, setMode] = useState<Mode>('viewer')
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -69,14 +70,24 @@ export default function Login() {
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
             <span className="text-[10px] font-mono text-slate-500 tracking-widest uppercase">Lila Agent</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">Identify yourself.</h1>
+          <h1 className="text-2xl font-bold text-white">Local sign in.</h1>
           <p className="text-xs font-mono text-slate-600">
-            {mode === 'operator' ? 'Operator access.' : 'Viewer subscription.'}
+            {mode === 'viewer' ? 'Member · Gumroad key.' : 'Operator access.'}
           </p>
         </div>
 
-        {/* Mode switch */}
+        {/* Mode switch — member tab is the front, operator is behind. */}
         <div className="flex border border-slate-800 rounded-xl overflow-hidden">
+          <button
+            onClick={() => switchMode('viewer')}
+            className={`flex-1 py-2 text-[10px] font-mono tracking-widest uppercase transition-colors ${
+              mode === 'viewer'
+                ? 'bg-emerald-950/40 text-emerald-300'
+                : 'text-slate-500 active:bg-slate-900'
+            }`}
+          >
+            Member
+          </button>
           <button
             onClick={() => switchMode('operator')}
             className={`flex-1 py-2 text-[10px] font-mono tracking-widest uppercase transition-colors ${
@@ -86,16 +97,6 @@ export default function Login() {
             }`}
           >
             Operator
-          </button>
-          <button
-            onClick={() => switchMode('viewer')}
-            className={`flex-1 py-2 text-[10px] font-mono tracking-widest uppercase transition-colors ${
-              mode === 'viewer'
-                ? 'bg-emerald-950/40 text-emerald-300'
-                : 'text-slate-500 active:bg-slate-900'
-            }`}
-          >
-            Viewer
           </button>
         </div>
 
@@ -127,16 +128,16 @@ export default function Login() {
 
           {mode === 'viewer' && (
             <p className="text-[10px] font-mono text-slate-600 text-center pt-2 leading-relaxed">
-              Don&rsquo;t have a key? Subscribe at{' '}
+              Don&rsquo;t have a key? Buy a pass at{' '}
               <a
-                href={process.env.NEXT_PUBLIC_GUMROAD_URL ?? 'https://gumroad.com/'}
+                href={process.env.NEXT_PUBLIC_GUMROAD_URL ?? 'https://gumroad.com/l/bfmoe'}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-emerald-400 underline"
               >
-                gumroad
+                gumroad.com/l/bfmoe
               </a>
-              {' '}— Gumroad emails the key after checkout.
+              {' '}— $10/mo, key arrives by email. 50 park gates included.
             </p>
           )}
         </div>

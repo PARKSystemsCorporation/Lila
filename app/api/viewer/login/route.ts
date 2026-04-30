@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
 import * as Gumroad from '@/lib/gumroad'
 import { signViewerCookie, VIEWER_COOKIE_TTL_SECONDS } from '@/lib/viewer-auth'
+import { grantMonthlyIfDue } from '@/lib/viewers'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,13 +45,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `Subscription not active (${reason}).` }, { status: 402 })
   }
 
-  // Persist / refresh the viewers row.
+  // Persist / refresh the viewers row, then grant the monthly 50 PG if due.
   if (process.env.DATABASE_URL) {
     const pool = getPool()
     const db = await pool.connect()
     try {
       await ensureSchema(db)
-      await db.query(
+      const upsert = await db.query(
         `INSERT INTO viewers (license_key, gumroad_product_id, gumroad_subscription_id, email, verified_at, last_seen_at, active)
          VALUES ($1,$2,$3,$4,NOW(),NOW(),TRUE)
          ON CONFLICT (license_key) DO UPDATE
@@ -58,9 +59,17 @@ export async function POST(req: Request) {
                email                   = COALESCE(EXCLUDED.email, viewers.email),
                verified_at = NOW(),
                last_seen_at = NOW(),
-               active = TRUE`,
+               active = TRUE
+         RETURNING id`,
         [licenseKey, result.productId, result.subscriptionId, result.email]
       )
+      const viewerId = Number(upsert.rows[0].id)
+      try {
+        await grantMonthlyIfDue(db, viewerId)
+      } catch {
+        // Wallet failure shouldn't block sign-in. Ledger row is the source of
+        // truth; a future visit will grant the missed month.
+      }
     } finally { db.release() }
   }
 
