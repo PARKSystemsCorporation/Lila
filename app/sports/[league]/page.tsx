@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import LeagueEdgeGraph from '@/app/_components/edge-graph-league'
 import { seasonStateFor, type SportKey } from '@/lib/season'
 
 export const dynamic = 'force-static'
@@ -68,24 +69,26 @@ export default function LeaguePage({ params }: { params: { league: string } }) {
 
       <section className="mx-auto max-w-7xl px-4 sm:px-8 pb-12">
         <div className={`border-2 ${tone.ring} bg-slate-950/60 p-6 sm:p-10`}>
-          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-5">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-5 mb-6 sm:mb-8">
             <div>
-              <p className={`font-mono text-[10px] tracking-[0.3em] uppercase ${tone.accent}`}>building</p>
+              <p className={`font-mono text-[10px] tracking-[0.3em] uppercase ${tone.accent}`}>ceelo · 2025</p>
               <h2 className="mt-2 text-2xl sm:text-4xl font-black tracking-tight uppercase text-white">
-                edge graph &amp; pick history
+                {cfg.sport} edge graph
               </h2>
               <p className="mt-3 max-w-xl text-sm sm:text-base text-slate-400 leading-relaxed">
-                Ceelo&rsquo;s historical edge graph for {cfg.sport}, season-over-season pick log, and
-                live model spreads land here next. The data is wiring up.
+                Cumulative edge points across the 2025 calendar year. Pick log,
+                model spreads and per-market splits wire up next.
               </p>
             </div>
             <div className="font-mono text-[10px] tracking-[0.3em] text-slate-500 uppercase">
               <div className="flex items-center gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
-                check back soon
+                teaser
               </div>
             </div>
           </div>
+
+          <LeagueEdgeGraph sport={cfg.sport} tone={cfg.tone} />
         </div>
       </section>
 

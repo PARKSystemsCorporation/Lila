@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import SlotReel from '../_components/slot-reel'
+import { EdgeGraph, useEdgeGraph, type Sport } from '../_components/edge-graph'
 import { rankedSeasons, type SeasonState, type SportKey } from '@/lib/season'
 
 const SportsTicker = dynamic(() => import('../_components/sports-ticker'), { ssr: false, loading: () => null })
@@ -199,6 +200,8 @@ export default function SportsLanding() {
         </div>
       </section>
 
+      <EdgeGraphSection />
+
       <section className="border-b-2 border-amber-500/20">
         <div className="mx-auto max-w-7xl px-4 sm:px-8 py-10 sm:py-14">
           <div className="flex items-baseline justify-between gap-4 mb-5 sm:mb-8">
@@ -333,6 +336,91 @@ function ArticleCard({ a }: { a: ArticleTeaser }) {
         {a.excerpt}
       </p>
     </article>
+  )
+}
+
+const EDGE_TONE: Record<Sport, 'amber' | 'orange' | 'red'> = {
+  NFL: 'red',
+  NBA: 'orange',
+  NHL: 'amber',
+  MLB: 'orange',
+}
+
+function EdgeGraphSection() {
+  const { payload, live } = useEdgeGraph()
+  const order: Sport[] = ['NFL', 'NBA', 'NHL', 'MLB']
+
+  return (
+    <section className="border-b-2 border-amber-500/20">
+      <div className="mx-auto max-w-7xl px-4 sm:px-8 py-10 sm:py-14">
+        <div className="flex items-baseline justify-between gap-4 mb-5 sm:mb-8">
+          <div>
+            <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-500/80 uppercase">
+              ▌▌▌ ceelo · 2025
+            </p>
+            <h2 className="mt-2 text-[clamp(1.6rem,5vw,3rem)] font-black tracking-tight uppercase text-white">
+              the <span className="text-amber-400 [text-shadow:0_0_30px_rgba(245,158,11,0.45)]">edge graph</span>.
+            </h2>
+            <p className="mt-3 max-w-xl text-sm text-slate-400 leading-relaxed">
+              Cumulative edge points per sport across the 2025 calendar year.
+              Tap a tile for the full pick history.
+            </p>
+          </div>
+          <p className="hidden sm:block font-mono text-[10px] tracking-[0.3em] text-slate-500 uppercase max-w-[16rem] text-right">
+            jan → dec<br />weekly cumulative
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {order.map((sport) => {
+            const series = payload.sports[sport]
+            const tone = EDGE_TONE[sport]
+            const totalSign = series.total_edge >= 0 ? '+' : ''
+            const isLive = live[sport]
+            return (
+              <Link
+                key={sport}
+                href={SPORT_HREF[sport]}
+                className={`group border-2 ${
+                  tone === 'red'    ? 'border-red-500/40 hover:border-red-300 hover:shadow-[0_0_50px_-15px_rgba(239,68,68,0.55)]' :
+                  tone === 'orange' ? 'border-orange-500/40 hover:border-orange-300 hover:shadow-[0_0_50px_-15px_rgba(251,146,60,0.55)]' :
+                                      'border-amber-500/40 hover:border-amber-300 hover:shadow-[0_0_50px_-15px_rgba(245,158,11,0.55)]'
+                } bg-slate-950/70 p-4 sm:p-5 transition-all duration-300 hover:-translate-y-0.5`}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className={`font-mono text-[10px] tracking-[0.3em] uppercase ${
+                    tone === 'red' ? 'text-red-300' : tone === 'orange' ? 'text-orange-300' : 'text-amber-300'
+                  }`}>
+                    {sport}
+                  </span>
+                  <span className="font-mono text-[9px] tracking-[0.3em] uppercase text-slate-600">
+                    {isLive ? 'live' : 'demo'}
+                  </span>
+                </div>
+                <div className={`font-mono text-2xl sm:text-3xl font-black tabular-nums leading-none ${
+                  tone === 'red' ? 'text-red-300' : tone === 'orange' ? 'text-orange-300' : 'text-amber-300'
+                }`}>
+                  {totalSign}{series.total_edge.toFixed(1)}
+                </div>
+                <div className="font-mono text-[9px] tracking-[0.3em] uppercase text-slate-500 mt-1">
+                  pts · {series.wins}-{series.losses}
+                  {series.pushes ? `-${series.pushes}` : ''}
+                </div>
+
+                <div className="mt-4">
+                  <EdgeGraph series={series} tone={tone} height={92} live={isLive} />
+                </div>
+
+                <div className="mt-3 flex items-center justify-between font-mono text-[9px] tracking-[0.3em] uppercase text-slate-600">
+                  <span>{series.total_picks} picks</span>
+                  <span className="group-hover:text-amber-300 transition-colors">graph →</span>
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+      </div>
+    </section>
   )
 }
 
