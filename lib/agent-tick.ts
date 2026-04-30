@@ -9,6 +9,7 @@ import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
 import { DmLoop } from './dm-loop'
+import { runGumroadReverify } from './gumroad-reverify'
 import { mirrorLilaToTelegram } from './telegram-mirror'
 import { runNoonArticles } from './article-engine'
 import { runAlerts } from './alerts'
@@ -131,6 +132,23 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (mirrorResult?.logMessage) {
       await logEvent(db, mirrorResult.logMessage, mirrorResult.logType ?? 'info')
       logs.push(mirrorResult.logMessage)
+    }
+
+    // 4b2. Gumroad subscription poller — re-verifies one active viewer per
+    //      tick (oldest verified_at first). Catches cancellations / refunds /
+    //      failed renewals without depending on Gumroad webhooks. Skips when
+    //      Gumroad isn't configured.
+    const reverifyResult = await runGumroadReverify(db).catch((e: unknown) => ({
+      ran: true,
+      viewerId: null,
+      flipped: 'error' as const,
+      reason: String(e).slice(0, 80),
+      logMessage: `Gumroad reverify error: ${String(e).slice(0, 120)}`,
+      logType: 'warn' as const,
+    }))
+    if (reverifyResult?.flipped === 'deactivated' || reverifyResult?.flipped === 'error') {
+      await logEvent(db, reverifyResult.logMessage, reverifyResult.logType)
+      logs.push(reverifyResult.logMessage)
     }
 
     // 4c. Marketplace DMs — answer one queued viewer DM per tick. Per-agent
