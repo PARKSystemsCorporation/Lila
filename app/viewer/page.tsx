@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 // ─── Public viewer page ───────────────────────────────────────────────────
 //
@@ -59,7 +60,21 @@ const AUTHOR_COLOR: Record<ViewerArticle['author'], string> = {
 
 export default function ViewerPage() {
   const [mode, setMode] = useState<Mode>('edges')
+  const [pg, setPg] = useState<number | null>(null)
   const router = useRouter()
+
+  useEffect(() => {
+    let alive = true
+    const load = () => {
+      fetch('/api/viewer/wallet', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d && typeof d.park_gates === 'number') setPg(d.park_gates) })
+        .catch(() => {})
+    }
+    load()
+    const id = setInterval(load, 30_000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
 
   const signOut = async () => {
     await fetch('/api/viewer/login', { method: 'DELETE' })
@@ -69,17 +84,26 @@ export default function ViewerPage() {
   return (
     <div className="h-dvh bg-slate-950 max-w-md mx-auto flex flex-col">
       {/* Header */}
-      <header className="shrink-0 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-        <div>
+      <header className="shrink-0 px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <p className="text-[11px] font-mono text-emerald-400 font-semibold tracking-widest">LILA · VIEWER</p>
           <p className="text-[9px] font-mono text-slate-600">predictions + articles · read-only</p>
         </div>
-        <button
-          onClick={signOut}
-          className="text-[9px] font-mono text-slate-600 border border-slate-800 rounded px-2 py-1 active:bg-slate-900"
-        >
-          SIGN OUT
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Link
+            href="/marketplace"
+            className="text-[9px] font-mono text-amber-300 border border-amber-700 rounded px-2 py-1 active:bg-amber-950/40 tabular-nums"
+            title="Park Gates · marketplace"
+          >
+            ◆ {pg == null ? '—' : pg} PG
+          </Link>
+          <button
+            onClick={signOut}
+            className="text-[9px] font-mono text-slate-600 border border-slate-800 rounded px-2 py-1 active:bg-slate-900"
+          >
+            SIGN OUT
+          </button>
+        </div>
       </header>
 
       {/* Mode switch */}

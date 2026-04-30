@@ -90,3 +90,52 @@ export async function getWalletByLicense(
     lastGrantAt: r.rows[0].last_gate_grant_at ? new Date(r.rows[0].last_gate_grant_at) : null,
   }
 }
+
+export interface SpendResult {
+  ok: boolean
+  remaining: number
+  reason?: 'insufficient' | 'inactive' | 'not_found'
+}
+
+// Atomically debit `amount` Park Gates from a viewer's wallet. The
+// UPDATE is a single statement so two concurrent spends can't both
+// succeed against the same balance. Writes a 'spend' ledger row on
+// success.
+export async function spendGates(
+  db: PoolClient,
+  viewerId: number,
+  amount: number,
+  reason: string,
+  ref: string | null,
+): Promise<SpendResult> {
+  if (amount <= 0) throw new Error('amount must be positive')
+
+  const r = await db.query(
+    `UPDATE viewers
+        SET park_gates = park_gates - $2
+      WHERE id = $1
+        AND active = TRUE
+        AND park_gates >= $2
+      RETURNING park_gates`,
+    [viewerId, amount],
+  )
+
+  if (r.rowCount === 0) {
+    // Distinguish insufficient from inactive/not-found for clean UX.
+    const cur = await db.query(
+      `SELECT active, park_gates FROM viewers WHERE id = $1`,
+      [viewerId],
+    )
+    if (cur.rowCount === 0) return { ok: false, remaining: 0, reason: 'not_found' }
+    if (cur.rows[0].active !== true) return { ok: false, remaining: Number(cur.rows[0].park_gates ?? 0), reason: 'inactive' }
+    return { ok: false, remaining: Number(cur.rows[0].park_gates ?? 0), reason: 'insufficient' }
+  }
+
+  await db.query(
+    `INSERT INTO park_gates_ledger (viewer_id, delta, reason, ref)
+     VALUES ($1, $2, $3, $4)`,
+    [viewerId, -amount, reason, ref],
+  )
+
+  return { ok: true, remaining: Number(r.rows[0].park_gates) }
+}

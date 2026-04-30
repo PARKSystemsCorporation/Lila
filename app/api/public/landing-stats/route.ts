@@ -26,6 +26,15 @@ const ZERO: LandingStats = {
   refreshed_ts: 0,
 }
 
+// 30-second in-memory cache. The landing ticker polls every 60s per
+// visitor; without this, a small traffic spike fans out 5×N COUNT(*)
+// queries to Postgres. Single-instance memory is fine here — Railway
+// runs us as one process; if we ever scale out the cache TTL keeps the
+// blast radius bounded regardless.
+const CACHE_TTL_MS = 30_000
+let cache: { stats: LandingStats; until: number } | null = null
+let inflight: Promise<LandingStats> | null = null
+
 // All counts are real, even when small. No demo padding — empty deploys
 // surface honest zeros until the agents fill the tables.
 export async function GET() {
@@ -33,6 +42,22 @@ export async function GET() {
     return NextResponse.json({ ...ZERO, refreshed_ts: Date.now() })
   }
 
+  const now = Date.now()
+  if (cache && cache.until > now) {
+    return NextResponse.json(cache.stats)
+  }
+  if (inflight) {
+    const stats = await inflight
+    return NextResponse.json(stats)
+  }
+
+  inflight = computeStats().finally(() => { inflight = null })
+  const stats = await inflight
+  cache = { stats, until: Date.now() + CACHE_TTL_MS }
+  return NextResponse.json(stats)
+}
+
+async function computeStats(): Promise<LandingStats> {
   const pool = getPool()
   const db = await pool.connect()
   try {
@@ -61,9 +86,9 @@ export async function GET() {
       bounties_paid_usd:   Number(bountiesPaid.rows[0]?.usd ?? 0),
       refreshed_ts:        Date.now(),
     }
-    return NextResponse.json(stats)
+    return stats
   } catch {
-    return NextResponse.json({ ...ZERO, refreshed_ts: Date.now() })
+    return { ...ZERO, refreshed_ts: Date.now() }
   } finally {
     db.release()
   }

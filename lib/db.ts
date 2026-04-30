@@ -517,6 +517,41 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_park_gates_ledger_viewer
       ON park_gates_ledger(viewer_id, created_at DESC);
 
+    -- Anonymous landing-page event log. Used for buy-pass click counts
+    -- and any other public-facing conversion telemetry. No PII; the
+    -- 'ref' column carries the source label (e.g. 'hero', 'pricing').
+    CREATE TABLE IF NOT EXISTS landing_events (
+      id          BIGSERIAL   PRIMARY KEY,
+      event       TEXT        NOT NULL,
+      ref         TEXT,
+      ua_hash     TEXT,                        -- short hashed UA for rough dedupe
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_landing_events_event
+      ON landing_events(event, created_at DESC);
+
+    -- Marketplace direct-message queue. A viewer spends Park Gates to
+    -- send one prompt to an agent (lila / ceelo / vega); the row carries
+    -- the prompt + the eventual reply. Status flow:
+    --   queued    → debited, awaiting agent reply
+    --   answered  → reply written, viewer can read it
+    --   refunded  → spend reversed (ledger row 'refund'); usually unused
+    CREATE TABLE IF NOT EXISTS viewer_dms (
+      id            BIGSERIAL   PRIMARY KEY,
+      viewer_id     INTEGER     NOT NULL REFERENCES viewers(id) ON DELETE CASCADE,
+      agent         TEXT        NOT NULL,    -- 'lila' | 'ceelo' | 'vega'
+      prompt        TEXT        NOT NULL,
+      reply         TEXT,
+      cost_pg       INTEGER     NOT NULL DEFAULT 10,
+      status        TEXT        NOT NULL DEFAULT 'queued',
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      answered_at   TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_viewer_dms_viewer
+      ON viewer_dms(viewer_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_viewer_dms_pending
+      ON viewer_dms(agent, created_at) WHERE status = 'queued';
+
     -- Scout's volume-bounty pipeline. Sourced from Gitcoin + Algora (and
     -- whichever sources we add later). Each row carries the FULL submission
     -- deliverable (markdown PR body + unified diff) so Lila can review +

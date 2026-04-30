@@ -79,9 +79,9 @@ export default function LandingTicker() {
 
   return (
     <div className="relative w-full border-b-2 border-amber-500/30 bg-[#0a0c14]/95 backdrop-blur-md overflow-hidden">
-      <div className="flex whitespace-nowrap will-change-transform animate-[ticker_70s_linear_infinite] py-2">
+      <div className="flex whitespace-nowrap will-change-transform py-2 motion-safe:animate-[ticker_70s_linear_infinite] motion-reduce:justify-start">
         <span className={cls}>{strip}</span>
-        <span className={cls} aria-hidden>{strip}</span>
+        <span className={cls + ' motion-reduce:hidden'} aria-hidden>{strip}</span>
       </div>
       <style jsx>{`
         @keyframes ticker {

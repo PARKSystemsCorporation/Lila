@@ -114,16 +114,28 @@ export default function LandingSculpture() {
     }
     mount.addEventListener('pointermove', onPointer)
 
-    let visible = true
-    const onVis = () => { visible = !document.hidden }
+    // Pause whenever (a) the tab is hidden, (b) the canvas is scrolled
+    // out of view, or (c) the user prefers reduced motion. (c) renders
+    // exactly one frame and bails out of the RAF loop entirely.
+    let tabVisible = !document.hidden
+    let onScreen   = true
+    const onVis = () => { tabVisible = !document.hidden }
     document.addEventListener('visibilitychange', onVis)
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    const io = new IntersectionObserver(
+      (entries) => { for (const e of entries) onScreen = e.isIntersecting },
+      { root: null, threshold: 0 },
+    )
+    io.observe(mount)
 
     const clock = new THREE.Clock()
     let raf = 0
 
     const animate = () => {
       raf = requestAnimationFrame(animate)
-      if (!visible) return
+      if (!tabVisible || !onScreen) return
 
       const dt = Math.min(clock.getDelta(), 0.05)
       const t  = clock.getElapsedTime()
@@ -141,11 +153,19 @@ export default function LandingSculpture() {
 
       renderer.render(scene, camera)
     }
-    animate()
+
+    if (reducedMotion) {
+      // Render one static frame so the silhouette still anchors the page,
+      // then leave the GPU alone.
+      renderer.render(scene, camera)
+    } else {
+      animate()
+    }
 
     return () => {
       cancelAnimationFrame(raf)
       ro.disconnect()
+      io.disconnect()
       document.removeEventListener('visibilitychange', onVis)
       mount.removeEventListener('pointermove', onPointer)
       slabs.forEach((s) => {

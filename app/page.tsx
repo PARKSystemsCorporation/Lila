@@ -67,6 +67,23 @@ function useClock() {
   return t
 }
 
+// Fire-and-forget conversion event. One per session per (event,ref) pair
+// so reload-mashing doesn't inflate counts.
+function track(event: string, ref?: string) {
+  if (typeof window === 'undefined') return
+  const k = `pw_track:${event}:${ref ?? ''}`
+  try {
+    if (window.sessionStorage.getItem(k)) return
+    window.sessionStorage.setItem(k, '1')
+  } catch { /* private mode etc — still send once */ }
+  fetch('/api/public/landing-events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, ref }),
+    keepalive: true,
+  }).catch(() => {})
+}
+
 export default function Landing() {
   const time = useClock()
   const seasons = useMemo(() => rankedSeasons(), [])
@@ -144,6 +161,7 @@ export default function Landing() {
             href={GUMROAD_URL}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={() => track('buy_click', 'hero')}
             className="group inline-flex items-baseline gap-3 bg-amber-400 hover:bg-amber-300 text-black px-5 py-3 border-2 border-amber-300 transition-colors"
           >
             <span className="font-mono text-[10px] tracking-[0.32em] uppercase">buy pass</span>
@@ -153,6 +171,7 @@ export default function Landing() {
           </a>
           <Link
             href="/login"
+            onClick={() => track('sign_in_click', 'hero')}
             className="inline-flex items-center gap-2 border-2 border-amber-500/40 hover:border-amber-300 text-amber-300 hover:text-white px-4 py-3 font-mono text-[10px] tracking-[0.32em] uppercase transition-colors"
           >
             already a member · sign in →
@@ -242,6 +261,7 @@ export default function Landing() {
                 href={GUMROAD_URL}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => track('buy_click', 'pricing')}
                 className="group block border-2 border-amber-300 bg-amber-400 hover:bg-amber-300 text-black px-5 py-5 transition-colors"
               >
                 <div className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">buy pass on gumroad</div>
@@ -256,6 +276,7 @@ export default function Landing() {
               </a>
               <Link
                 href="/login"
+                onClick={() => track('sign_in_click', 'pricing')}
                 className="block text-center font-mono text-[10px] tracking-[0.32em] uppercase border-2 border-amber-500/40 hover:border-amber-300 text-amber-300 hover:text-white px-5 py-3 transition-colors"
               >
                 already a member · sign in
