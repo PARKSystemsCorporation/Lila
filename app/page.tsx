@@ -14,8 +14,6 @@ const LandingTicker = dynamic(() => import('./_components/landing-ticker'), {
   loading: () => null,
 })
 
-const GUMROAD_URL = process.env.NEXT_PUBLIC_GUMROAD_URL ?? 'https://gumroad.com/l/bfmoe'
-
 const SPORT_HREF: Record<SportKey, string> = {
   NFL: '/sports/nfl',
   NBA: '/sports/nba',
@@ -157,10 +155,8 @@ export default function Landing() {
         </p>
 
         <div className="mt-10 sm:mt-12 flex flex-wrap items-center gap-3 motion-safe:animate-[slideup_0.7s_ease-out_0.6s_both]">
-          <a
-            href={GUMROAD_URL}
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            href="/subscribe"
             onClick={() => track('buy_click', 'hero')}
             className="group inline-flex items-baseline gap-3 bg-amber-400 hover:bg-amber-300 text-black px-5 py-3 border-2 border-amber-300 transition-colors"
           >
@@ -168,7 +164,7 @@ export default function Landing() {
             <span className="font-mono text-base font-black tracking-tight">$10/MO</span>
             <span className="font-mono text-[10px] tracking-[0.25em] text-black/60 uppercase">+ 50 pg</span>
             <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-          </a>
+          </Link>
           <Link
             href="/login"
             onClick={() => track('sign_in_click', 'hero')}
@@ -257,23 +253,21 @@ export default function Landing() {
             </div>
 
             <div className="flex flex-col gap-3 lg:min-w-[260px]">
-              <a
-                href={GUMROAD_URL}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href="/subscribe"
                 onClick={() => track('buy_click', 'pricing')}
                 className="group block border-2 border-amber-300 bg-amber-400 hover:bg-amber-300 text-black px-5 py-5 transition-colors"
               >
-                <div className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">buy pass on gumroad</div>
+                <div className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">view the pass</div>
                 <div className="mt-2 flex items-baseline gap-2">
                   <span className="text-3xl font-black tracking-tight">$10</span>
                   <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/60">/ month</span>
                 </div>
                 <div className="mt-3 flex items-center justify-between">
-                  <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">→ checkout</span>
+                  <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">→ details &amp; checkout</span>
                   <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
                 </div>
-              </a>
+              </Link>
               <Link
                 href="/login"
                 onClick={() => track('sign_in_click', 'pricing')}
