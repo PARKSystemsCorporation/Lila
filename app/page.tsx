@@ -221,7 +221,7 @@ export default function Landing() {
           </h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
-            <PropertyTile href="/lila"        kicker="agent"   title="LILA"        body="Bounty research, trades, and broadcasts. The manager you can chat with." accent="amber" />
+            <PropertyTile href="/thepark"     kicker="members" title="THEPARK"     body="Members hub. The console, edges, and marketplace — past the paywall." accent="amber" />
             <PropertyTile href="/commodities" kicker="futures" title="COMMODITIES" body="Daily futures notes from the desk. Markdown, not noise." accent="orange" />
             <PropertyTile href="/sports"      kicker="edges"   title="SPORTS"      body="Ceelo's NFL handicapper. Math vs. the book line, every cycle." accent="red" />
           </div>

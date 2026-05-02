@@ -25,7 +25,7 @@ export default function Login() {
         body: JSON.stringify({ password: code }),
       })
       if (res.ok) {
-        router.replace('/lila')
+        router.replace('/thepark/operator')
       } else {
         setError('Wrong. Try again.')
         setCode('')
@@ -41,7 +41,7 @@ export default function Login() {
       body: JSON.stringify({ license_key: code.trim() }),
     })
     if (res.ok) {
-      router.replace('/viewer')
+      router.replace('/thepark')
     } else {
       const body = await res.json().catch(() => null)
       setError(body?.error ?? 'Could not verify the key.')

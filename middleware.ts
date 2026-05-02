@@ -19,6 +19,9 @@ function getAuthHash() {
 
 // Routes a viewer cookie can reach. Anything else stays operator-only.
 function isViewerPath(pathname: string): boolean {
+  // /thepark hub is paid-member territory, but /thepark/operator is admin-only.
+  if (pathname.startsWith('/thepark/operator')) return false
+  if (pathname === '/thepark' || pathname.startsWith('/thepark/')) return true
   return (
     pathname === '/viewer' ||
     pathname.startsWith('/viewer/') ||
@@ -35,6 +38,12 @@ function isViewerPath(pathname: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // /lila moved to /thepark/operator. Preserve old bookmarks.
+  if (pathname === '/lila' || pathname.startsWith('/lila/')) {
+    const tail = pathname.slice('/lila'.length)
+    return NextResponse.redirect(new URL(`/thepark/operator${tail}`, request.url))
+  }
 
   // Public / always-allowed paths.
   if (
