@@ -19,10 +19,20 @@ A three-role autonomous team inside one Next.js app:
   before it surfaces, runs the trade cycle against Alpaca, posts proactive
   check-ins, publishes hourly updates to Bluesky when something notable
   happened.
-- **Tasker (executor)** — grinds security bounties one codebase at a time.
-  A target-pinned phase machine (`map → surfaces → invariants → hypothesize
-  → investigate`) accumulates research notes across cycles. Non-security
-  bounties go through a simpler one-shot path.
+- **Tasker (Cipher)** — long-shot security research. A target-pinned phase
+  machine (`map → surfaces → invariants → hypothesize → investigate`)
+  accumulates research notes across cycles on one codebase at a time.
+  Findings file as drafts for Lila to review.
+- **Forge** — fast Algora-only PR drafter. Pulls funded GitHub-issue
+  bounties in the $50–$200 band tagged Bug or Feature, drafts a complete
+  PR (markdown body + unified diff), files into Lila's review queue.
+  When `LILA_AUTO_SUBMIT=true` + `GITHUB_TOKEN` is set, the PR opens
+  automatically.
+- **Scout** — gig hunter and tutorial fallback. Pulls fixed-price gigs
+  for Python automation / scraping / API work from Contra (primary) and
+  Wellfound (fallback), drafts a proposal pitch the operator submits
+  manually. When both gig sources are dry, Scout drafts a technical
+  tutorial — once Lila approves, it auto-publishes to dev.to.
 - **Analyst (Vega)** — market intelligence. Reads news, scans watchlists, files
   picks with tight stops. Mirrors picks to Telegram when configured.
 - **Handicapper (Ceelo)** — autonomous NFL sports betting model. Maintains an internal 
@@ -133,6 +143,28 @@ A confirmed finding saves a report to `security_reports` with status
 `pending_review` — **Lila reviews every draft before the operator sees
 it**.
 
+### Forge bounty cycle (5-min gated, configurable)
+
+```
+F0  if Algora queue empty (or last fetch >1h): pull, dedupe, insert as 'discovered'
+F1  else: pick the oldest $50-$200 Bug/Feature row, draft a full PR, file as 'drafted'
+```
+
+Drafts land in `bounty_picks` with `created_by='forge'`. Lila reviews, then
+`runSubmitter` opens the PR upstream when auto-submit is on.
+
+### Scout gig cycle (5-min gated, configurable)
+
+```
+S0  if gig queue empty (or last fetch >1h): pull Contra; if Contra dry, fall back to Wellfound
+S1  else: pick the oldest 'discovered' row, draft a 120-180 word proposal pitch
+S2  if both gig sources have been dry for SCOUT_DRY_HOURS: draft a tutorial article
+```
+
+Pitches go into `gig_picks` for the operator to submit manually. Tutorials
+go into `articles` with `kind='tutorial'`; once Lila approves, the dev.to
+publisher posts the next tick.
+
 ### Ceelo handicapper (30-min gated)
 
 Autonomous loop for mathematical sports betting.
@@ -199,16 +231,18 @@ See [`.env.example`](.env.example) for the full commented reference.
 
 **Feature-gated (set to enable):**
 - Trading → `ALPACA_API_KEY` + `ALPACA_SECRET_KEY` + `ALPACA_PAPER`
-- Bounty sources → `SUPERTEAM_API_KEY`, `NEYNAR_API_KEY`, `CLAWTASKS_API_KEY`, `WALLET_ADDRESS`
+- Cipher bounty sources → `SUPERTEAM_API_KEY`, `NEYNAR_API_KEY`, `CLAWTASKS_API_KEY`, `WALLET_ADDRESS`
+- Forge auto-submit → `GITHUB_TOKEN` + `LILA_AUTO_SUBMIT=true`
+- Scout tutorial publisher → `DEVTO_API_KEY` (+ optional `SCOUT_TUTORIAL_TOPICS`)
 - Bluesky broadcasts → `BSKY_HANDLE` + `BSKY_APP_PASSWORD`
 - Telegram picks feed → `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`
 - Ceelo Edge Gate → `ODDS_API_KEY`
 
 **Tuning knobs** (all optional, defaults sensible):
-`TASKER_STEP_SEC`, `RESEARCH_CYCLE_SEC`, `MANAGEMENT_CHECK_SEC`,
-`MANAGEMENT_TRADE_SEC`, `ANALYST_STEP_MIN`, `BROADCAST_INTERVAL_MIN`,
-`AUTONOMY_TICK_MS`, `DAILY_LLM_BUDGET_USD`, `ENABLE_AUTONOMY_TICKER`,
-`ENABLE_BROADCAST`.
+`TASKER_STEP_SEC`, `RESEARCH_CYCLE_SEC`, `FORGE_RUN_SEC`, `SCOUT_RUN_SEC`,
+`SCOUT_DRY_HOURS`, `MANAGEMENT_CHECK_SEC`, `MANAGEMENT_TRADE_SEC`,
+`ANALYST_STEP_MIN`, `BROADCAST_INTERVAL_MIN`, `AUTONOMY_TICK_MS`,
+`DAILY_LLM_BUDGET_USD`, `ENABLE_AUTONOMY_TICKER`, `ENABLE_BROADCAST`.
 
 ## Cost discipline
 
