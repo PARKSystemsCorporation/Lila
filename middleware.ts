@@ -48,6 +48,7 @@ export async function middleware(request: NextRequest) {
   // Public / always-allowed paths.
   if (
     pathname === '/' ||
+    pathname.startsWith('/bounty') ||
     pathname.startsWith('/commodities') ||
     pathname.startsWith('/sports') ||
     pathname.startsWith('/subscribe') ||
