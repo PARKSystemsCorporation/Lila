@@ -100,6 +100,7 @@ export class ForgeLoop {
     if (!(await this.shouldRun())) return null
 
     await this.maybeIntroduce()
+    await this.noticeChatMentions()
 
     const { rows: [counts] } = await this.db.query(
       `SELECT
@@ -319,6 +320,37 @@ export class ForgeLoop {
     if (!rows.length) return
     await this.chat(
       "Forge reporting in. I draft pull requests for $50–$200 Algora bounties tagged Bug or Feature — fast turnaround, drafts queue in Lila's review pipeline.",
+      'message',
+    )
+  }
+
+  // Acknowledge any operator/Lila chat message that names me directly,
+  // so the speaker sees the message landed. Presence-only — no behavior
+  // change yet. Dedup via agent_chat_acks so each message only gets one
+  // reply across all ticks.
+  private async noticeChatMentions(): Promise<void> {
+    const { rows } = await this.db.query(
+      `SELECT cm.id, cm.sender, cm.content
+         FROM chat_messages cm
+         LEFT JOIN agent_chat_acks a
+           ON a.agent='forge' AND a.chat_message_id=cm.id
+        WHERE cm.created_at > NOW() - INTERVAL '15 minutes'
+          AND cm.sender IN ('operator','lila')
+          AND cm.content ~* '\\m@?forge\\M'
+          AND a.id IS NULL
+        ORDER BY cm.id ASC
+        LIMIT 1`
+    )
+    if (!rows.length) return
+    const msg = rows[0] as { id: number; sender: string; content: string }
+    const { rowCount } = await this.db.query(
+      `INSERT INTO agent_chat_acks (agent, chat_message_id) VALUES ('forge', $1)
+       ON CONFLICT (agent, chat_message_id) DO NOTHING`,
+      [msg.id]
+    )
+    if (!rowCount) return
+    await this.chat(
+      `Forge: heard you, ${msg.sender}. Working the Algora $50–$200 Bug/Feature queue head-first; pin a specific bounty URL if you want me to jump it.`,
       'message',
     )
   }

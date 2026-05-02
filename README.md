@@ -28,11 +28,13 @@ A three-role autonomous team inside one Next.js app:
   PR (markdown body + unified diff), files into Lila's review queue.
   When `LILA_AUTO_SUBMIT=true` + `GITHUB_TOKEN` is set, the PR opens
   automatically.
-- **Scout** — gig hunter and tutorial fallback. Pulls fixed-price gigs
-  for Python automation / scraping / API work from Contra (primary) and
-  Wellfound (fallback), drafts a proposal pitch the operator submits
-  manually. When both gig sources are dry, Scout drafts a technical
-  tutorial — once Lila approves, it auto-publishes to dev.to.
+- **Scout** — remote-jobs hunter and tutorial fallback. Pulls Python
+  automation / scraping / API roles from RemoteOK (primary, public
+  JSON API) and We Work Remotely (fallback, public RSS). Drafts a
+  short application cover note the operator submits manually. When
+  both sources are dry, Scout drafts a technical tutorial — Lila
+  reviews it the same way she reviews bounty drafts, and approved
+  tutorials auto-publish to dev.to.
 - **Analyst (Vega)** — market intelligence. Reads news, scans watchlists, files
   picks with tight stops. Mirrors picks to Telegram when configured.
 - **Handicapper (Ceelo)** — autonomous NFL sports betting model. Maintains an internal 
@@ -156,14 +158,15 @@ Drafts land in `bounty_picks` with `created_by='forge'`. Lila reviews, then
 ### Scout gig cycle (5-min gated, configurable)
 
 ```
-S0  if gig queue empty (or last fetch >1h): pull Contra; if Contra dry, fall back to Wellfound
-S1  else: pick the oldest 'discovered' row, draft a 120-180 word proposal pitch
-S2  if both gig sources have been dry for SCOUT_DRY_HOURS: draft a tutorial article
+S0  if gig queue empty (or last fetch >1h): pull RemoteOK; if RemoteOK dry, fall back to WWR
+S1  else: pick the oldest 'discovered' row, draft a 120-180 word application cover note
+S2  if both sources have been dry for SCOUT_DRY_HOURS: draft a tutorial article
 ```
 
-Pitches go into `gig_picks` for the operator to submit manually. Tutorials
-go into `articles` with `kind='tutorial'`; once Lila approves, the dev.to
-publisher posts the next tick.
+Cover notes go into `gig_picks` for the operator to submit manually.
+Tutorials go into `articles` with `kind='tutorial'`; Lila reviews them
+in the same management loop that reviews bounty drafts, and the dev.to
+publisher posts approved ones on the next tick.
 
 ### Ceelo handicapper (30-min gated)
 

@@ -133,6 +133,31 @@ Respond with ONLY valid JSON:
 
 Approve only if you'd be comfortable submitting this yourself. Reject with the actual reason. No "looks good to me" — give a reason either way.`
 
+const TUTORIAL_REVIEW_PROMPT = `You are Lila reviewing a technical tutorial Scout drafted for dev.to. Approved tutorials publish automatically — your gate is the only thing between the draft and the public byline. Be strict.
+
+Title: {TITLE}
+
+Tutorial draft (markdown):
+---
+{BODY}
+---
+
+Evaluate:
+1. Is the topic actually covered, or did Scout pad with filler? "What you'll build" should match what the body delivers.
+2. Are code blocks complete and runnable as written? Reject on hallucinated APIs, missing imports, or pseudo-code masquerading as real code.
+3. Is there a real "where this falls down" / edge-cases section? Reject pure happy-path tutorials.
+4. Voice: dry, senior-engineer, specific. Reject hype, marketer phrasing, or beginner-talk-down tone.
+5. Length feels in the 1200-1800 word target band? Wildly short or padded → reject.
+
+Respond with ONLY valid JSON:
+{
+  "decision":   "approve" | "reject",
+  "confidence": 0.0-1.0,
+  "notes":      "one sentence — what's good or what's broken"
+}
+
+Approve only if you'd be comfortable with this on a public byline. Default lean: reject when uncertain.`
+
 const TRADE_PLAN_PROMPT = `You are Lila, running the trading desk. Write today's plan based on Vega output and current positions.
 
 Vega notes (recent):
@@ -187,9 +212,14 @@ export class ManagementLoop {
     const review = await this.reviewOne()
     if (review) return review
 
-    // Priority 3b: review one drafted bounty (Scout's queue)
+    // Priority 3b: review one drafted bounty (Scout's / Forge's queue)
     const bountyReview = await this.reviewBountyDraft()
     if (bountyReview) return bountyReview
+
+    // Priority 3c: review one drafted Scout tutorial. Approved rows
+    // get picked up by runDevtoPublisher on a later tick.
+    const tutorialReview = await this.reviewTutorialDraft()
+    if (tutorialReview) return tutorialReview
 
     // Priority 4: trade cycle, 15-min gated
     if (await this.shouldTrade()) {
@@ -389,6 +419,61 @@ export class ManagementLoop {
 
     return {
       logMessage: `Lila ${newStatus} bounty "${(r.draft_title ?? r.title).slice(0, 60)}" — ${notes.slice(0, 80)}`,
+      logType: newStatus === 'approved' ? 'success' : 'info',
+      posted: newStatus === 'approved',
+    }
+  }
+
+  // ── Priority 3c: tutorial draft review ────────────────────────────────────
+
+  private async reviewTutorialDraft(): Promise<ManagementResult | null> {
+    const { rows } = await this.db.query(
+      `SELECT id, title, content
+         FROM articles
+        WHERE author='scout' AND kind='tutorial' AND status='draft'
+        ORDER BY created_at ASC
+        LIMIT 1`
+    )
+    if (!rows.length) return null
+    const r = rows[0] as { id: number; title: string; content: string }
+
+    const raw = await this.llm(
+      'lila.review.tutorial',
+      TUTORIAL_REVIEW_PROMPT
+        .replace('{TITLE}', r.title)
+        .replace('{BODY}',  String(r.content ?? '').slice(0, 12_000)),
+      300
+    )
+    const parsed = this.parse<{ decision: 'approve' | 'reject'; confidence: number; notes: string }>(
+      raw, { decision: 'reject', confidence: 0, notes: 'Tutorial review returned no parseable verdict.' }
+    )
+
+    const newStatus = parsed.decision === 'approve' ? 'approved' : 'rejected'
+    const notes = String(parsed.notes ?? '').slice(0, 500)
+
+    await this.db.query(
+      `UPDATE articles SET status=$1, updated_at=NOW() WHERE id=$2`,
+      [newStatus, r.id]
+    )
+
+    if (newStatus === 'approved') {
+      await this.chat(
+        'lila',
+        `Approved Scout tutorial: "${r.title.slice(0, 80)}". Queued for dev.to. ${notes}`,
+        'message',
+      )
+    } else {
+      // Rejection notes go to chat as 'status' so the operator can see
+      // them in the feed without polluting the Chat tab.
+      await this.chat(
+        'lila',
+        `Rejected Scout tutorial: "${r.title.slice(0, 80)}" — ${notes}`,
+        'status',
+      )
+    }
+
+    return {
+      logMessage: `Lila ${newStatus} tutorial "${r.title.slice(0, 60)}" — ${notes.slice(0, 80)}`,
       logType: newStatus === 'approved' ? 'success' : 'info',
       posted: newStatus === 'approved',
     }

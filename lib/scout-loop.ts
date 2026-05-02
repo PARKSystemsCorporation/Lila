@@ -2,26 +2,28 @@ import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
-import * as Contra from './platforms/contra'
-import * as Wellfound from './platforms/wellfound'
+import * as RemoteOK from './platforms/remoteok'
+import * as WeWorkRemotely from './platforms/weworkremotely'
 import { extractTitle } from './article-engine'
 
-// ── Scout: gig hunter + tutorial fallback ───────────────────────────────
+// ── Scout: remote-jobs hunter + tutorial fallback ───────────────────────
 //
-// Scout pulls small fixed-price contracts (Python automation / scraping /
-// API fixes) from Contra (primary) and Wellfound (fallback). For each
-// discovered gig, Scout drafts a short proposal pitch — the operator
-// submits manually on the platform.
+// Scout pulls remote Python automation / scraping / API roles from
+// RemoteOK (primary, public JSON API) and We Work Remotely (fallback,
+// public RSS feed). Both are no-auth. For each discovered posting,
+// Scout drafts a short application cover note — the operator submits
+// manually on the platform.
 //
-// When both gig sources have been dry for SCOUT_DRY_HOURS (default 24h),
+// When both sources have been dry for SCOUT_DRY_HOURS (default 24h),
 // Scout switches modes and drafts a technical tutorial instead. Drafts
-// land in `articles` with kind='tutorial'; once Lila approves, the
-// devto-publish.ts step posts them to dev.to.
+// land in `articles` with kind='tutorial'; once Lila approves
+// (management-loop.reviewTutorialDraft), devto-publish.ts posts them
+// to dev.to.
 //
 // One step per cycle, time-gated by SCOUT_RUN_SEC (default 5min):
-//   S0 — Fetch new gigs (Contra → Wellfound fallback) when queue empty
+//   S0 — Fetch new postings (RemoteOK → WWR fallback) when queue empty
 //        OR last fetch is >1h old.
-//   S1 — Draft a proposal for the oldest 'discovered' row.
+//   S1 — Draft an application cover note for the oldest 'discovered' row.
 //   S2 — Tutorial fallback when the queue has been dry for too long.
 
 const FETCH_INTERVAL_MS = 60 * 60 * 1000
@@ -37,9 +39,9 @@ const DEFAULT_TUTORIAL_TOPICS = [
   'Resilient CSV/Excel ingestion pipelines with pandas + pydantic',
 ]
 
-const PITCH_PROMPT = `You are Scout, the gig-prospecting agent on Lila's autonomous team. You are drafting a short fixed-price proposal pitch (120-180 words, no fluff) for the operator to submit manually on Contra/Wellfound.
+const PITCH_PROMPT = `You are Scout, the remote-jobs prospecting agent on Lila's autonomous team. You are drafting a short application cover note (120-180 words, no fluff) for the operator to submit manually on RemoteOK / We Work Remotely.
 
-GIG:
+POSTING:
   Source:  {SOURCE}
   Title:   {TITLE}
   Budget:  {BUDGET}
@@ -50,14 +52,14 @@ DESCRIPTION:
 {SUMMARY}
 ---
 
-Write a proposal pitch in plain prose, not markdown. Include:
-- One-line hook tied to the operator's actual pain point
-- Why we're a fit (Python automation / scraping / API integration experience — be concrete, no vague claims)
-- Specific deliverable + concrete timeline (days, not weeks)
-- Price proposal anchored to the listed budget
-- A single sharp question that surfaces missing scope
+Write a cover note in plain prose, not markdown. Include:
+- One-line hook tied to the actual posted role
+- Why we're a fit (Python automation / scraping / API integration experience — be concrete; reference one shape of past work that maps to the posting, no vague claims)
+- A relevant project or pattern we've shipped before (one sentence)
+- Availability + how we'd want to engage (contract, part-time, etc., based on what the posting suggests)
+- A single sharp clarifying question
 
-Voice: senior engineer pitching, not a marketer. No exclamations, no "I'm passionate about". 120-180 words. Output the pitch text only, no preamble.`
+Voice: senior engineer applying, not a marketer. No exclamations, no "I'm passionate about". 120-180 words. Output the cover note text only, no preamble.`
 
 const TUTORIAL_PROMPT = `You are Scout, ghost-writing a technical tutorial for dev.to. The topic:
 
@@ -111,6 +113,7 @@ export class ScoutLoop {
     if (!(await this.shouldRun())) return null
 
     await this.maybeIntroduce()
+    await this.noticeChatMentions()
 
     const { rows: [counts] } = await this.db.query(
       `SELECT
@@ -123,7 +126,7 @@ export class ScoutLoop {
 
     if (discoveredCount === 0 || fetchStale) {
       const fetchResult = await this.fetchGigs().catch(e => ({
-        inserted: 0, source: 'contra', _error: String(e).slice(0, 120),
+        inserted: 0, source: 'remoteok' as const, _error: String(e).slice(0, 120),
       }))
       await this.markStep({ stampFetch: true })
 
@@ -141,7 +144,7 @@ export class ScoutLoop {
       if (tutorial) return tutorial
 
       return {
-        logMessage: `Scout fetched gigs: +0 discovered (contra/wellfound dry)`,
+        logMessage: `Scout fetched gigs: +0 discovered (remoteok/wwr dry)`,
         logType: 'info',
       }
     }
@@ -210,19 +213,19 @@ export class ScoutLoop {
 
   // ── S0: gig pull ──────────────────────────────────────────────────────
 
-  private async fetchGigs(): Promise<{ inserted: number; source: 'contra' | 'wellfound' }> {
-    const contra = await Contra.fetchOpenGigs().catch(() => [])
-    if (contra.length > 0) {
-      const inserted = await this.upsertGigs('contra', contra)
-      return { inserted, source: 'contra' }
+  private async fetchGigs(): Promise<{ inserted: number; source: 'remoteok' | 'weworkremotely' }> {
+    const remote = await RemoteOK.fetchOpenGigs().catch(() => [])
+    if (remote.length > 0) {
+      const inserted = await this.upsertGigs('remoteok', remote)
+      return { inserted, source: 'remoteok' }
     }
-    const wf = await Wellfound.fetchOpenGigs().catch(() => [])
-    const inserted = await this.upsertGigs('wellfound', wf)
-    return { inserted, source: 'wellfound' }
+    const wwr = await WeWorkRemotely.fetchOpenGigs().catch(() => [])
+    const inserted = await this.upsertGigs('weworkremotely', wwr)
+    return { inserted, source: 'weworkremotely' }
   }
 
   private async upsertGigs(
-    source: 'contra' | 'wellfound',
+    source: 'remoteok' | 'weworkremotely',
     gigs: { external_id: string; url: string; title: string; summary: string | null; budget_usd: number | null; posted_at: string | null }[],
   ): Promise<number> {
     let inserted = 0
@@ -344,7 +347,38 @@ export class ScoutLoop {
     )
     if (!rows.length) return
     await this.chat(
-      "Scout reporting in. I hunt fixed-price Python automation / scraping / API gigs on Contra (primary) and Wellfound (fallback) and draft proposal pitches for the operator to send. When the gig queue is dry, I draft technical tutorials — once approved, dev.to publishes them.",
+      "Scout reporting in. I hunt remote Python automation / scraping / API roles on RemoteOK (primary) and We Work Remotely (fallback) and draft application cover notes for the operator to send. When the queue is dry, I draft technical tutorials — once Lila approves, dev.to publishes them.",
+      'message',
+    )
+  }
+
+  // Acknowledge any operator/Lila chat message that names me directly,
+  // so the speaker sees the message landed. Presence-only — no behavior
+  // change yet. Dedup via agent_chat_acks so each message only gets one
+  // reply across all ticks.
+  private async noticeChatMentions(): Promise<void> {
+    const { rows } = await this.db.query(
+      `SELECT cm.id, cm.sender, cm.content
+         FROM chat_messages cm
+         LEFT JOIN agent_chat_acks a
+           ON a.agent='scout' AND a.chat_message_id=cm.id
+        WHERE cm.created_at > NOW() - INTERVAL '15 minutes'
+          AND cm.sender IN ('operator','lila')
+          AND cm.content ~* '\\m@?scout\\M'
+          AND a.id IS NULL
+        ORDER BY cm.id ASC
+        LIMIT 1`
+    )
+    if (!rows.length) return
+    const msg = rows[0] as { id: number; sender: string; content: string }
+    const { rowCount } = await this.db.query(
+      `INSERT INTO agent_chat_acks (agent, chat_message_id) VALUES ('scout', $1)
+       ON CONFLICT (agent, chat_message_id) DO NOTHING`,
+      [msg.id]
+    )
+    if (!rowCount) return
+    await this.chat(
+      `Scout: heard you, ${msg.sender}. Sticking to RemoteOK → WWR queue order for now; flag a specific posting URL if you want me to jump it.`,
       'message',
     )
   }

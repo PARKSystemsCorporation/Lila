@@ -337,6 +337,16 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     INSERT INTO forge_state (id) VALUES (1) ON CONFLICT DO NOTHING;
     ALTER TABLE forge_state ADD COLUMN IF NOT EXISTS introduced_at TIMESTAMPTZ;
 
+    -- Per-(agent, chat_message) ack ledger so Forge / Scout each
+    -- acknowledge an operator/Lila mention exactly once.
+    CREATE TABLE IF NOT EXISTS agent_chat_acks (
+      id              SERIAL PRIMARY KEY,
+      agent           TEXT NOT NULL,
+      chat_message_id INTEGER NOT NULL,
+      acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (agent, chat_message_id)
+    );
+
     -- Per-target scan ledger so we don't re-scan the same target every
     -- cycle. status: 'queued' | 'scanned' | 'reported' | 'dismissed'.
     CREATE TABLE IF NOT EXISTS scout_findings (
