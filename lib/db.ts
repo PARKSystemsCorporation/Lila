@@ -321,6 +321,18 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     INSERT INTO scout_state (id) VALUES (1) ON CONFLICT DO NOTHING;
     ALTER TABLE scout_state ADD COLUMN IF NOT EXISTS last_pick_at TIMESTAMPTZ;
 
+    -- ── Forge: fast Algora-only PR drafter ──────────────────────────────
+    -- Same time-gate ledger shape as scout_state. Forge writes into
+    -- bounty_picks tagged created_by='forge' (see ALTER below).
+    CREATE TABLE IF NOT EXISTS forge_state (
+      id              INTEGER     PRIMARY KEY DEFAULT 1,
+      cycle           INTEGER     NOT NULL DEFAULT 0,
+      last_step_at    TIMESTAMPTZ,
+      last_pick_at    TIMESTAMPTZ,
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO forge_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
     -- Per-target scan ledger so we don't re-scan the same target every
     -- cycle. status: 'queued' | 'scanned' | 'reported' | 'dismissed'.
     CREATE TABLE IF NOT EXISTS scout_findings (
@@ -614,6 +626,48 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_bounty_picks_status   ON bounty_picks(status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_bounty_picks_pending  ON bounty_picks(status, drafted_at)
       WHERE status='discovered' OR status='drafted';
+    -- Multi-author rows: Scout used to be the only writer; Forge now also
+    -- inserts here. Backfill existing rows to 'scout' so Forge's filter
+    -- (WHERE created_by='forge') stays accurate.
+    ALTER TABLE bounty_picks ADD COLUMN IF NOT EXISTS created_by TEXT;
+    UPDATE bounty_picks SET created_by='scout' WHERE created_by IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_bounty_picks_created_by ON bounty_picks(created_by, status, created_at DESC);
+
+    -- ── Scout's gig pipeline (Contra / Wellfound) ────────────────────────
+    -- Parallel to bounty_picks but Upwork/Contra-shaped: deliverable is a
+    -- short proposal pitch, not a PR diff. No autosubmit — operator sends
+    -- proposals manually on the platform.
+    CREATE TABLE IF NOT EXISTS gig_picks (
+      id              SERIAL      PRIMARY KEY,
+      source          TEXT        NOT NULL,                 -- 'contra' | 'wellfound'
+      external_id     TEXT        NOT NULL,
+      url             TEXT        NOT NULL,
+      title           TEXT        NOT NULL,
+      summary         TEXT,
+      budget_usd      NUMERIC(10,2),
+      posted_at       TIMESTAMPTZ,
+      status          TEXT        NOT NULL DEFAULT 'discovered',
+      draft_pitch     TEXT,
+      review_notes    TEXT,
+      drafted_at      TIMESTAMPTZ,
+      submitted_at    TIMESTAMPTZ,
+      paid_at         TIMESTAMPTZ,
+      paid_amount_usd NUMERIC(10,2),
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (source, external_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gig_picks_status ON gig_picks(status, created_at DESC);
+
+    -- Tutorial-publishing fields on the existing articles table. Scout
+    -- writes kind='tutorial' rows; runDevtoPublisher posts approved rows
+    -- to dev.to and stamps published_to/published_at. external_url
+    -- already exists — we reuse it for the dev.to canonical URL.
+    ALTER TABLE articles ADD COLUMN IF NOT EXISTS published_to TEXT;
+    ALTER TABLE articles ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS idx_articles_publishable
+      ON articles(author, kind, status, published_to)
+      WHERE kind='tutorial' AND status='approved' AND published_to IS NULL;
 
     -- Per-team-per-season EPA aggregates from nflverse play-by-play.
     -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).

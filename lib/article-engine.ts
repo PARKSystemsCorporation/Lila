@@ -364,7 +364,7 @@ const PROMPT_BY_AUTHOR: Record<ArticleAuthor, string> = {
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function extractTitle(md: string): string | null {
+export function extractTitle(md: string): string | null {
   const m = md.match(/^\s*#\s+(.+?)\s*$/m)
   return m ? m[1].trim().slice(0, 200) : null
 }

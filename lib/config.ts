@@ -31,9 +31,16 @@ export const cfg = Object.freeze({
   // internally rate-limited so this can be aggressive without spamming
   // upstream sources.
   CEELO_RUN_MIN:          num('CEELO_RUN_MIN', 30),
-  // Scout step interval (seconds). Volume bounty hunter — runs faster than
-  // Cipher's deep cycles. One target per cycle, shallow scan + draft.
+  // Scout step interval (seconds). Gig hunter (Contra/Wellfound) +
+  // tutorial fallback. One target per cycle.
   SCOUT_RUN_SEC:          num('SCOUT_RUN_SEC', 300),
+  // Hours of empty Contra/Wellfound fetches before Scout switches to
+  // tutorial-drafting mode. Set to 0 to force tutorial drafting on the
+  // next cycle (used in tests / verification).
+  SCOUT_DRY_HOURS:        num('SCOUT_DRY_HOURS', 24),
+  // Forge step interval (seconds). Fast Algora-only PR drafter — same
+  // shape as Scout's old volume cycle, scoped to $50-$200 Bug/Feature.
+  FORGE_RUN_SEC:          num('FORGE_RUN_SEC', 300),
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).
   BROADCAST_INTERVAL_MIN: num('BROADCAST_INTERVAL_MIN', 60),

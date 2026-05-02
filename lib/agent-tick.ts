@@ -4,6 +4,7 @@ import { TradingEngine } from './trading-engine'
 import { AnalystLoop } from './analyst-loop'
 import { TaskerLoop } from './tasker-loop'
 import { ScoutLoop } from './scout-loop'
+import { ForgeLoop } from './forge-loop'
 import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
@@ -15,6 +16,7 @@ import { runNoonArticles } from './article-engine'
 import { runAlerts } from './alerts'
 import { runRetention } from './retention'
 import { runSubmitter } from './github-pr'
+import { runDevtoPublisher } from './devto-publish'
 import { cfg } from './config'
 
 // Single entry point for an autonomy tick. Called from /api/agent (UI poll)
@@ -97,8 +99,22 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(taskerResult.logMessage)
     }
 
-    // 3b. Scout — volume bounty hunter. Shallow scans, files drafts to the
-    //     same security_reports queue Lila reviews for Cipher.
+    // 3a. Forge — fast Algora-only PR drafter ($50-$200, Bug/Feature).
+    //     Files into bounty_picks; runSubmitter ships approved rows.
+    const forge = new ForgeLoop(db)
+    const forgeResult = await forge.run().catch((e: unknown) => ({
+      logMessage: `Forge error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (forgeResult) {
+      await logEvent(db, forgeResult.logMessage, forgeResult.logType)
+      logs.push(forgeResult.logMessage)
+    }
+
+    // 3b. Scout — gig hunter (Contra → Wellfound fallback) + tutorial
+    //     fallback when both gig sources are dry. Tutorials file into
+    //     `articles` with kind='tutorial'; runDevtoPublisher posts the
+    //     approved ones to dev.to.
     const scout = new ScoutLoop(db)
     const scoutResult = await scout.run().catch((e: unknown) => ({
       logMessage: `Scout error: ${String(e)}`,
@@ -222,6 +238,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (submitResult?.logMessage) {
       await logEvent(db, submitResult.logMessage, submitResult.logType ?? 'info')
       logs.push(submitResult.logMessage)
+    }
+
+    // 6b3. dev.to publisher — posts one approved Scout tutorial per tick.
+    //      No-op unless DEVTO_API_KEY is set.
+    const devtoResult = await runDevtoPublisher(db).catch((e: unknown) => ({
+      ran: true, published: 0, failed: 1,
+      logMessage: `dev.to publish error: ${String(e).slice(0, 120)}`,
+      logType: 'warn' as const,
+    }))
+    if (devtoResult?.logMessage) {
+      await logEvent(db, devtoResult.logMessage, devtoResult.logType ?? 'info')
+      logs.push(devtoResult.logMessage)
     }
 
     // 6c. Telegram alerts — paid bounties, ready-to-submit Scout drafts,

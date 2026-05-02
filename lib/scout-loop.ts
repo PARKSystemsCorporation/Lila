@@ -2,97 +2,92 @@ import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
-import * as Gitcoin from './bounties/gitcoin'
-import * as Algora  from './bounties/algora'
-import type { GitcoinPick } from './bounties/gitcoin'
+import * as Contra from './platforms/contra'
+import * as Wellfound from './platforms/wellfound'
+import { extractTitle } from './article-engine'
 
-// ── Scout: volume bounty hunter (auto-submit) ────────────────────────────
+// ── Scout: gig hunter + tutorial fallback ───────────────────────────────
 //
-// Scout pulls sub-$500 GitHub-issue bounties from Gitcoin + Algora and
-// drafts the FULL submission deliverable: a PR description in markdown
-// plus a unified diff. Lila reviews each draft (management-loop), and
-// when LILA_AUTO_SUBMIT=true + GITHUB_TOKEN is set, github-pr.ts opens
-// the PR under the Parks GitHub account.
+// Scout pulls small fixed-price contracts (Python automation / scraping /
+// API fixes) from Contra (primary) and Wellfound (fallback). For each
+// discovered gig, Scout drafts a short proposal pitch — the operator
+// submits manually on the platform.
+//
+// When both gig sources have been dry for SCOUT_DRY_HOURS (default 24h),
+// Scout switches modes and drafts a technical tutorial instead. Drafts
+// land in `articles` with kind='tutorial'; once Lila approves, the
+// devto-publish.ts step posts them to dev.to.
 //
 // One step per cycle, time-gated by SCOUT_RUN_SEC (default 5min):
-//   S0 — If queue has no 'discovered' rows OR last_fetch is >1h old:
-//        pull from Gitcoin + Algora, dedup by (source, external_id),
-//        insert new ones as status='discovered'.
-//   S1 — Else: take the oldest 'discovered' row, attempt a deep draft
-//        (full PR body + diff). File as status='drafted' for Lila.
-//        On parse failure, mark status='rejected' so we skip next time.
+//   S0 — Fetch new gigs (Contra → Wellfound fallback) when queue empty
+//        OR last fetch is >1h old.
+//   S1 — Draft a proposal for the oldest 'discovered' row.
+//   S2 — Tutorial fallback when the queue has been dry for too long.
 
-const FETCH_INTERVAL_MS = 60 * 60 * 1000   // 1h between full source pulls
-const REPO_TREE_CAP     = 60                // file paths included in prompt
-const MAX_BODY_TOKENS   = 4000              // truncate issue body
-const DRAFT_MAX_TOKENS  = 2000              // body+diff combined budget
+const FETCH_INTERVAL_MS = 60 * 60 * 1000
+const PITCH_MAX_TOKENS  = 600
+const TUTORIAL_MAX_TOKENS = 2400
 
-const DRAFT_PROMPT = `You are Scout, the volume bounty executor on Lila's autonomous team. You produce SUBMISSION-READY pull-request deliverables for sub-$500 GitHub-issue bounties. Lila (your manager, the COO) reviews everything before it's submitted — you do not need to gate yourself, but DO NOT fabricate file paths, function names, or APIs you can't verify from the inputs below.
+const DEFAULT_TUTORIAL_TOPICS = [
+  'Robust rate-limited Python scraping with retry and backoff',
+  'Building a small REST API in FastAPI with auth and rate limiting',
+  'Practical webhooks: receiving, verifying, and replaying events in Python',
+  'Scheduling background jobs with APScheduler vs cron + Docker',
+  'Handling pagination, throttling, and partial failures in API integrations',
+  'Resilient CSV/Excel ingestion pipelines with pandas + pydantic',
+]
 
-BOUNTY:
+const PITCH_PROMPT = `You are Scout, the gig-prospecting agent on Lila's autonomous team. You are drafting a short fixed-price proposal pitch (120-180 words, no fluff) for the operator to submit manually on Contra/Wellfound.
+
+GIG:
   Source:  {SOURCE}
   Title:   {TITLE}
-  Reward:  {REWARD}
-  Repo:    {REPO}
-  Issue:   #{ISSUE_NUMBER}
-  Labels:  {LABELS}
-  Language: {LANGUAGE}
-  Difficulty: {DIFFICULTY}
+  Budget:  {BUDGET}
+  URL:     {URL}
 
-ISSUE BODY:
+DESCRIPTION:
 ---
-{BODY}
+{SUMMARY}
 ---
 
-REPO FILE TREE (paths only, may be partial — fewer than the real tree):
-{TREE}
+Write a proposal pitch in plain prose, not markdown. Include:
+- One-line hook tied to the operator's actual pain point
+- Why we're a fit (Python automation / scraping / API integration experience — be concrete, no vague claims)
+- Specific deliverable + concrete timeline (days, not weeks)
+- Price proposal anchored to the listed budget
+- A single sharp question that surfaces missing scope
 
-Your job: draft a complete PR that closes this issue.
+Voice: senior engineer pitching, not a marketer. No exclamations, no "I'm passionate about". 120-180 words. Output the pitch text only, no preamble.`
 
-Output strict JSON, no commentary, no markdown fences:
-{
-  "draft_title":  "PR title (imperative mood, ≤72 chars)",
-  "draft_body":   "Full PR description in markdown. Sections: ## Summary, ## Changes, ## Why this works, ## Testing notes. Reference 'Closes #{ISSUE_NUMBER}' at the bottom. 200-600 words. No fluff, no marketing voice, no apologies.",
-  "draft_diff":   "Unified diff that applies cleanly with 'git apply'. Use 'a/' and 'b/' prefixes. Include sufficient context (3 lines). If you cannot produce a complete diff with the inputs given, write a SCAFFOLD diff — best-attempt patches against the most likely files in the tree above — and note the assumption inside draft_body. NEVER invent paths that aren't in the tree.",
-  "files_touched": ["path/to/file.ext"],
-  "confidence":   0.0..1.0
-}
+const TUTORIAL_PROMPT = `You are Scout, ghost-writing a technical tutorial for dev.to. The topic:
 
-Confidence calibration:
-  ≥ 0.8  diff applies cleanly, you are certain it closes the issue
-  0.5-0.8 diff is correct in spirit, may need a small adjustment
-  < 0.5  uncertain about scope or paths — Lila will probably reject
+TOPIC: {TOPIC}
 
-If the issue is too vague to attempt (no reproduction, no clear deliverable), respond with confidence=0 and draft_body explaining what info is missing. Do not fabricate.`
+Audience: working developers who already know Python basics. Voice: senior engineer, dry, specific. 1200-1800 words. Markdown.
 
-interface DraftResponse {
-  draft_title?: string
-  draft_body?: string
-  draft_diff?: string
-  files_touched?: string[]
-  confidence?: number
-}
+Constraints:
+- Start with a clear "what you'll build" / "what you'll learn" lede.
+- Concrete code blocks with imports, not abbreviated snippets.
+- Every code block must be runnable as written (or note explicitly what's missing).
+- Include at least one "common mistake" callout.
+- End with a "where this falls down" section that names real edge cases.
+- No "in this tutorial we will…" filler. No emoji. No padding.
+
+Output a complete markdown article starting with a single H1 title line. No surrounding commentary.`
 
 interface ScoutResult {
   logMessage: string
   logType: 'info' | 'success' | 'warn'
 }
 
-interface DiscoveredRow {
+interface PitchTarget {
   id: number
   source: string
   external_id: string
   url: string
   title: string
   summary: string | null
-  payout_usd: string | null
-  payout_token: string | null
-  repo_url: string | null
-  issue_number: number | null
-  issue_body: string | null
-  language: string | null
-  labels: string[] | null
-  difficulty: string | null
+  budget_usd: string | null
 }
 
 export class ScoutLoop {
@@ -115,217 +110,224 @@ export class ScoutLoop {
   async run(): Promise<ScoutResult | null> {
     if (!(await this.shouldRun())) return null
 
-    // S0 candidate: do we need to fetch new bounties?
     const { rows: [counts] } = await this.db.query(
       `SELECT
-         (SELECT COUNT(*) FROM bounty_picks WHERE status='discovered')                 AS discovered,
-         (SELECT MAX(last_pick_at) FROM scout_state WHERE id=1)                        AS last_fetch_at`
+         (SELECT COUNT(*) FROM gig_picks WHERE status='discovered')           AS discovered,
+         (SELECT MAX(last_pick_at) FROM scout_state WHERE id=1)               AS last_fetch_at`
     )
     const discoveredCount = Number(counts?.discovered ?? 0)
     const lastFetchAt = counts?.last_fetch_at ? new Date(counts.last_fetch_at).getTime() : 0
     const fetchStale = Date.now() - lastFetchAt > FETCH_INTERVAL_MS
 
     if (discoveredCount === 0 || fetchStale) {
-      const fetchResult = await this.fetchSources().catch(e => ({
-        inserted: 0, _error: String(e).slice(0, 120),
+      const fetchResult = await this.fetchGigs().catch(e => ({
+        inserted: 0, source: 'contra', _error: String(e).slice(0, 120),
       }))
       await this.markStep({ stampFetch: true })
-      const errSuffix = (fetchResult as { _error?: string })._error
-        ? ` (err: ${(fetchResult as { _error?: string })._error})` : ''
+
+      if (fetchResult.inserted > 0) {
+        const errSuffix = (fetchResult as { _error?: string })._error
+          ? ` (err: ${(fetchResult as { _error?: string })._error})` : ''
+        return {
+          logMessage: `Scout fetched gigs: +${fetchResult.inserted} discovered (${fetchResult.source})${errSuffix}`,
+          logType: 'success',
+        }
+      }
+      // Nothing new from either platform. Maybe time to draft a tutorial.
+      const tutorial = await this.maybeDraftTutorial()
+      if (tutorial) return tutorial
+
       return {
-        logMessage: `Scout fetched bounties: +${fetchResult.inserted} discovered${errSuffix}`,
-        logType: fetchResult.inserted > 0 ? 'success' : 'info',
+        logMessage: `Scout fetched gigs: +0 discovered (contra/wellfound dry)`,
+        logType: 'info',
       }
     }
 
-    // S1: draft one discovered bounty.
     if (!this.ai) {
       await this.markStep({})
-      return { logMessage: 'Scout: no LLM key, skipping draft.', logType: 'warn' }
+      return { logMessage: 'Scout: no LLM key, skipping pitch.', logType: 'warn' }
     }
 
-    const target = await this.pickToDraft()
+    const target = await this.pickToPitch()
     if (!target) {
       await this.markStep({})
-      return { logMessage: 'Scout: queue empty, idle.', logType: 'info' }
+      const tutorial = await this.maybeDraftTutorial()
+      if (tutorial) return tutorial
+      return { logMessage: 'Scout: gig queue empty, idle.', logType: 'info' }
     }
 
-    let draft: DraftResponse
+    let pitch: string
     try {
-      const tree = await fetchRepoTree(target.repo_url)
-      draft = await this.draft(target, tree)
+      pitch = await this.draftPitch(target)
     } catch (e) {
       if (e instanceof LLMBudgetExceeded) {
         await this.markStep({})
         return { logMessage: 'Scout: budget hit, skipping.', logType: 'warn' }
       }
-      // Mark as rejected so we don't retry forever.
       await this.db.query(
-        `UPDATE bounty_picks
-           SET status='rejected', review_notes=$1, reviewed_at=NOW(), updated_at=NOW()
+        `UPDATE gig_picks
+           SET status='rejected', review_notes=$1, updated_at=NOW()
          WHERE id=$2`,
-        [`Draft error: ${String(e).slice(0, 200)}`, target.id]
+        [`Pitch error: ${String(e).slice(0, 200)}`, target.id]
       )
       await this.markStep({})
-      return { logMessage: `Scout draft error on "${target.title.slice(0, 60)}": ${String(e).slice(0, 80)}`, logType: 'warn' }
+      return { logMessage: `Scout pitch error on "${target.title.slice(0, 60)}": ${String(e).slice(0, 80)}`, logType: 'warn' }
     }
 
-    const title = (draft.draft_title ?? '').slice(0, 200).trim()
-    const body  = (draft.draft_body  ?? '').slice(0, 12_000).trim()
-    const diff  = (draft.draft_diff  ?? '').slice(0, 24_000)
-    const conf  = clamp01(draft.confidence) ?? 0.4
-    const files = Array.isArray(draft.files_touched) ? draft.files_touched.slice(0, 30) : []
-
-    // Junk-output guard: title or body missing → rejected, don't queue.
-    if (!title || !body || conf < 0.15) {
+    if (!pitch.trim() || pitch.length < 80) {
       await this.db.query(
-        `UPDATE bounty_picks
+        `UPDATE gig_picks
            SET status='rejected',
-               review_notes='Draft was too thin (Scout self-rejected pre-Lila).',
-               review_confidence=$1,
-               reviewed_at=NOW(), updated_at=NOW()
+               review_notes='Pitch too thin (Scout self-rejected pre-Lila).',
+               updated_at=NOW()
          WHERE id=$2`,
-        [conf, target.id]
+        [target.id]
       )
       await this.markStep({})
-      return {
-        logMessage: `Scout self-rejected "${target.title.slice(0, 60)}" (conf=${conf.toFixed(2)})`,
-        logType: 'info',
-      }
+      return { logMessage: `Scout self-rejected gig "${target.title.slice(0, 60)}"`, logType: 'info' }
     }
 
     await this.db.query(
-      `UPDATE bounty_picks
+      `UPDATE gig_picks
          SET status='drafted',
-             draft_title=$1,
-             draft_body=$2,
-             draft_diff=$3,
-             draft_files=$4::jsonb,
-             review_confidence=$5,
+             draft_pitch=$1,
              drafted_at=NOW(),
              updated_at=NOW()
-       WHERE id=$6`,
-      [title, body, diff || null, JSON.stringify(files), conf, target.id]
+       WHERE id=$2`,
+      [pitch.slice(0, 4000), target.id]
     )
 
     await this.markStep({})
     return {
-      logMessage: `Scout drafted ${target.source} bounty: "${title.slice(0, 70)}" (conf=${conf.toFixed(2)})`,
+      logMessage: `Scout drafted ${target.source} pitch: "${target.title.slice(0, 70)}"`,
       logType: 'success',
     }
   }
 
-  // ── S0: source pull ───────────────────────────────────────────────────
+  // ── S0: gig pull ──────────────────────────────────────────────────────
 
-  private async fetchSources(): Promise<{ inserted: number }> {
-    const sources: { name: 'gitcoin' | 'algora'; picks: GitcoinPick[] }[] = []
-    try {
-      const g = await Gitcoin.fetchOpenBounties(500)
-      sources.push({ name: 'gitcoin', picks: g })
-    } catch { /* skip on error */ }
-    try {
-      const a = await Algora.fetchOpenBounties(500)
-      sources.push({ name: 'algora', picks: a })
-    } catch { /* skip on error */ }
-
-    let inserted = 0
-    for (const { name, picks } of sources) {
-      for (const p of picks) {
-        // GitHub-issue bounties only — submitter is GitHub-PR based.
-        if (!p.repo_url) continue
-        const { rowCount } = await this.db.query(
-          `INSERT INTO bounty_picks
-             (source, external_id, url, title, summary, payout_usd, payout_token,
-              payout_token_amount, repo_url, issue_number, issue_body, language,
-              labels, difficulty, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'discovered')
-           ON CONFLICT (source, external_id) DO NOTHING`,
-          [
-            name,
-            p.external_id,
-            p.url,
-            p.title,
-            p.summary,
-            p.payout_usd,
-            p.payout_token,
-            p.payout_token_amount,
-            p.repo_url,
-            p.issue_number,
-            p.issue_body,
-            p.language,
-            p.labels.length ? p.labels : null,
-            p.difficulty,
-          ]
-        )
-        if (rowCount && rowCount > 0) inserted++
-      }
+  private async fetchGigs(): Promise<{ inserted: number; source: 'contra' | 'wellfound' }> {
+    const contra = await Contra.fetchOpenGigs().catch(() => [])
+    if (contra.length > 0) {
+      const inserted = await this.upsertGigs('contra', contra)
+      return { inserted, source: 'contra' }
     }
-    return { inserted }
+    const wf = await Wellfound.fetchOpenGigs().catch(() => [])
+    const inserted = await this.upsertGigs('wellfound', wf)
+    return { inserted, source: 'wellfound' }
   }
 
-  // ── S1: draft selection ───────────────────────────────────────────────
+  private async upsertGigs(
+    source: 'contra' | 'wellfound',
+    gigs: { external_id: string; url: string; title: string; summary: string | null; budget_usd: number | null; posted_at: string | null }[],
+  ): Promise<number> {
+    let inserted = 0
+    for (const g of gigs) {
+      const { rowCount } = await this.db.query(
+        `INSERT INTO gig_picks
+           (source, external_id, url, title, summary, budget_usd, posted_at, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'discovered')
+         ON CONFLICT (source, external_id) DO NOTHING`,
+        [source, g.external_id, g.url, g.title, g.summary, g.budget_usd, g.posted_at]
+      )
+      if (rowCount && rowCount > 0) inserted++
+    }
+    return inserted
+  }
 
-  private async pickToDraft(): Promise<DiscoveredRow | null> {
+  // ── S1: pitch selection ──────────────────────────────────────────────
+
+  private async pickToPitch(): Promise<PitchTarget | null> {
     const { rows } = await this.db.query(
-      `SELECT id, source, external_id, url, title, summary, payout_usd,
-              payout_token, repo_url, issue_number, issue_body, language,
-              labels, difficulty
-         FROM bounty_picks
+      `SELECT id, source, external_id, url, title, summary, budget_usd
+         FROM gig_picks
         WHERE status='discovered'
-        ORDER BY
-          -- Prefer beginner > intermediate > advanced > unknown.
-          CASE difficulty
-            WHEN 'beginner'     THEN 0
-            WHEN 'intermediate' THEN 1
-            WHEN 'advanced'     THEN 2
-            ELSE 3
-          END,
-          -- Then by largest payout (most $/draft cost).
-          payout_usd DESC NULLS LAST,
-          created_at ASC
+        ORDER BY budget_usd DESC NULLS LAST, created_at ASC
         LIMIT 1`
     )
     return rows[0] ?? null
   }
 
-  // ── S1: deep draft ────────────────────────────────────────────────────
+  // ── S1: draft a proposal pitch ───────────────────────────────────────
 
-  private async draft(target: DiscoveredRow, tree: string[]): Promise<DraftResponse> {
-    const reward = target.payout_usd
-      ? `$${parseFloat(target.payout_usd).toFixed(2)}${target.payout_token ? ' ' + target.payout_token : ''}`
-      : '(unspecified)'
-    const labels = (target.labels && target.labels.length) ? target.labels.join(', ') : '(none)'
-    const treeBlob = tree.length ? tree.slice(0, REPO_TREE_CAP).join('\n') : '(repo tree unavailable — work from issue body alone)'
-
-    const prompt = DRAFT_PROMPT
-      .replace(/\{SOURCE\}/g,       target.source)
-      .replace(/\{TITLE\}/g,        target.title)
-      .replace(/\{REWARD\}/g,       reward)
-      .replace(/\{REPO\}/g,         target.repo_url ?? '(no repo)')
-      .replace(/\{ISSUE_NUMBER\}/g, String(target.issue_number ?? '?'))
-      .replace(/\{LABELS\}/g,       labels)
-      .replace(/\{LANGUAGE\}/g,     target.language ?? '(unknown)')
-      .replace(/\{DIFFICULTY\}/g,   target.difficulty ?? '(unspecified)')
-      .replace(/\{BODY\}/g,         truncate(target.issue_body ?? target.summary ?? '(no body)', MAX_BODY_TOKENS))
-      .replace(/\{TREE\}/g,         treeBlob)
+  private async draftPitch(target: PitchTarget): Promise<string> {
+    const budget = target.budget_usd
+      ? `$${parseFloat(target.budget_usd).toFixed(2)}`
+      : '(not specified)'
+    const prompt = PITCH_PROMPT
+      .replace(/\{SOURCE\}/g, target.source)
+      .replace(/\{TITLE\}/g, target.title)
+      .replace(/\{BUDGET\}/g, budget)
+      .replace(/\{URL\}/g, target.url)
+      .replace(/\{SUMMARY\}/g, target.summary ?? '(no description)')
 
     const { content } = await llmCall({
       ai: this.ai!,
-      module: 'scout.draft',
+      module: 'scout.pitch',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: DRAFT_MAX_TOKENS,
-      temperature: 0.3,
+      max_tokens: PITCH_MAX_TOKENS,
+      temperature: 0.4,
     })
-    return safeParse<DraftResponse>(content, {
-      draft_title: '',
-      draft_body: '',
-      draft_diff: '',
-      files_touched: [],
-      confidence: 0,
-    })
+    return content.trim()
   }
 
-  // ── helpers ───────────────────────────────────────────────────────────
+  // ── S2: tutorial fallback ────────────────────────────────────────────
+
+  private async maybeDraftTutorial(): Promise<ScoutResult | null> {
+    if (!this.ai) return null
+
+    const dryHours = cfg.SCOUT_DRY_HOURS
+    const { rows: [gate] } = await this.db.query(
+      `SELECT
+         (SELECT COUNT(*) FROM gig_picks
+            WHERE created_at > NOW() - ($1 || ' hours')::interval
+              AND status='discovered')                              AS recent_discovered,
+         (SELECT COUNT(*) FROM articles
+            WHERE author='scout' AND kind='tutorial'
+              AND created_at > NOW() - INTERVAL '24 hours')         AS recent_tutorials,
+         (SELECT MAX(last_pick_at) FROM scout_state WHERE id=1)     AS last_fetch_at`,
+      [String(dryHours)]
+    )
+    const recentDiscovered = Number(gate?.recent_discovered ?? 0)
+    const recentTutorials  = Number(gate?.recent_tutorials  ?? 0)
+    const lastFetchAt = gate?.last_fetch_at ? new Date(gate.last_fetch_at).getTime() : 0
+    // Don't draft tutorials before Scout has had a chance to find a gig.
+    if (lastFetchAt === 0) return null
+    if (recentDiscovered > 0) return null
+    if (recentTutorials  > 0) return null
+
+    const topic = pickTutorialTopic()
+    let raw: string
+    try {
+      const { content } = await llmCall({
+        ai: this.ai!,
+        module: 'scout.tutorial',
+        messages: [{ role: 'user', content: TUTORIAL_PROMPT.replace(/\{TOPIC\}/g, topic) }],
+        max_tokens: TUTORIAL_MAX_TOKENS,
+        temperature: 0.5,
+      })
+      raw = content.trim()
+    } catch (e) {
+      if (e instanceof LLMBudgetExceeded) {
+        return { logMessage: 'Scout: budget hit, skipping tutorial.', logType: 'warn' }
+      }
+      return { logMessage: `Scout tutorial error: ${String(e).slice(0, 100)}`, logType: 'warn' }
+    }
+    if (!raw) return null
+
+    const title = extractTitle(raw) ?? `Scout — ${topic}`.slice(0, 200)
+    await this.db.query(
+      `INSERT INTO articles (title, content, source, status, author, kind)
+       VALUES ($1, $2, 'scout-tutorial', 'draft', 'scout', 'tutorial')`,
+      [title, raw]
+    )
+    return {
+      logMessage: `Scout drafted tutorial: "${title.slice(0, 70)}"`,
+      logType: 'success',
+    }
+  }
+
+  // ── helpers ────────────────────────────────────────────────────────────
 
   private async markStep(opts: { stampFetch?: boolean }): Promise<void> {
     if (opts.stampFetch) {
@@ -342,69 +344,10 @@ export class ScoutLoop {
   }
 }
 
-// ── pure helpers ─────────────────────────────────────────────────────────
+// ── pure helpers ──────────────────────────────────────────────────────────
 
-function clamp01(n: unknown): number | null {
-  if (n == null || !Number.isFinite(n as number)) return null
-  const v = Number(n)
-  if (v < 0) return 0
-  if (v > 1) return 1
-  return +v.toFixed(2)
-}
-
-function safeParse<T>(s: string, fallback: T): T {
-  const cleaned = s.replace(/```json|```/g, '').trim()
-  try { return JSON.parse(cleaned) as T } catch { return fallback }
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s
-  return s.slice(0, max) + '\n\n[…truncated]'
-}
-
-// Best-effort GitHub repo tree fetch. Public repos work unauth'd at 60
-// req/hr; with GITHUB_TOKEN we get 5000 req/hr. Returns up to a few
-// hundred file paths (capped by the API). Empty array on any error.
-async function fetchRepoTree(repoUrl: string | null): Promise<string[]> {
-  if (!repoUrl) return []
-  const m = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/)
-  if (!m) return []
-  const owner = m[1]
-  const repo  = m[2].replace(/\.git$/, '')
-
-  const headers: Record<string, string> = {
-    'accept': 'application/vnd.github+json',
-    'user-agent': 'Lila/Scout',
-  }
-  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`
-
-  try {
-    // Resolve default branch.
-    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers, signal: AbortSignal.timeout(10_000),
-    })
-    if (!repoRes.ok) return []
-    const repoJson = await repoRes.json() as { default_branch?: string }
-    const branch = repoJson.default_branch ?? 'main'
-
-    const treeRes = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
-      { headers, signal: AbortSignal.timeout(15_000) }
-    )
-    if (!treeRes.ok) return []
-    const treeJson = await treeRes.json() as { tree?: { path?: string; type?: string }[] }
-    const paths = (treeJson.tree ?? [])
-      .filter(t => t.type === 'blob' && typeof t.path === 'string')
-      .map(t => t.path as string)
-      // Filter out huge / generated trees that don't help drafting.
-      .filter(p => !p.startsWith('node_modules/'))
-      .filter(p => !p.startsWith('vendor/'))
-      .filter(p => !p.startsWith('dist/'))
-      .filter(p => !p.startsWith('build/'))
-      .filter(p => !p.endsWith('.lock'))
-      .filter(p => !p.endsWith('.min.js'))
-    return paths
-  } catch {
-    return []
-  }
+function pickTutorialTopic(): string {
+  const env = (process.env.SCOUT_TUTORIAL_TOPICS ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  const pool = env.length ? env : DEFAULT_TUTORIAL_TOPICS
+  return pool[Math.floor(Math.random() * pool.length)]
 }
