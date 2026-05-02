@@ -225,6 +225,15 @@ export default function Landing() {
             <PropertyTile href="/commodities" kicker="futures" title="COMMODITIES" body="Daily futures notes from the desk. Markdown, not noise." accent="orange" />
             <PropertyTile href="/sports"      kicker="edges"   title="SPORTS"      body="Ceelo's NFL handicapper. Math vs. the book line, every cycle." accent="red" />
           </div>
+
+          <Link
+            href="/bounty"
+            className="group mt-6 sm:mt-8 inline-flex items-center gap-2 font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase text-slate-500 hover:text-amber-300 transition-colors"
+          >
+            <span className="text-amber-500/60 group-hover:text-amber-300 transition-colors">▌</span>
+            <span>how the bounty pipeline works</span>
+            <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+          </Link>
         </div>
       </section>
 
