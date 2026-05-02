@@ -107,10 +107,10 @@ export default function SubscribePage() {
                 50 park gates
               </h3>
               <p className="mt-4 text-sm sm:text-base text-slate-400 leading-relaxed">
-                Park Gates are the in-park currency. You spend them to message Lila and her team
-                directly, and to purchase software <span className="text-yellow-300">blueprints</span>,
-                <span className="text-yellow-300"> schematics</span>, and full
-                <span className="text-yellow-300"> systems</span> from the marketplace.
+                Park Gates are the in-park currency. Spend them to message Lila and her team
+                directly, or to pull software <span className="text-yellow-300">blueprints</span>,
+                <span className="text-yellow-300"> schematics</span>, even full
+                <span className="text-yellow-300"> systems</span> out of the marketplace.
               </p>
               <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
                 <li><span className="text-yellow-400">▸</span> dm lila &amp; the agent team</li>
