@@ -320,6 +320,9 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     INSERT INTO scout_state (id) VALUES (1) ON CONFLICT DO NOTHING;
     ALTER TABLE scout_state ADD COLUMN IF NOT EXISTS last_pick_at TIMESTAMPTZ;
+    -- Stamped on the agent's first chat introduction so the intro fires
+    -- exactly once per deploy.
+    ALTER TABLE scout_state ADD COLUMN IF NOT EXISTS introduced_at TIMESTAMPTZ;
 
     -- ── Forge: fast Algora-only PR drafter ──────────────────────────────
     -- Same time-gate ledger shape as scout_state. Forge writes into
@@ -332,6 +335,7 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO forge_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+    ALTER TABLE forge_state ADD COLUMN IF NOT EXISTS introduced_at TIMESTAMPTZ;
 
     -- Per-target scan ledger so we don't re-scan the same target every
     -- cycle. status: 'queued' | 'scanned' | 'reported' | 'dismissed'.

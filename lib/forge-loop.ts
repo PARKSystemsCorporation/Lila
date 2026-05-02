@@ -99,6 +99,8 @@ export class ForgeLoop {
   async run(): Promise<ForgeResult | null> {
     if (!(await this.shouldRun())) return null
 
+    await this.maybeIntroduce()
+
     const { rows: [counts] } = await this.db.query(
       `SELECT
          (SELECT COUNT(*) FROM bounty_picks
@@ -118,6 +120,9 @@ export class ForgeLoop {
       await this.markStep({ stampFetch: true })
       const errSuffix = (fetchResult as { _error?: string })._error
         ? ` (err: ${(fetchResult as { _error?: string })._error})` : ''
+      if (fetchResult.inserted > 0) {
+        await this.chat(`Pulled +${fetchResult.inserted} new Algora bounties.`)
+      }
       return {
         logMessage: `Forge fetched bounties: +${fetchResult.inserted} discovered (algora)${errSuffix}`,
         logType: fetchResult.inserted > 0 ? 'success' : 'info',
@@ -191,6 +196,7 @@ export class ForgeLoop {
       [title, body, diff || null, JSON.stringify(files), conf, target.id]
     )
 
+    await this.chat(`Drafted PR for "${title.slice(0, 80)}" (conf=${conf.toFixed(2)}).`)
     await this.markStep({})
     return {
       logMessage: `Forge drafted ${target.source} bounty: "${title.slice(0, 70)}" (conf=${conf.toFixed(2)})`,
@@ -301,6 +307,28 @@ export class ForgeLoop {
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────
+
+  // One-shot self-introduction. Atomic claim via UPDATE … RETURNING so
+  // the intro posts exactly once even if multiple ticks race.
+  private async maybeIntroduce(): Promise<void> {
+    const { rows } = await this.db.query(
+      `UPDATE forge_state SET introduced_at=NOW()
+        WHERE id=1 AND introduced_at IS NULL
+        RETURNING id`
+    )
+    if (!rows.length) return
+    await this.chat(
+      "Forge reporting in. I draft pull requests for $50–$200 Algora bounties tagged Bug or Feature — fast turnaround, drafts queue in Lila's review pipeline.",
+      'message',
+    )
+  }
+
+  private async chat(content: string, kind: 'message' | 'status' = 'status'): Promise<void> {
+    await this.db.query(
+      `INSERT INTO chat_messages (sender, content, kind) VALUES ($1, $2, $3)`,
+      ['forge', content.slice(0, 500), kind]
+    )
+  }
 
   private async markStep(opts: { stampFetch?: boolean }): Promise<void> {
     if (opts.stampFetch) {

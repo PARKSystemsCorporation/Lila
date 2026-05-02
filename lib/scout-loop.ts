@@ -110,6 +110,8 @@ export class ScoutLoop {
   async run(): Promise<ScoutResult | null> {
     if (!(await this.shouldRun())) return null
 
+    await this.maybeIntroduce()
+
     const { rows: [counts] } = await this.db.query(
       `SELECT
          (SELECT COUNT(*) FROM gig_picks WHERE status='discovered')           AS discovered,
@@ -128,6 +130,7 @@ export class ScoutLoop {
       if (fetchResult.inserted > 0) {
         const errSuffix = (fetchResult as { _error?: string })._error
           ? ` (err: ${(fetchResult as { _error?: string })._error})` : ''
+        await this.chat(`Pulled +${fetchResult.inserted} gigs from ${fetchResult.source}.`)
         return {
           logMessage: `Scout fetched gigs: +${fetchResult.inserted} discovered (${fetchResult.source})${errSuffix}`,
           logType: 'success',
@@ -197,6 +200,7 @@ export class ScoutLoop {
       [pitch.slice(0, 4000), target.id]
     )
 
+    await this.chat(`Drafted pitch for "${target.title.slice(0, 80)}" (${target.source}).`)
     await this.markStep({})
     return {
       logMessage: `Scout drafted ${target.source} pitch: "${target.title.slice(0, 70)}"`,
@@ -321,6 +325,7 @@ export class ScoutLoop {
        VALUES ($1, $2, 'scout-tutorial', 'draft', 'scout', 'tutorial')`,
       [title, raw]
     )
+    await this.chat(`Drafted tutorial: "${title.slice(0, 80)}". Awaiting review.`)
     return {
       logMessage: `Scout drafted tutorial: "${title.slice(0, 70)}"`,
       logType: 'success',
@@ -328,6 +333,28 @@ export class ScoutLoop {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────
+
+  // One-shot self-introduction. Atomic claim via UPDATE … RETURNING so
+  // the intro posts exactly once even if multiple ticks race.
+  private async maybeIntroduce(): Promise<void> {
+    const { rows } = await this.db.query(
+      `UPDATE scout_state SET introduced_at=NOW()
+        WHERE id=1 AND introduced_at IS NULL
+        RETURNING id`
+    )
+    if (!rows.length) return
+    await this.chat(
+      "Scout reporting in. I hunt fixed-price Python automation / scraping / API gigs on Contra (primary) and Wellfound (fallback) and draft proposal pitches for the operator to send. When the gig queue is dry, I draft technical tutorials — once approved, dev.to publishes them.",
+      'message',
+    )
+  }
+
+  private async chat(content: string, kind: 'message' | 'status' = 'status'): Promise<void> {
+    await this.db.query(
+      `INSERT INTO chat_messages (sender, content, kind) VALUES ($1, $2, $3)`,
+      ['scout', content.slice(0, 500), kind]
+    )
+  }
 
   private async markStep(opts: { stampFetch?: boolean }): Promise<void> {
     if (opts.stampFetch) {
