@@ -321,7 +321,10 @@ function BottomNav({ tab, onTab, badges }: {
   badges?: Partial<Record<Tab, number>>
 }) {
   return (
-    <nav className="shrink-0 flex border-t border-slate-800 bg-slate-950" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+    <nav
+      className="shrink-0 flex border-t border-slate-800 bg-slate-950 md:hidden"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
       {TABS.map(({ key, label, Icon }) => {
         const active = tab === key
         const count = badges?.[key] ?? 0
@@ -329,7 +332,7 @@ function BottomNav({ tab, onTab, badges }: {
           <button
             key={key}
             onClick={() => onTab(key)}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2 transition-colors relative ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-2 min-h-[52px] transition-colors relative ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
           >
             <div className="relative">
               <Icon />
@@ -345,6 +348,65 @@ function BottomNav({ tab, onTab, badges }: {
           </button>
         )
       })}
+    </nav>
+  )
+}
+
+// Side rail nav. Only renders at md+ (iPad portrait and up). Phones keep
+// the bottom tab bar — at 7 tabs that's already a snug fit and a vertical
+// rail wouldn't survive the loss of horizontal screen real estate.
+function SideNav({ tab, onTab, badges }: {
+  tab: Tab
+  onTab: (t: Tab) => void
+  badges?: Partial<Record<Tab, number>>
+}) {
+  return (
+    <nav
+      className="hidden md:flex shrink-0 flex-col border-r border-slate-800 bg-slate-950 w-20 lg:w-56"
+      style={{ paddingTop: 'max(16px, env(safe-area-inset-top))' }}
+    >
+      <div className="px-3 lg:px-5 pb-4 hidden lg:block">
+        <p className="text-[9px] font-mono text-emerald-500/80 uppercase tracking-[0.32em]">▓ park</p>
+        <p className="text-xs font-mono text-slate-500 mt-1">operator console</p>
+      </div>
+      <div className="lg:hidden px-3 pb-3 flex justify-center">
+        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+      </div>
+      <div className="flex-1 flex flex-col gap-1 px-2 lg:px-3 overflow-y-auto">
+        {TABS.map(({ key, label, Icon }) => {
+          const active = tab === key
+          const count = badges?.[key] ?? 0
+          return (
+            <button
+              key={key}
+              onClick={() => onTab(key)}
+              className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors ${
+                active
+                  ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/60'
+                  : 'text-slate-500 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
+              } justify-center lg:justify-start`}
+              title={label}
+            >
+              <div className="relative shrink-0">
+                <Icon />
+                {count > 0 && (
+                  <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] px-1 rounded-full bg-emerald-500 text-slate-950 text-[9px] font-mono font-bold flex items-center justify-center">
+                    {count > 9 ? '9+' : count}
+                  </span>
+                )}
+              </div>
+              <span className="hidden lg:inline text-[12px] font-mono tracking-widest uppercase">
+                {label}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="px-3 lg:px-5 py-4 border-t border-slate-800/60 hidden lg:block">
+        <p className="text-[9px] font-mono text-slate-700 tracking-[0.28em] uppercase">
+          parksystems · v1
+        </p>
+      </div>
     </nav>
   )
 }
@@ -375,16 +437,20 @@ function Section({
         className="w-full flex items-center justify-between px-1 py-1 active:opacity-70"
       >
         <div className="flex items-baseline gap-2">
-          <span className="text-[10px] font-mono text-emerald-600 uppercase tracking-[0.2em]">
+          <span className="text-[10px] md:text-[11px] font-mono text-emerald-600 uppercase tracking-[0.2em]">
             {label}
           </span>
           {count != null && (
-            <span className="text-[9px] font-mono text-slate-700">· {count}</span>
+            <span className="text-[9px] md:text-[10px] font-mono text-slate-700">· {count}</span>
           )}
         </div>
         <span className={`text-slate-700 text-xs font-mono transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
       </button>
-      {open && <div className="space-y-4">{children}</div>}
+      {open && (
+        <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-4">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
@@ -428,7 +494,7 @@ function ChatMessage({ m, streaming }: { m: Message; streaming: boolean }) {
             {role.avatar}
           </span>
         )}
-        <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-sm font-mono leading-relaxed border select-text ${
+        <div className={`max-w-[82%] md:max-w-[68%] rounded-2xl px-4 py-2.5 md:px-5 md:py-3 text-sm md:text-[15px] font-mono leading-relaxed border select-text ${
           isUser
             ? 'bg-slate-800 text-slate-100 rounded-tr-sm border-slate-700'
             : `${role!.bubble} rounded-tl-sm`
@@ -579,7 +645,7 @@ function ChatTab({ visible }: { visible: boolean }) {
   return (
     <div className={`absolute inset-0 flex flex-col ${visible ? '' : 'invisible pointer-events-none'}`}>
       {/* Direct-line header */}
-      <div className="shrink-0 px-4 pt-3 pb-2 flex items-center gap-3 border-b border-slate-800/60">
+      <div className="shrink-0 px-4 md:px-6 pt-3 pb-2 flex items-center gap-3 border-b border-slate-800/60">
         <div className="flex gap-1">
           <span className="w-5 h-5 rounded-full bg-emerald-900 border border-emerald-700 flex items-center justify-center text-[9px] font-mono text-emerald-400">L</span>
           <span className="w-5 h-5 rounded-full bg-amber-950 border border-amber-800 flex items-center justify-center text-[9px] font-mono text-amber-400">C</span>
@@ -587,8 +653,8 @@ function ChatTab({ visible }: { visible: boolean }) {
           <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-[9px] font-mono text-slate-400">U</span>
         </div>
         <div className="min-w-0">
-          <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">Direct line · Lila</p>
-          <p className="text-[9px] font-mono text-slate-600">Cipher & Vega post status here</p>
+          <p className="text-[10px] md:text-[11px] font-mono text-emerald-500 uppercase tracking-widest">Direct line · Lila</p>
+          <p className="text-[9px] md:text-[10px] font-mono text-slate-600">Cipher & Vega post status here</p>
         </div>
       </div>
 
@@ -596,7 +662,7 @@ function ChatTab({ visible }: { visible: boolean }) {
       <div
         ref={scrollerRef}
         onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 space-y-3 relative"
+        className="flex-1 overflow-y-auto px-4 md:px-6 py-4 md:py-5 space-y-3 relative"
       >
         {messages.map((m, i) => (
           <ChatMessage
@@ -619,20 +685,20 @@ function ChatTab({ visible }: { visible: boolean }) {
       )}
 
       {/* Input */}
-      <div className="shrink-0 px-4 py-3 border-t border-slate-800 bg-slate-950 flex gap-2">
+      <div className="shrink-0 px-4 md:px-6 py-3 md:py-4 border-t border-slate-800 bg-slate-950 flex gap-2 md:gap-3">
         <input
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && send()}
           placeholder="Message Lila..."
-          className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 font-mono placeholder:text-slate-700 focus:outline-none focus:border-emerald-800"
+          className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 md:py-3 text-sm md:text-base text-slate-100 font-mono placeholder:text-slate-700 focus:outline-none focus:border-emerald-800"
         />
         <button
           onClick={send}
           disabled={!input.trim() || streaming}
-          className="shrink-0 w-10 h-10 rounded-xl bg-emerald-600 disabled:bg-slate-800 flex items-center justify-center transition-colors active:bg-emerald-700"
+          className="shrink-0 w-10 h-10 md:w-12 md:h-12 rounded-xl bg-emerald-600 disabled:bg-slate-800 flex items-center justify-center transition-colors active:bg-emerald-700"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-white -translate-y-px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 md:w-5 md:h-5 text-white -translate-y-px">
             <line x1="22" y1="2" x2="11" y2="13" />
             <polygon points="22 2 15 22 11 13 2 9 22 2" />
           </svg>
@@ -2576,7 +2642,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
 }) {
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-6">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-6">
         {/* ── Operator Brief — the four numbers Lila and you both want at a glance ─── */}
         <OperatorBrief visible={visible} onNavigate={onNavigate} />
 
@@ -3087,7 +3153,7 @@ function TradingTab({ visible }: { visible: boolean }) {
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-4">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-4">
         {loading && !data ? (
           <div className="flex items-center gap-2 py-12 justify-center">
             <div className="w-4 h-4 border-2 border-slate-700 border-t-emerald-500 rounded-full animate-spin" />
@@ -3828,7 +3894,7 @@ function PicksView({ visible, data, reload }: {
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-4">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-4">
         <div className="flex items-center gap-2">
           <span className="text-rose-400"><IconPicks /></span>
           <div>
@@ -5211,7 +5277,7 @@ function NotesTab({ visible, filter, onFilterChange }: {
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-4">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-4">
         <div className="flex items-center gap-2">
           <span className="text-emerald-500"><IconNotes /></span>
           <div>
@@ -5555,7 +5621,7 @@ function DeskTab({ visible }: { visible: boolean }) {
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-4">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-4">
         <div className="flex items-center gap-2">
           <span className="text-emerald-500"><IconDesk /></span>
           <div>
@@ -5984,7 +6050,7 @@ function ReportsTab({ reports, loading, visible, onAction, onNavigate }: {
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-5">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-5">
         <div className="flex items-center gap-2">
           <span className="text-emerald-500"><IconReports /></span>
           <div>
@@ -6282,7 +6348,7 @@ function BountiesTab({
 
   return (
     <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
-      <div className="px-4 py-5 space-y-3">
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-3">
         {/* Header */}
         <div className="flex items-center justify-between mb-1">
           <div>
@@ -6320,7 +6386,8 @@ function BountiesTab({
             subtitle="Add platform API keys to pull live boards."
           />
         ) : (
-          bounties.map(b => {
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {bounties.map(b => {
             const isAssigned = assignedBounty?.id === b.id
             const platformCls = PLATFORM_COLOR[b.platform] ?? 'bg-slate-800 text-slate-400 border-slate-700'
             return (
@@ -6381,7 +6448,8 @@ function BountiesTab({
                 </div>
               </div>
             )
-          })
+          })}
+          </div>
         )}
       </div>
     </div>
@@ -6536,67 +6604,77 @@ export default function Home() {
       .finally(() => setBountiesLoading(false))
   }, [tab])
 
+  const navBadges = {
+    chat:    tab === 'chat' ? 0 : Math.max(0, chatLatestId - chatSeenId),
+    library: reports.filter(r => r.status === 'approved' || r.status === 'pending_review').length,
+  }
+
   return (
-    <div className="h-dvh flex flex-col bg-slate-950 max-w-md mx-auto select-none">
-      {/* Header */}
-      <header className="shrink-0 px-5 py-3 border-b border-slate-800/60 flex items-center justify-between" style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}>
-        <div className="flex items-center gap-2.5">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${status === 'live' ? 'bg-emerald-500 animate-pulse' : status === 'error' ? 'bg-red-500' : 'bg-slate-600 animate-pulse'}`} />
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-white font-bold text-lg tracking-tight">Lila</span>
-              <span className="text-slate-700 font-mono text-[10px] tracking-widest">AGENT v1</span>
+    // Root: side rail (md+) + main column. On phones the rail is hidden and
+    // the bottom nav handles tabs. The main column is centered and capped
+    // wider on iPad than the legacy 448px phone column.
+    <div className="h-dvh flex bg-slate-950 select-none">
+      <SideNav tab={tab} onTab={setTabWithSeen} badges={navBadges} />
+
+      <div className="flex-1 flex justify-center min-w-0">
+        <div className="w-full max-w-md md:max-w-3xl lg:max-w-5xl flex flex-col min-h-0">
+          {/* Header */}
+          <header
+            className="shrink-0 px-5 md:px-8 py-3 md:py-4 border-b border-slate-800/60 flex items-center justify-between"
+            style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}
+          >
+            <div className="flex items-center gap-2.5 md:gap-3.5">
+              <span className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full shrink-0 ${status === 'live' ? 'bg-emerald-500 animate-pulse' : status === 'error' ? 'bg-red-500' : 'bg-slate-600 animate-pulse'}`} />
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-white font-bold text-lg md:text-xl tracking-tight">Lila</span>
+                  <span className="text-slate-700 font-mono text-[10px] md:text-[11px] tracking-widest">AGENT v1</span>
+                </div>
+                <p className="text-[8px] md:text-[9px] font-mono text-slate-800 tracking-[0.2em] uppercase mt-0.5">
+                  ▓ PARKSYSTEMS CORP
+                </p>
+              </div>
             </div>
-            <p className="text-[8px] font-mono text-slate-800 tracking-[0.2em] uppercase mt-0.5">
-              ▓ PARKSYSTEMS CORP
-            </p>
-          </div>
+            {data && (
+              <div className="text-right">
+                <p className={`text-sm md:text-base font-mono font-bold tabular-nums transition-colors duration-300 ${flash ? 'text-emerald-300' : 'text-emerald-500'}`}>
+                  ${data.totalEarned.toFixed(2)}
+                </p>
+                <p className="text-[9px] md:text-[10px] font-mono text-slate-700 uppercase tracking-widest">earned</p>
+              </div>
+            )}
+          </header>
+
+          {/* Tab content */}
+          <main className="flex-1 relative overflow-hidden">
+            <ChatTab visible={tab === 'chat'} />
+            <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} onNavigate={navigate} />
+            <TradingTab visible={tab === 'trading'} />
+            <BountiesTab
+              bounties={bounties}
+              assignedBounty={assignedBounty}
+              loading={bountiesLoading}
+              visible={tab === 'bounties'}
+              onAssign={setAssignedBounty}
+            />
+            <LibraryTab
+              visible={tab === 'library'}
+              mode={libraryMode}
+              onModeChange={setLibraryMode}
+              reports={reports}
+              reportsLoading={reportsLoading}
+              onReportAction={reportAction}
+              onNavigate={navigate}
+              notesFilter={notesFilter}
+              onNotesFilterChange={setNotesFilter}
+            />
+            <PicksTab visible={tab === 'picks'} />
+            <DeskTab visible={tab === 'desk'} />
+          </main>
+
+          <BottomNav tab={tab} onTab={setTabWithSeen} badges={navBadges} />
         </div>
-        {data && (
-          <div className="text-right">
-            <p className={`text-sm font-mono font-bold tabular-nums transition-colors duration-300 ${flash ? 'text-emerald-300' : 'text-emerald-500'}`}>
-              ${data.totalEarned.toFixed(2)}
-            </p>
-            <p className="text-[9px] font-mono text-slate-700 uppercase tracking-widest">earned</p>
-          </div>
-        )}
-      </header>
-
-      {/* Tab content */}
-      <main className="flex-1 relative overflow-hidden">
-        <ChatTab visible={tab === 'chat'} />
-        <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} onNavigate={navigate} />
-        <TradingTab visible={tab === 'trading'} />
-        <BountiesTab
-          bounties={bounties}
-          assignedBounty={assignedBounty}
-          loading={bountiesLoading}
-          visible={tab === 'bounties'}
-          onAssign={setAssignedBounty}
-        />
-        <LibraryTab
-          visible={tab === 'library'}
-          mode={libraryMode}
-          onModeChange={setLibraryMode}
-          reports={reports}
-          reportsLoading={reportsLoading}
-          onReportAction={reportAction}
-          onNavigate={navigate}
-          notesFilter={notesFilter}
-          onNotesFilterChange={setNotesFilter}
-        />
-        <PicksTab visible={tab === 'picks'} />
-        <DeskTab visible={tab === 'desk'} />
-      </main>
-
-      <BottomNav
-        tab={tab}
-        onTab={setTabWithSeen}
-        badges={{
-          chat:    tab === 'chat' ? 0 : Math.max(0, chatLatestId - chatSeenId),
-          library: reports.filter(r => r.status === 'approved' || r.status === 'pending_review').length,
-        }}
-      />
+      </div>
     </div>
   )
 }
