@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'chat' | 'dash' | 'trading' | 'bounties' | 'library' | 'picks' | 'desk'
+type Tab = 'chat' | 'dash' | 'floor' | 'trading' | 'bounties' | 'library' | 'picks' | 'desk'
 
 interface UnifiedBounty {
   id: string
@@ -303,11 +303,25 @@ const IconPicks = () => (
   </svg>
 )
 
+const IconFloor = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    {/* a room cut into quadrants with a body in each — "the floor" */}
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <line x1="3"  y1="12" x2="21" y2="12" />
+    <line x1="12" y1="3"  x2="12" y2="21" />
+    <circle cx="7"  cy="7"  r="1.2" fill="currentColor" />
+    <circle cx="17" cy="7"  r="1.2" fill="currentColor" />
+    <circle cx="7"  cy="17" r="1.2" fill="currentColor" />
+    <circle cx="17" cy="17" r="1.2" fill="currentColor" />
+  </svg>
+)
+
 // ─── Bottom Nav ───────────────────────────────────────────────────────────────
 
 const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'chat',     label: 'Chat',    Icon: IconChat     },
   { key: 'dash',     label: 'Dash',    Icon: IconDash     },
+  { key: 'floor',    label: 'Floor',   Icon: IconFloor    },
   { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
   { key: 'bounties', label: 'Board',   Icon: IconBounties },
   { key: 'library',  label: 'Library', Icon: IconNotes    },
@@ -6456,6 +6470,346 @@ function BountiesTab({
   )
 }
 
+// ─── Floor Tab — 2D scene of agents at their current stations ────────────────
+//
+// Reads the same /api/notes AgentActivity blob NotesTab uses (polled 30s)
+// and renders each agent as a small avatar parked at the station their
+// current step maps to. No new endpoints, no canvas/SVG — just CSS Grid +
+// Tailwind. Step changes naturally re-mount the avatar in the new station;
+// `transition-opacity` smooths the swap and a brief ping ring fires while
+// last_ts is fresh.
+
+type FloorStation =
+  | 'news' | 'charts' | 'writing'
+  | 'brief' | 'bench' | 'broadcast'
+  | 'draft' | 'ratings' | 'jobs'
+  | 'lounge' | 'offshift'
+
+interface FloorAgent {
+  key: 'lila' | 'cipher' | 'vega' | 'forge' | 'scout' | 'ceelo'
+  letter: string
+  display: string
+  ring: string
+  text: string
+  glow: string
+  station: FloorStation
+  status?: string
+  lastTs: number | null
+}
+
+const FLOOR_STATIONS: { id: FloorStation; label: string }[] = [
+  { id: 'news',      label: 'News desk' },
+  { id: 'charts',    label: 'Charts'    },
+  { id: 'writing',   label: 'Writing'   },
+  { id: 'brief',     label: 'Brief'     },
+  { id: 'bench',     label: 'Bench'     },
+  { id: 'broadcast', label: 'Broadcast' },
+  { id: 'draft',     label: 'Draft'     },
+  { id: 'ratings',   label: 'Ratings'   },
+  { id: 'jobs',      label: 'Jobs'      },
+]
+
+function vegaStation(step: string): FloorStation {
+  switch (step) {
+    case 'T0': return 'lounge'
+    case 'T1': return 'news'
+    case 'T2': return 'charts'
+    case 'T3': return 'writing'
+    case 'F0': return 'brief'
+    case 'M0':
+    case 'M1': return 'broadcast'
+    default:   return 'lounge'
+  }
+}
+
+function cipherFloorStation(step: string): FloorStation {
+  switch (step) {
+    case 'BT0': return 'brief'
+    case 'BH0': return 'bench'
+    case 'BZ0': return 'broadcast'
+    default:    return 'bench'
+  }
+}
+
+function FloorTab({ visible, agentData }: {
+  visible: boolean
+  agentData: AgentData | null
+}) {
+  const [activity, setActivity] = useState<AgentActivity | null>(null)
+  const [synced, setSynced] = useState<number | null>(null)
+  // Heartbeat so "Xs ago" labels and 60s/5m thresholds re-evaluate live.
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!visible) return
+    const load = async () => {
+      try {
+        const res = await fetch('/api/notes')
+        if (!res.ok) return
+        const d: NotesData = await res.json()
+        setActivity(d.activity)
+        setSynced(Date.now())
+      } catch { /* ignore */ }
+    }
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [visible])
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const agents = useMemo<FloorAgent[]>(() => {
+    if (!activity) return []
+    const list: FloorAgent[] = []
+
+    // Lila — always at the lounge.
+    list.push({
+      key: 'lila',
+      letter: 'L',
+      display: 'lila',
+      ring: 'bg-emerald-900 border-emerald-700',
+      text: 'text-emerald-300',
+      glow: 'shadow-[0_0_20px_rgba(16,185,129,0.55)]',
+      station: 'lounge',
+      status: activity.lila?.last_chat_ts
+        ? `last chat ${fmtAge(activity.lila.last_chat_ts)}`
+        : 'standing by',
+      lastTs: activity.lila?.last_chat_ts ?? null,
+    })
+
+    // Vega — equities analyst.
+    if (activity.vega) {
+      list.push({
+        key: 'vega',
+        letter: 'V',
+        display: 'vega',
+        ring: 'bg-blue-900 border-blue-700',
+        text: 'text-blue-300',
+        glow: 'shadow-[0_0_20px_rgba(96,165,250,0.55)]',
+        station: vegaStation(activity.vega.step),
+        status: `${activity.vega.step} · ${vegaStepLabel(activity.vega.step)}`,
+        lastTs: activity.vega.last_ts,
+      })
+    } else {
+      list.push({ key: 'vega', letter: 'V', display: 'vega', ring: 'bg-blue-900 border-blue-700', text: 'text-blue-300', glow: '', station: 'offshift', status: 'off-shift', lastTs: null })
+    }
+
+    // Cipher — bounty operator.
+    if (activity.cipher) {
+      const target = activity.cipher.target?.title
+      list.push({
+        key: 'cipher',
+        letter: 'C',
+        display: 'cipher',
+        ring: 'bg-amber-950 border-amber-800',
+        text: 'text-amber-300',
+        glow: 'shadow-[0_0_20px_rgba(251,191,36,0.55)]',
+        station: cipherFloorStation(activity.cipher.step),
+        status: target
+          ? `${activity.cipher.step} · ${cipherStepLabel(activity.cipher.step)} · "${target}"`
+          : `${activity.cipher.step} · ${cipherStepLabel(activity.cipher.step)}`,
+        lastTs: activity.cipher.last_ts,
+      })
+    } else {
+      list.push({ key: 'cipher', letter: 'C', display: 'cipher', ring: 'bg-amber-950 border-amber-800', text: 'text-amber-300', glow: '', station: 'offshift', status: 'off-shift', lastTs: null })
+    }
+
+    // Forge — PR drafter. v1: lives at DRAFT iff Lila has any active task.
+    const forgeAlive = !!(agentData?.activeTasks?.length)
+    list.push({
+      key: 'forge',
+      letter: 'F',
+      display: 'forge',
+      ring: 'bg-purple-950 border-purple-800',
+      text: 'text-purple-300',
+      glow: 'shadow-[0_0_20px_rgba(192,132,252,0.55)]',
+      station: forgeAlive ? 'draft' : 'offshift',
+      status: forgeAlive ? 'drafting…' : 'off-shift',
+      lastTs: forgeAlive ? now : null,
+    })
+
+    // Scout — job board.
+    if (activity.scout) {
+      list.push({
+        key: 'scout',
+        letter: 'S',
+        display: 'scout',
+        ring: 'bg-slate-800 border-slate-600',
+        text: 'text-slate-300',
+        glow: 'shadow-[0_0_20px_rgba(148,163,184,0.55)]',
+        station: 'jobs',
+        status: `scanned ${activity.scout.scanned} · reported ${activity.scout.reported}`,
+        lastTs: activity.scout.last_ts,
+      })
+    } else {
+      list.push({ key: 'scout', letter: 'S', display: 'scout', ring: 'bg-slate-800 border-slate-600', text: 'text-slate-300', glow: '', station: 'offshift', status: 'off-shift', lastTs: null })
+    }
+
+    // Ceelo — sports ratings.
+    if (activity.ceelo) {
+      list.push({
+        key: 'ceelo',
+        letter: 'Ce',
+        display: 'ceelo',
+        ring: 'bg-rose-950 border-rose-800',
+        text: 'text-rose-300',
+        glow: 'shadow-[0_0_20px_rgba(251,113,133,0.55)]',
+        station: 'ratings',
+        status: `rated ${activity.ceelo.rated} · upcoming ${activity.ceelo.upcoming}`,
+        lastTs: activity.ceelo.last_ts,
+      })
+    } else {
+      list.push({ key: 'ceelo', letter: 'Ce', display: 'ceelo', ring: 'bg-rose-950 border-rose-800', text: 'text-rose-300', glow: '', station: 'offshift', status: 'off-shift', lastTs: null })
+    }
+
+    return list
+  }, [activity, agentData, now])
+
+  const byStation = useMemo(() => {
+    const map = new Map<FloorStation, FloorAgent[]>()
+    for (const a of agents) {
+      const list = map.get(a.station) ?? []
+      list.push(a)
+      map.set(a.station, list)
+    }
+    return map
+  }, [agents])
+
+  const offshift = byStation.get('offshift') ?? []
+
+  return (
+    <div className={`absolute inset-0 overflow-y-auto ${visible ? '' : 'invisible pointer-events-none'}`}>
+      <div className="px-4 md:px-6 py-5 md:py-7 space-y-4">
+        <div className="flex items-baseline justify-between">
+          <div>
+            <p className="text-xs font-mono text-slate-300 font-semibold">The Floor</p>
+            <p className="text-[10px] font-mono text-slate-600">
+              {synced ? `live · synced ${fmtAge(synced)}` : 'connecting…'}
+            </p>
+          </div>
+          <p className="text-[9px] font-mono text-slate-700 tracking-[0.28em] uppercase">▓▓▓ park</p>
+        </div>
+
+        {!activity && (
+          <p className="text-xs font-mono text-slate-700 px-1">Waiting for agent state…</p>
+        )}
+
+        {activity && (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {FLOOR_STATIONS.map(s => (
+                <FloorStation
+                  key={s.id}
+                  label={s.label}
+                  agents={byStation.get(s.id) ?? []}
+                  now={now}
+                />
+              ))}
+            </div>
+
+            <FloorStation
+              label="Lounge"
+              agents={byStation.get('lounge') ?? []}
+              now={now}
+              wide
+            />
+
+            {offshift.length > 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/50 p-3 md:p-4">
+                <p className="text-[10px] md:text-[11px] font-mono text-slate-700 uppercase tracking-[0.2em]">Off-shift</p>
+                <div className="flex flex-wrap items-center gap-3 mt-2">
+                  {offshift.map(a => <FloorAvatar key={a.key} a={a} now={now} dim />)}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-[9px] md:text-[10px] font-mono text-slate-700">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                acted &lt; 60s
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                idle 1–5m
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                idle &gt; 5m
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FloorStation({ label, agents, now, wide = false }: {
+  label: string
+  agents: FloorAgent[]
+  now: number
+  wide?: boolean
+}) {
+  const active = agents.length > 0
+  return (
+    <div
+      className={`relative rounded-2xl border bg-slate-900 p-4 transition-colors ${
+        active ? 'border-slate-700' : 'border-slate-800'
+      } ${wide ? 'min-h-[88px]' : 'min-h-[120px]'}`}
+    >
+      <div className="flex items-baseline justify-between">
+        <p className="text-[10px] md:text-[11px] font-mono text-emerald-600 uppercase tracking-[0.2em]">
+          {label}
+        </p>
+        {active && (
+          <span className="text-[9px] font-mono text-emerald-500/70 tracking-wider uppercase">
+            ▶ live
+          </span>
+        )}
+      </div>
+      <div className={`flex flex-wrap items-start gap-3 mt-3 ${wide ? 'md:gap-4' : ''}`}>
+        {agents.map(a => <FloorAvatar key={a.key} a={a} now={now} />)}
+      </div>
+    </div>
+  )
+}
+
+function FloorAvatar({ a, now, dim = false }: {
+  a: FloorAgent
+  now: number
+  dim?: boolean
+}) {
+  const age = a.lastTs != null ? now - a.lastTs : null
+  const recent = age != null && age < 60_000
+  const idle   = age != null && age > 5 * 60_000
+  const opacityCls = dim ? 'opacity-40' : (idle ? 'opacity-50' : '')
+  return (
+    <div className={`flex items-center gap-2 transition-opacity duration-500 ${opacityCls}`}>
+      <span
+        className={`relative w-9 h-9 md:w-10 md:h-10 rounded-full border ${a.ring} flex items-center justify-center text-[12px] md:text-[13px] font-mono font-semibold ${a.text} ${recent ? a.glow : ''} transition-shadow duration-500`}
+      >
+        {a.letter}
+        {recent && (
+          <span className={`absolute inset-[-2px] rounded-full border ${a.ring} animate-ping opacity-40`} />
+        )}
+      </span>
+      <div className="min-w-0">
+        <p className={`text-[10px] md:text-[11px] font-mono ${a.text} leading-tight truncate max-w-[200px]`}>
+          {a.display}
+        </p>
+        {a.status && (
+          <p className="text-[9px] md:text-[10px] font-mono text-slate-600 leading-tight truncate max-w-[220px]">
+            {a.status}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -6649,6 +7003,7 @@ export default function Home() {
           <main className="flex-1 relative overflow-hidden">
             <ChatTab visible={tab === 'chat'} />
             <DashTab data={data} flash={flash} visible={tab === 'dash'} financials={financials} onNavigate={navigate} />
+            <FloorTab visible={tab === 'floor'} agentData={data} />
             <TradingTab visible={tab === 'trading'} />
             <BountiesTab
               bounties={bounties}
