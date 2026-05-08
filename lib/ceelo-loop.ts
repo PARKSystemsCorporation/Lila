@@ -6,7 +6,15 @@ import * as Espn from './ceelo/espn'
 import * as Odds from './ceelo/odds'
 import * as PublicBets from './ceelo/public-bets'
 import * as Nflverse from './ceelo/nflverse'
+import * as TrueScore from './ceelo/true-score'
 import { applyGame, modelLine, DEFAULT_RATING, SPORT_CONFIG } from './ceelo/ratings'
+import {
+  sierraLine, kellyUnits, applyPrUpdate,
+  QB_TIER_POINTS, BLUE_CHIP_OT_PTS, BLUE_CHIP_EDGE_PTS, BLUE_CHIP_CB_PTS,
+  CLUSTER_INJURY_TAX, DEFAULT_PR,
+  type QbTier, type SituationalContext,
+} from './ceelo/walters'
+import { awayTurfDiscrepancy } from './ceelo/venues'
 import { ALL_SPORTS, NFL_TEAMS, NBA_TEAMS, MLB_TEAMS, type Sport } from './ceelo/teams'
 
 const TEAM_SET: Record<Sport, ReadonlySet<string>> = {
@@ -92,6 +100,7 @@ export class CeeloLoop {
     try { note(await this.c0c_autoSeed()) }                           catch (e) { warned = true; note(`C0c ${err(e)}`) }
     try { note(await this.c0d_refreshRosters()) }                     catch (e) { warned = true; note(`C0d ${err(e)}`) }
     try { note(await this.c0e_refreshDepthCharts()) }                 catch (e) { warned = true; note(`C0e ${err(e)}`) }
+    try { note(await this.c0f_gradePlayers()) }                       catch (e) { warned = true; note(`C0f ${err(e)}`) }
     try { gradedSummary = await this.c1_gradeFinals(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
     try { note(await this.c2_pullBookLines()) }                       catch (e) { warned = true; note(`C2 ${err(e)}`) }
     try { note(await this.c2b_pullPublicBets()) }                     catch (e) { warned = true; note(`C2b ${err(e)}`) }
@@ -345,36 +354,240 @@ export class CeeloLoop {
     return notes.length > 0 ? `C0c seeded ${notes.join(' · ')}` : ''
   }
 
-  // ── C1: apply newly-completed games to Elo ratings ──────────────────────
+  // ── C0f: Ceelo's auto-graded player tiers + blue-chips (NFL) ────────────
+  //
+  // Runs once per 24h. No operator input — Ceelo grades from the data it
+  // already has (team EPA + nflverse depth charts + ESPN rosters):
+  //   • QB tier: starter QB inherits team pass-EPA rank ⇒ tier 1..5.
+  //   • Blue-chip OT: depth-1 LT/RT of the top-3 EPA-allowed teams.
+  //   • Blue-chip EDGE / CB: depth-1 of the top-5 EPA-allowed defenses.
+  // These are intentional v1 stand-ins for PFF grades — fully deterministic,
+  // re-derived weekly. The rationale is stamped on each row so the operator
+  // can see exactly why a player was tagged.
+  private async c0f_gradePlayers(): Promise<string> {
+    const { rows: [s] } = await this.db.query(
+      `SELECT last_grades_at FROM ceelo_state WHERE id=1`
+    )
+    if (s?.last_grades_at && minutesSince(s.last_grades_at) < 24 * 60) return ''
+
+    // Pull most-recent-season EPA per team. Order by pass_epa for QB
+    // tiers, by epa_allowed for blue-chip-OT proxy (best pass-pro = lowest
+    // EPA allowed).
+    const { rows: epaRows } = await this.db.query(
+      `SELECT team, pass_epa, epa_per_play, epa_allowed
+       FROM ceelo_team_epa
+       WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)`
+    )
+    if (!epaRows.length) {
+      // No EPA priors yet — touch the gate and bail. Auto-seed (C0c)
+      // populates EPA, so this self-resolves once seeding completes.
+      await this.db.query(`UPDATE ceelo_state SET last_grades_at=NOW() WHERE id=1`)
+      return ''
+    }
+
+    type EpaRow = { team: string; pass_epa: number; epa_per_play: number; epa_allowed: number }
+    const epa: EpaRow[] = epaRows.map((r: { team: string; pass_epa: string | null; epa_per_play: string | null; epa_allowed: string | null }) => ({
+      team: r.team,
+      pass_epa: r.pass_epa != null ? Number(r.pass_epa) : 0,
+      epa_per_play: r.epa_per_play != null ? Number(r.epa_per_play) : 0,
+      epa_allowed: r.epa_allowed != null ? Number(r.epa_allowed) : 0,
+    }))
+
+    // Ranks by pass_epa (descending — high = elite passing team).
+    const passRank = [...epa].sort((a, b) => b.pass_epa - a.pass_epa)
+    const passRankMap = new Map(passRank.map((r, i) => [r.team, i + 1]))
+
+    // Top-3 pass-protection teams by lowest EPA-allowed get blue-chip OT
+    // tags on their depth-1 LT/RT. Top-5 get blue-chip EDGE/CB tags.
+    const defRank = [...epa].sort((a, b) => a.epa_allowed - b.epa_allowed)
+    const blueChipOtTeams  = new Set(defRank.slice(0, 3).map(r => r.team))
+    const blueChipDefTeams = new Set(defRank.slice(0, 5).map(r => r.team))
+
+    // Pull starter-only depth chart (depth_position=1) for the positions
+    // we grade.
+    const { rows: depthRows } = await this.db.query(
+      `SELECT team, player, position
+       FROM ceelo_depth_charts
+       WHERE sport='NFL'
+         AND depth_position = 1
+         AND position IN ('QB','LT','RT','OT','EDGE','DE','OLB','CB')`
+    )
+
+    // Wipe + re-grade — keeps the table tight and avoids stale entries
+    // from rosters that have shuffled. C0d/C0e refresh the inputs on a
+    // 7-day cadence; this step trails them by ≤ 24h.
+    await this.db.query(`DELETE FROM ceelo_player_grades`)
+
+    let qbCount = 0
+    let bcCount = 0
+    for (const d of depthRows) {
+      const team = d.team as string
+      const player = d.player as string
+      const position = (d.position as string).toUpperCase()
+      if (!player) continue
+
+      if (position === 'QB') {
+        const rank = passRankMap.get(team) ?? 32
+        const tier: QbTier =
+            rank <=  5 ? 1
+          : rank <= 10 ? 2
+          : rank <= 22 ? 3
+          : rank <= 28 ? 4
+          : 5
+        await this.db.query(
+          `INSERT INTO ceelo_player_grades (team, player, position, qb_tier, blue_chip_pts, rationale, graded_at)
+           VALUES ($1,$2,'QB',$3,NULL,$4,NOW())
+           ON CONFLICT (team, player) DO UPDATE
+             SET position='QB', qb_tier=EXCLUDED.qb_tier, rationale=EXCLUDED.rationale, graded_at=NOW()`,
+          [team, player, tier, `pass_epa rank ${rank}/${epa.length}`]
+        )
+        qbCount++
+        continue
+      }
+
+      // Blue-chip OT — only depth-1 LT or RT on a top-3 pass-pro team.
+      if ((position === 'LT' || position === 'RT' || position === 'OT') && blueChipOtTeams.has(team)) {
+        await this.db.query(
+          `INSERT INTO ceelo_player_grades (team, player, position, qb_tier, blue_chip_pts, rationale, graded_at)
+           VALUES ($1,$2,$3,NULL,$4,$5,NOW())
+           ON CONFLICT (team, player) DO UPDATE
+             SET position=EXCLUDED.position, blue_chip_pts=EXCLUDED.blue_chip_pts,
+                 rationale=EXCLUDED.rationale, graded_at=NOW()`,
+          [team, player, position, BLUE_CHIP_OT_PTS, `top-3 pass-pro proxy (epa_allowed)`]
+        )
+        bcCount++
+        continue
+      }
+
+      // Blue-chip edge / OLB on a top-5 defense.
+      if ((position === 'EDGE' || position === 'DE' || position === 'OLB') && blueChipDefTeams.has(team)) {
+        await this.db.query(
+          `INSERT INTO ceelo_player_grades (team, player, position, qb_tier, blue_chip_pts, rationale, graded_at)
+           VALUES ($1,$2,'EDGE',NULL,$3,$4,NOW())
+           ON CONFLICT (team, player) DO UPDATE
+             SET position='EDGE', blue_chip_pts=EXCLUDED.blue_chip_pts,
+                 rationale=EXCLUDED.rationale, graded_at=NOW()`,
+          [team, player, BLUE_CHIP_EDGE_PTS, `top-5 defense proxy (epa_allowed)`]
+        )
+        bcCount++
+        continue
+      }
+
+      // Blue-chip CB on a top-5 defense.
+      if (position === 'CB' && blueChipDefTeams.has(team)) {
+        await this.db.query(
+          `INSERT INTO ceelo_player_grades (team, player, position, qb_tier, blue_chip_pts, rationale, graded_at)
+           VALUES ($1,$2,'CB',NULL,$3,$4,NOW())
+           ON CONFLICT (team, player) DO UPDATE
+             SET position='CB', blue_chip_pts=EXCLUDED.blue_chip_pts,
+                 rationale=EXCLUDED.rationale, graded_at=NOW()`,
+          [team, player, BLUE_CHIP_CB_PTS, `top-5 defense proxy (epa_allowed)`]
+        )
+        bcCount++
+        continue
+      }
+    }
+
+    await this.db.query(`UPDATE ceelo_state SET last_grades_at=NOW() WHERE id=1`)
+    return qbCount + bcCount > 0 ? `C0f ${qbCount} QB · ${bcCount} BC` : ''
+  }
+
+  // ── C1: apply newly-completed games to ratings ──────────────────────────
+  //
+  // NFL: Walters PR points-update using True Score (ST TDs + late-game
+  // garbage stripped). Surprise = (true_margin - expected_margin) where
+  // expected_margin is derived from the closing spread. NBA / MLB: keep
+  // the original Elo path — Walters' framework is football-specific.
 
   private async c1_gradeFinals(): Promise<string> {
     const { rows } = await this.db.query(
-      `SELECT id, sport, home_team, away_team, home_score, away_score, neutral_site, kickoff_at
-       FROM ceelo_games
-       WHERE status='final'
-         AND graded_at IS NULL
-         AND home_score IS NOT NULL
-         AND away_score IS NOT NULL
-       ORDER BY kickoff_at ASC
+      `SELECT g.id, g.sport, g.espn_id, g.home_team, g.away_team,
+              g.home_score, g.away_score, g.neutral_site, g.kickoff_at,
+              g.closing_spread,
+              (SELECT home_line FROM ceelo_lines l
+                WHERE l.game_id = g.id AND l.market = 'spread'
+                ORDER BY l.fetched_at DESC LIMIT 1) AS latest_spread
+       FROM ceelo_games g
+       WHERE g.status='final'
+         AND g.graded_at IS NULL
+         AND g.home_score IS NOT NULL
+         AND g.away_score IS NOT NULL
+       ORDER BY g.kickoff_at ASC
        LIMIT 100`
     )
     if (!rows.length) return ''
 
     let graded = 0
+    let nflTrueScored = 0
     for (const g of rows) {
       const sport: Sport = (g.sport as Sport) ?? 'NFL'
-      const homeR = await this.getRating(sport, g.home_team)
-      const awayR = await this.getRating(sport, g.away_team)
-      const upd = applyGame({
-        homeRating: homeR,
-        awayRating: awayR,
-        homeScore: Number(g.home_score),
-        awayScore: Number(g.away_score),
-        neutralSite: Boolean(g.neutral_site),
-        sport,
-      })
-      await this.upsertRating(sport, g.home_team, upd.homeNew, g.kickoff_at)
-      await this.upsertRating(sport, g.away_team, upd.awayNew, g.kickoff_at)
+
+      if (sport === 'NFL') {
+        // True Score grading.
+        const homeRaw = Number(g.home_score)
+        const awayRaw = Number(g.away_score)
+        let homeTrue = homeRaw
+        let awayTrue = awayRaw
+
+        if (g.espn_id) {
+          const summary = await TrueScore.fetchScoringSummary(
+            g.espn_id, g.home_team, g.away_team
+          ).catch(() => null)
+          if (summary) {
+            const ts = TrueScore.trueScore({
+              plays: summary.plays,
+              homeTeam: g.home_team,
+              awayTeam: g.away_team,
+              finalHome: summary.finalHome ?? homeRaw,
+              finalAway: summary.finalAway ?? awayRaw,
+            })
+            homeTrue = ts.homeTrue
+            awayTrue = ts.awayTrue
+            if (ts.stripped.length > 0) nflTrueScored++
+          }
+        }
+
+        await this.db.query(
+          `UPDATE ceelo_games SET home_true_score=$2, away_true_score=$3 WHERE id=$1`,
+          [g.id, homeTrue, awayTrue]
+        )
+
+        // Expected margin from the closing line (or the latest spread we
+        // captured if closing isn't recorded). Home spread is negative when
+        // home is favored, so expected_margin_home = -spread.
+        const spread =
+          g.closing_spread != null ? Number(g.closing_spread)
+          : g.latest_spread != null ? Number(g.latest_spread)
+          : 0
+        const expectedMarginHome = -spread
+        const trueMarginHome = homeTrue - awayTrue
+
+        const homePR = await this.getNflPR(g.home_team)
+        const awayPR = await this.getNflPR(g.away_team)
+        const upd = applyPrUpdate({
+          homePR,
+          awayPR,
+          trueMarginHome,
+          expectedMarginHome,
+        })
+        await this.upsertRating('NFL', g.home_team, upd.homeNew, g.kickoff_at)
+        await this.upsertRating('NFL', g.away_team, upd.awayNew, g.kickoff_at)
+      } else {
+        // NBA / MLB — Elo path unchanged.
+        const homeR = await this.getRating(sport, g.home_team)
+        const awayR = await this.getRating(sport, g.away_team)
+        const upd = applyGame({
+          homeRating: homeR,
+          awayRating: awayR,
+          homeScore: Number(g.home_score),
+          awayScore: Number(g.away_score),
+          neutralSite: Boolean(g.neutral_site),
+          sport,
+        })
+        await this.upsertRating(sport, g.home_team, upd.homeNew, g.kickoff_at)
+        await this.upsertRating(sport, g.away_team, upd.awayNew, g.kickoff_at)
+      }
+
       await this.db.query(
         `UPDATE ceelo_games SET graded_at=NOW(), updated_at=NOW() WHERE id=$1`,
         [g.id]
@@ -382,7 +595,8 @@ export class CeeloLoop {
       graded++
     }
     await this.db.query(`UPDATE ceelo_state SET last_grade_at=NOW() WHERE id=1`)
-    return `C1 graded ${graded}`
+    const tsNote = nflTrueScored > 0 ? ` (${nflTrueScored} NFL stripped)` : ''
+    return `C1 graded ${graded}${tsNote}`
   }
 
   // ── C2: pull current book lines (per-sport gate, derived from data) ─────
@@ -509,10 +723,21 @@ export class CeeloLoop {
   }
 
   // ── C3: compute model lines for upcoming games ──────────────────────────
+  //
+  // NFL: Walters Sierra Line built from PR + QB tiers + blue-chip injuries
+  // + cluster taxes + situational adjustments. NBA / MLB: existing Elo
+  // model line. We cache the Walters context (raw PR diff, situational sum,
+  // adjustment log) per-game in memory keyed by game_id so C4 can stamp it
+  // onto the pick row without re-running the math.
+
+  // Per-cycle scratch for C4 to pull adjustment context out of C3.
+  private walters: Map<number, { rawPrDiff: number; situationalSum: number; adjustmentsLabel: string }> = new Map()
 
   private async c3_computeModelLines(): Promise<string> {
+    this.walters = new Map()
+
     const { rows } = await this.db.query(
-      `SELECT id, sport, home_team, away_team, neutral_site
+      `SELECT id, sport, espn_id, home_team, away_team, neutral_site, kickoff_at, season, week
        FROM ceelo_games
        WHERE status='scheduled'
          AND kickoff_at > NOW()
@@ -524,27 +749,211 @@ export class CeeloLoop {
     let computed = 0
     for (const g of rows) {
       const sport: Sport = (g.sport as Sport) ?? 'NFL'
-      const homeR = await this.getRating(sport, g.home_team)
-      const awayR = await this.getRating(sport, g.away_team)
-      const m = modelLine({
-        homeRating: homeR,
-        awayRating: awayR,
-        neutralSite: Boolean(g.neutral_site),
-        sport,
-      })
-      await this.db.query(
-        `INSERT INTO ceelo_model_lines (game_id, sport, model_spread, model_home_prob, computed_at)
-         VALUES ($1,$2,$3,$4,NOW())
-         ON CONFLICT (game_id) DO UPDATE
-           SET model_spread=EXCLUDED.model_spread,
-               model_home_prob=EXCLUDED.model_home_prob,
-               sport=EXCLUDED.sport,
-               computed_at=NOW()`,
-        [g.id, sport, m.modelSpread, m.modelHomeProb]
-      )
+
+      if (sport === 'NFL') {
+        const ctx = await this.buildWaltersContext(g)
+        const result = sierraLine(ctx)
+        await this.db.query(
+          `INSERT INTO ceelo_model_lines (game_id, sport, model_spread, model_home_prob, computed_at)
+           VALUES ($1,'NFL',$2,$3,NOW())
+           ON CONFLICT (game_id) DO UPDATE
+             SET model_spread=EXCLUDED.model_spread,
+                 model_home_prob=EXCLUDED.model_home_prob,
+                 sport='NFL',
+                 computed_at=NOW()`,
+          [g.id, result.sierraLine, result.homeWinProb]
+        )
+        const adjLabel = result.adjustments
+          .filter(a => a.label !== 'Raw PR diff')
+          .map(a => `${a.label} ${a.points >= 0 ? '+' : ''}${a.points.toFixed(2)}`)
+          .join(', ')
+        this.walters.set(Number(g.id), {
+          rawPrDiff: result.rawPrDiff,
+          situationalSum: result.situationalSum,
+          adjustmentsLabel: adjLabel,
+        })
+      } else {
+        const homeR = await this.getRating(sport, g.home_team)
+        const awayR = await this.getRating(sport, g.away_team)
+        const m = modelLine({
+          homeRating: homeR,
+          awayRating: awayR,
+          neutralSite: Boolean(g.neutral_site),
+          sport,
+        })
+        await this.db.query(
+          `INSERT INTO ceelo_model_lines (game_id, sport, model_spread, model_home_prob, computed_at)
+           VALUES ($1,$2,$3,$4,NOW())
+           ON CONFLICT (game_id) DO UPDATE
+             SET model_spread=EXCLUDED.model_spread,
+                 model_home_prob=EXCLUDED.model_home_prob,
+                 sport=EXCLUDED.sport,
+                 computed_at=NOW()`,
+          [g.id, sport, m.modelSpread, m.modelHomeProb]
+        )
+      }
       computed++
     }
     return `C3 ${computed} model`
+  }
+
+  // Resolve every Walters knob for one upcoming NFL game and call sierraLine.
+  // Loads PR + QB tiers + blue-chips + injuries + previous-week margins.
+  private async buildWaltersContext(g: {
+    id: number
+    espn_id: string | null
+    home_team: string
+    away_team: string
+    neutral_site: boolean
+    kickoff_at: string
+    season: number | null
+    week: number | null
+  }): Promise<Parameters<typeof sierraLine>[0]> {
+    const homePR = await this.getNflPR(g.home_team)
+    const awayPR = await this.getNflPR(g.away_team)
+
+    const [homeQb, awayQb, homeBc, awayBc, homeOuts, awayOuts] = await Promise.all([
+      this.resolveQbPoints(g.home_team),
+      this.resolveQbPoints(g.away_team),
+      this.resolveBlueChipPoints(g.home_team),
+      this.resolveBlueChipPoints(g.away_team),
+      this.fetchOutsByUnit(g.home_team),
+      this.fetchOutsByUnit(g.away_team),
+    ])
+
+    const homeClusterTax = clusterTaxFromOuts(homeOuts)
+    const awayClusterTax = clusterTaxFromOuts(awayOuts)
+
+    const kickoff = new Date(g.kickoff_at)
+    // MNF kickoffs are 7-9pm ET → late-night UTC (00:00-04:00 Tue UTC) for
+    // ET-zone games or simply Monday evening UTC for the rare 5pm ET start.
+    // Catch both: Monday UTC, OR Tuesday UTC before noon (covers late-night
+    // PT MNF that spills past midnight UTC).
+    const dow = kickoff.getUTCDay()
+    const isMnfWindow = dow === 1 || (dow === 2 && kickoff.getUTCHours() < 12)
+    const awayIsMnfRoad = isMnfWindow
+
+    const [homeBb, awayBb] = await Promise.all([
+      this.didLoseBy19PlusLastGame(g.home_team, g.kickoff_at),
+      this.didLoseBy19PlusLastGame(g.away_team, g.kickoff_at),
+    ])
+
+    const turfMismatch = awayTurfDiscrepancy({ homeTeam: g.home_team, awayTeam: g.away_team })
+
+    // Modern game = within the last 4 calendar years. Walters' point is
+    // that HFA has been dying since ~2020 (empty/limited stadiums during
+    // COVID + better road QB prep eroded it). Pre-2021, lean historical 2.5.
+    const FOUR_YEARS_MS = 4 * 365 * 86_400_000
+    const modernGame = (Date.now() - kickoff.getTime()) <= FOUR_YEARS_MS
+
+    const situational: SituationalContext = {
+      awayIsMnfRoad,
+      homeBounceback: homeBb,
+      awayBounceback: awayBb,
+      awayTurfDiscrepancy: turfMismatch,
+      modernGame,
+      neutralSite: Boolean(g.neutral_site),
+    }
+
+    return {
+      homePR,
+      awayPR,
+      homeQbPoints: homeQb,
+      awayQbPoints: awayQb,
+      homeBlueChipPoints: homeBc,
+      awayBlueChipPoints: awayBc,
+      homeClusterTax,
+      awayClusterTax,
+      situational,
+    }
+  }
+
+  // QB points for a team — starter unless the starter is on the Out /
+  // Doubtful / IR list, in which case fall through to the depth-2 QB.
+  // Returns 0 if no graded QB is found (treats team as Tier 5).
+  private async resolveQbPoints(team: string): Promise<number> {
+    const { rows: starterRows } = await this.db.query(
+      `SELECT d.player, COALESCE(g.qb_tier, 3) AS tier,
+              i.status AS injury_status
+         FROM ceelo_depth_charts d
+         LEFT JOIN ceelo_player_grades g ON g.team=d.team AND g.player=d.player
+         LEFT JOIN ceelo_injuries i      ON i.team=d.team AND i.player=d.player
+        WHERE d.sport='NFL' AND d.team=$1 AND d.position='QB'
+        ORDER BY d.depth_position ASC LIMIT 2`,
+      [team]
+    )
+    if (!starterRows.length) return QB_TIER_POINTS[3]
+    const starter = starterRows[0]
+    const out = ['Out', 'Doubtful', 'IR', 'PUP'].includes(String(starter.injury_status ?? ''))
+    if (out && starterRows[1]) {
+      const backup = starterRows[1]
+      const tier = clampTier(Number(backup.tier))
+      return QB_TIER_POINTS[tier]
+    }
+    const tier = clampTier(Number(starter.tier))
+    return QB_TIER_POINTS[tier]
+  }
+
+  // Sum blue-chip points for healthy tagged players on a team. Subtract
+  // points for any tagged player on the Out / Doubtful / IR list (they
+  // count negatively against the side missing them).
+  private async resolveBlueChipPoints(team: string): Promise<number> {
+    const { rows } = await this.db.query(
+      `SELECT g.player, g.blue_chip_pts, i.status AS injury_status
+         FROM ceelo_player_grades g
+         LEFT JOIN ceelo_injuries i
+                ON i.team=g.team AND i.player=g.player
+        WHERE g.team=$1 AND g.blue_chip_pts IS NOT NULL`,
+      [team]
+    )
+    let total = 0
+    for (const r of rows) {
+      const pts = Number(r.blue_chip_pts ?? 0)
+      const out = ['Out', 'Doubtful', 'IR', 'PUP'].includes(String(r.injury_status ?? ''))
+      total += out ? -pts : pts
+    }
+    return +total.toFixed(2)
+  }
+
+  // How many starters per unit (OL, DB, DL, LB, WR) are Out/Doubtful/IR.
+  private async fetchOutsByUnit(team: string): Promise<Record<string, number>> {
+    const { rows } = await this.db.query(
+      `SELECT d.position
+         FROM ceelo_depth_charts d
+         JOIN ceelo_injuries i
+              ON i.team=d.team AND i.player=d.player
+        WHERE d.sport='NFL'
+          AND d.team=$1
+          AND d.depth_position = 1
+          AND i.status IN ('Out','Doubtful','IR','PUP')`,
+      [team]
+    )
+    const out: Record<string, number> = {}
+    for (const r of rows) {
+      const unit = unitFromPosition(String(r.position ?? ''))
+      if (!unit) continue
+      out[unit] = (out[unit] ?? 0) + 1
+    }
+    return out
+  }
+
+  // Walters' bounceback rule: lost previous game by 19+.
+  private async didLoseBy19PlusLastGame(team: string, kickoff: string): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT home_team, away_team, home_score, away_score
+         FROM ceelo_games
+        WHERE sport='NFL' AND status='final'
+          AND (home_team=$1 OR away_team=$1)
+          AND kickoff_at < $2::timestamptz
+        ORDER BY kickoff_at DESC LIMIT 1`,
+      [team, kickoff]
+    )
+    if (!rows.length) return false
+    const g = rows[0]
+    const isHome = g.home_team === team
+    const teamScore = Number(isHome ? g.home_score : g.away_score)
+    const oppScore  = Number(isHome ? g.away_score : g.home_score)
+    return (oppScore - teamScore) >= 19
   }
 
   // ── C4: diff model vs market, emit picks when |edge| ≥ threshold ────────
@@ -557,14 +966,15 @@ export class CeeloLoop {
     const { rows } = await this.db.query(
       `WITH latest AS (
          SELECT DISTINCT ON (game_id, book)
-                game_id, book, home_line, fetched_at
+                game_id, book, home_line, home_odds, away_odds, fetched_at
          FROM ceelo_lines
          WHERE market='spread' AND home_line IS NOT NULL
          ORDER BY game_id, book, fetched_at DESC
        )
        SELECT g.id AS game_id, g.sport, g.home_team, g.away_team, g.kickoff_at,
               m.model_spread, m.model_home_prob,
-              l.book, l.home_line AS book_spread
+              l.book, l.home_line AS book_spread,
+              l.home_odds, l.away_odds
        FROM ceelo_games g
        JOIN ceelo_model_lines m ON m.game_id = g.id
        JOIN latest l            ON l.game_id = g.id
@@ -598,25 +1008,54 @@ export class CeeloLoop {
       const conf = Math.abs(edge) >= 2.5 * threshold ? 'high'
                  : Math.abs(edge) >= 1.5 * threshold ? 'medium'
                  : 'low'
-      const reasoning = `Model ${fmtSpread(model)} (home), book ${fmtSpread(book)} from ${r.book}. Edge ${Math.abs(edge).toFixed(1)} pts toward ${takeHome ? 'home' : 'away'}.`
+
+      const sideProb = takeHome
+        ? Number(r.model_home_prob)
+        : +(1 - Number(r.model_home_prob)).toFixed(3)
+      const sideOdds = takeHome ? Number(r.home_odds ?? -110) : Number(r.away_odds ?? -110)
+      const units = sport === 'NFL' ? kellyUnits(sideProb, sideOdds) : 1.0
+
+      // Pull the Walters block stamped in C3 (NFL only). NBA/MLB picks
+      // skip these fields and fall back to the simpler reasoning string.
+      const w = sport === 'NFL' ? this.walters.get(Number(r.game_id)) : null
+
+      const reasoning = w
+        ? `Sierra ${fmtSpread(model)} vs book ${fmtSpread(book)} (${r.book}). Raw PR diff ${signedFixed(w.rawPrDiff, 2)}. Situational sum ${signedFixed(w.situationalSum, 2)} (${w.adjustmentsLabel || 'none'}). Edge ${Math.abs(edge).toFixed(1)} pts toward ${takeHome ? 'home' : 'away'}. Kelly ${units}u.`
+        : `Model ${fmtSpread(model)} (home), book ${fmtSpread(book)} from ${r.book}. Edge ${Math.abs(edge).toFixed(1)} pts toward ${takeHome ? 'home' : 'away'}.`
 
       await this.db.query(
         `INSERT INTO ceelo_picks
            (sport, game_id, game_label, kickoff_at, market, side,
             model_prob, model_spread, book_spread, book_name,
             edge_points, fair_line, min_odds, edge_pct,
-            reasoning, confidence, status, source)
-         VALUES ($1,$2,$3,$4,'spread',$5,$6,$7,$8,$9,$10,$11,-110,NULL,$12,$13,'open','model')`,
+            reasoning, confidence, status, source,
+            raw_pr_diff, situational_sum, kelly_units)
+         VALUES ($1,$2,$3,$4,'spread',$5,$6,$7,$8,$9,$10,$11,$12,NULL,$13,$14,'open','model',$15,$16,$17)`,
         [
           sport, r.game_id, game_label, r.kickoff_at, side,
-          takeHome ? Number(r.model_home_prob) : +(1 - Number(r.model_home_prob)).toFixed(3),
+          sideProb,
           model, book, r.book, Math.abs(edge),
-          fmtSpread(model), reasoning, conf,
+          fmtSpread(model), sideOdds, reasoning, conf,
+          w?.rawPrDiff ?? null, w?.situationalSum ?? null, units,
         ]
       )
 
-      // Emit a real-time broadcast alert for the operator
-      const alertMsg = `🚨 Ceelo Edge Alert\n${game_label} — ${side}\n\nModel: ${fmtSpread(model)}\nBook: ${fmtSpread(book)} (${r.book})\nEdge: ${Math.abs(edge).toFixed(1)} pts (${conf})`
+      // Emit a real-time broadcast alert for the operator. NFL picks
+      // render the full Walters block; non-NFL picks keep the legacy
+      // short form.
+      const alertMsg = w
+        ? [
+            `🚨 Ceelo Edge Alert`,
+            `${game_label} — ${side}`,
+            ``,
+            `Sierra Line: ${fmtSpread(model)}  |  Book: ${fmtSpread(book)} (${r.book})`,
+            `Raw PR Diff: ${signedFixed(w.rawPrDiff, 2)}`,
+            `Situational Sum: ${signedFixed(w.situationalSum, 2)}${w.adjustmentsLabel ? ` (${w.adjustmentsLabel})` : ''}`,
+            `Market Edge: ${Math.abs(edge).toFixed(1)} pts toward ${takeHome ? 'home' : 'away'} (${conf})`,
+            `Kelly: ${units}u @ ${fmtAmericanOdds(sideOdds)}`,
+          ].join('\n')
+        : `🚨 Ceelo Edge Alert\n${game_label} — ${side}\n\nModel: ${fmtSpread(model)}\nBook: ${fmtSpread(book)} (${r.book})\nEdge: ${Math.abs(edge).toFixed(1)} pts (${conf})`
+
       await this.db.query(
         `INSERT INTO broadcasts (channel, content, status, scheduled_publish_at)
          VALUES ('telegram', $1, 'pending_publish', NOW())`,
@@ -718,14 +1157,22 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
-    const [topRated, openPicks, status, perSport, keyInjuries, epaTop, epaBottom, epaSeasonInfo] = await Promise.all([
+    const [topRated, openPicks, status, perSport, keyInjuries, epaTop, epaBottom, epaSeasonInfo, qbGrades, blueChips] = await Promise.all([
+      // Sport-partitioned top teams. NFL rows are now on the Walters PR scale
+      // (DEFAULT_PR ≈ 17), NBA/MLB rows still on Elo (~1500). We pull both
+      // top groups so the chat can report each correctly.
       this.db.query(
-        `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
-         WHERE games_played > 0
-         ORDER BY rating DESC LIMIT 12`
+        `(SELECT sport, team, rating, games_played FROM ceelo_team_ratings
+          WHERE sport='NFL' AND games_played > 0
+          ORDER BY rating DESC LIMIT 6)
+         UNION ALL
+         (SELECT sport, team, rating, games_played FROM ceelo_team_ratings
+          WHERE sport <> 'NFL' AND games_played > 0
+          ORDER BY rating DESC LIMIT 6)`
       ),
       this.db.query(
-        `SELECT game_label, market, side, model_spread, book_spread, edge_points, confidence
+        `SELECT game_label, market, side, model_spread, book_spread, edge_points, confidence,
+                raw_pr_diff, situational_sum, kelly_units
          FROM ceelo_picks
          WHERE status='open'
          ORDER BY ABS(COALESCE(edge_points, 0)) DESC LIMIT 6`
@@ -805,21 +1252,56 @@ export class CeeloLoop {
                 COUNT(*) AS rows
          FROM ceelo_team_epa`
       ),
+      // Walters QB tiers — Ceelo's auto-graded starter pool per team.
+      this.db.query(
+        `SELECT team, player, qb_tier, rationale
+         FROM ceelo_player_grades
+         WHERE qb_tier IS NOT NULL
+         ORDER BY qb_tier ASC, team ASC`
+      ),
+      // Walters blue-chip players — Wirfs-tier OTs + top edge / CB.
+      this.db.query(
+        `SELECT team, player, position, blue_chip_pts, rationale
+         FROM ceelo_player_grades
+         WHERE blue_chip_pts IS NOT NULL
+         ORDER BY blue_chip_pts DESC, team ASC`
+      ),
     ])
 
+    // NFL rows live on the Walters PR scale (≈ 17 baseline); NBA/MLB on Elo
+    // (≈ 1500). Format each with the precision that matches its scale.
     const topRatedStr = topRated.rows.length
-      ? topRated.rows.map((r: { sport: string; team: string; rating: string; games_played: number }) =>
-          `${r.sport ?? 'NFL'}/${r.team} ${Number(r.rating).toFixed(0)} (${r.games_played}g)`
-        ).join(', ')
-      : '(none yet — Elo cold-start across all sports)'
+      ? topRated.rows.map((r: { sport: string; team: string; rating: string; games_played: number }) => {
+          const sport = r.sport ?? 'NFL'
+          const rating = Number(r.rating)
+          const fmt = sport === 'NFL' ? rating.toFixed(1) : rating.toFixed(0)
+          const label = sport === 'NFL' ? 'PR' : 'Elo'
+          return `${sport}/${r.team} ${label} ${fmt} (${r.games_played}g)`
+        }).join(', ')
+      : '(none yet — cold-start across all sports)'
     const openPicksStr = openPicks.rows.length
-      ? openPicks.rows.map((p: { game_label: string; side: string; model_spread: string | null; book_spread: string | null; edge_points: string | null; confidence: string }) => {
+      ? openPicks.rows.map((p: { game_label: string; side: string; model_spread: string | null; book_spread: string | null; edge_points: string | null; confidence: string; raw_pr_diff: string | null; situational_sum: string | null; kelly_units: string | null }) => {
           const m = p.model_spread != null ? Number(p.model_spread).toFixed(1) : '?'
           const b = p.book_spread  != null ? Number(p.book_spread).toFixed(1)  : '?'
           const e = p.edge_points  != null ? Number(p.edge_points).toFixed(1)  : '?'
-          return `${p.side} (${p.game_label}) — model ${m}, book ${b}, edge ${e}pt [${p.confidence}]`
+          const k = p.kelly_units  != null ? `${Number(p.kelly_units).toFixed(1)}u` : '—'
+          const pr = p.raw_pr_diff != null ? `PR Δ ${signed(p.raw_pr_diff)}` : ''
+          const sit = p.situational_sum != null ? `sit ${signed(p.situational_sum)}` : ''
+          const extras = [pr, sit].filter(Boolean).join(', ')
+          return `${p.side} (${p.game_label}) — sierra ${m}, book ${b}, edge ${e}pt [${p.confidence}, ${k}]${extras ? ` · ${extras}` : ''}`
         }).join('\n  ')
       : '(no open picks)'
+
+    const qbTiersStr = qbGrades.rows.length
+      ? qbGrades.rows.slice(0, 12).map((q: { team: string; player: string; qb_tier: number; rationale: string | null }) =>
+          `T${q.qb_tier} ${q.team} ${q.player}${q.rationale ? ` (${q.rationale})` : ''}`
+        ).join(', ')
+      : '(no QB grades yet — C0f hasn\'t run, or no EPA priors)'
+    const blueChipsStr = blueChips.rows.length
+      ? blueChips.rows.slice(0, 8).map((b: { team: string; player: string; position: string; blue_chip_pts: string; rationale: string | null }) =>
+          `${b.team} ${b.player} (${b.position}, ${Number(b.blue_chip_pts).toFixed(1)}pt)`
+        ).join(', ')
+      : '(none tagged yet)'
     const s = status.rows[0] ?? {}
 
     const injuryStr = keyInjuries.rows.length
@@ -863,16 +1345,30 @@ export class CeeloLoop {
 
 Voice: dry, sharp, numbers-first. Short replies (1-3 sentences usually). No exclamation points. No hype. Be CONFIDENT about what you have — don't undersell. Only say you're missing data if it's literally not in the inventory below.
 
+FRAMEWORK (NFL):
+You handicap NFL games using Billy Walters' point-rating framework. Every input is a numerical point value; if it can't be quantified, it gets discarded. Your output protocol per game is: Raw PR Diff, Situational Sum, Sierra Line (your spread), Market Edge (book vs Sierra), Kelly Sizing (0.5–3.0u, ¼-Kelly).
+
+Walters knobs you operate on:
+- QB tiers — T1 Elite 7.5 / T2 High 5.0 / T3 Avg 2.5 / T4 Below 1.0 / T5 Backup 0.0. Injury swing is starter_pts − backup_pts.
+- Blue-chip OT (Wirfs-tier): 1.4. Top edge / CB: 0.9. All other positions 0 unless cluster injury.
+- Cluster injury tax: 3+ starters out in one unit ⇒ −1.5.
+- HFA: 2.5 historical, capped 1.25 for last 4 yrs (HFA is dying).
+- Situational: MNF road −0.75, blowout-bounceback +1.0 (lost previous by 19+), turf discrepancy −0.5 against away.
+- True Score: ratings update on points-with-ST-TDs-stripped, not raw final. One bad bounce doesn't ricochet through next week's PR.
+
+NBA + MLB still run on the Elo path — Walters' weights are NFL-specific.
+
 DATA YOU ACTUALLY HAVE (use it — these are real, queried just now):
-- Elo ratings across all sports: ${Number(s.rated ?? 0)} teams walked from real completed games.
+- Power Ratings: NFL on Walters PR scale (≈ 17 baseline), NBA/MLB on Elo (~1500). ${Number(s.rated ?? 0)} teams walked from real completed games.
 - Historical games graded: ${Number(s.historical_graded ?? 0)} across seasons ${seasonRange}.
 - Historical closing spreads + closing totals: ${Number(s.historical_with_lines ?? 0)} games (NFL via nflverse — same dataset 538 / professional shops use). NBA + MLB historical lines aren't ingested yet.
 - EPA / play-by-play aggregates (NFL): ${epaRows} team-season rows across ${epaSeasons} seasons${epaLatestSeason ? ` (latest ${epaLatestSeason})` : ''}. Per-team: net_epa, epa_per_play (offense), pass_epa, rush_epa, success_rate, epa_allowed (defense). NBA + MLB EPA aren't ingested.
 - Depth charts (NFL): ${depthCount} starter+backup entries via nflverse. NBA + MLB depth ranks not ingested.
-- Current schedule + final scores from ESPN (refreshed hourly per sport).
+- Auto-graded QB tiers + blue-chip tags (NFL): refreshed once per 24h from EPA + depth (no operator input needed). v1 proxy for PFF grades.
+- Current schedule + final scores from ESPN (refreshed hourly per sport). NFL finals also get scoring-summary stripped to compute True Scores for PR updates.
 - Current rosters: ${Number(s.rostered_players ?? 0)} players across ${Number(s.rostered_teams ?? 0)} teams (ESPN, weekly).
 - Active injury reports: ${Number(s.hurt ?? 0)} Out/Doubtful/IR/PUP entries on tracked teams.
-- Model-derived spread + win-prob per upcoming game (computed each cycle from the Elo ratings).
+- Sierra Line per upcoming NFL game (Raw PR + situational adjustments). Elo model line for NBA / MLB.
 - Odds API: ${Odds.isConfigured() ? 'KEY PRESENT' : 'NO KEY — edge gate dark'}.
 
 PER-SPORT BREAKDOWN (be specific when asked about a single sport):
@@ -885,15 +1381,17 @@ DATA YOU DO NOT HAVE (don't pretend you do):
 
 CURRENT STATE:
 - Loop cycle: ${Number(s.cycle ?? 0)}
-- Top-rated by Elo: ${topRatedStr}
+- Top-rated: ${topRatedStr}
+- QB tiers (auto-graded): ${qbTiersStr}
+- Blue-chip tags: ${blueChipsStr}
 - Top-5 by net EPA${epaLatestSeason ? ` (${epaLatestSeason})` : ''}:
   ${epaTopStr}
-${epaBottomStr ? `- Bottom-5 by net EPA: ${epaBottomStr}\n` : ''}- Open picks (model-driven, sorted by edge):
+${epaBottomStr ? `- Bottom-5 by net EPA: ${epaBottomStr}\n` : ''}- Open picks (model-driven, sorted by edge — Sierra Line, Raw PR Δ, situational, Kelly):
   ${openPicksStr}
 - Key injuries on tracked teams:
   ${injuryStr}
 
-When the operator asks "what do you see" or "what do you have", answer concretely from the data inventory above. Don't say "I don't have data" when you have Elo + historical lines + rosters + injuries + EPA + a model — that's a complete handicapping kit. Be honest about what's missing (depth charts, weekly EPA trend) but don't sandbag what you have.
+When the operator asks "what do you see" or "what do you have", answer concretely from the data inventory above. For NFL, frame answers in Walters' protocol: PR diff, situational adjustments, Sierra Line, edge vs book, Kelly sizing. For NBA / MLB, the existing Elo model line is the answer.
 
 CONVERSATION:
 ${transcript}
@@ -951,6 +1449,21 @@ Your reply only — no name prefix, no quotes.`
     return r ? Number(r.rating) : DEFAULT_RATING
   }
 
+  // NFL-specific cold start: PRs live in the same `rating` column but on
+  // a 0..30 points scale (DEFAULT_PR ≈ 17), not the 1500 Elo scale. If a
+  // row exists with the legacy Elo default (1500), reset it to DEFAULT_PR
+  // so the points-update path doesn't start from a 1500-pt advantage.
+  private async getNflPR(team: string): Promise<number> {
+    const { rows: [r] } = await this.db.query(
+      `SELECT rating FROM ceelo_team_ratings WHERE sport='NFL' AND team=$1`, [team]
+    )
+    if (!r) return DEFAULT_PR
+    const v = Number(r.rating)
+    // Legacy Elo rows: anything > 100 is on the old scale. Reset.
+    if (v > 100) return DEFAULT_PR
+    return v
+  }
+
   private async upsertRating(sport: Sport, team: string, rating: number, lastGameAt: string): Promise<void> {
     await this.db.query(
       `INSERT INTO ceelo_team_ratings (sport, team, rating, games_played, last_game_at, updated_at)
@@ -990,6 +1503,42 @@ function signed(v: string | number | null | undefined): string {
 function fmtSpread(s: number): string {
   if (s === 0) return 'PK'
   return s > 0 ? `+${s.toFixed(1)}` : s.toFixed(1)
+}
+
+function fmtAmericanOdds(o: number): string {
+  if (!Number.isFinite(o) || o === 0) return '?'
+  return o > 0 ? `+${Math.round(o)}` : `${Math.round(o)}`
+}
+
+function signedFixed(n: number, p: number): string {
+  return (n >= 0 ? '+' : '') + n.toFixed(p)
+}
+
+function clampTier(n: number): QbTier {
+  if (!Number.isFinite(n)) return 3
+  const i = Math.round(n)
+  if (i <= 1) return 1
+  if (i >= 5) return 5
+  return i as QbTier
+}
+
+// Map a depth-chart position abbreviation to a Walters cluster-injury unit.
+// Returns null for positions we don't track (QB/RB/WR/TE/K/P).
+function unitFromPosition(pos: string): 'OL' | 'DB' | 'DL' | 'LB' | null {
+  const p = pos.toUpperCase()
+  if (['LT', 'RT', 'OT', 'LG', 'RG', 'C', 'OG', 'OL'].includes(p)) return 'OL'
+  if (['CB', 'S', 'FS', 'SS', 'NCB', 'DB'].includes(p)) return 'DB'
+  if (['DE', 'DT', 'NT', 'EDGE', 'DL'].includes(p)) return 'DL'
+  if (['ILB', 'OLB', 'MLB', 'LB', 'WLB', 'SLB'].includes(p)) return 'LB'
+  return null
+}
+
+// Walters' cluster-injury rule: 3+ starters out in any one unit ⇒ -1.5 tax.
+function clusterTaxFromOuts(outs: Record<string, number>): number {
+  for (const unit of Object.keys(outs)) {
+    if (outs[unit] >= 3) return CLUSTER_INJURY_TAX
+  }
+  return 0
 }
 
 // American-odds payout calc — exposed so the picks API uses the same math.

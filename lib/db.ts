@@ -874,6 +874,36 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_ceelo_picks_sport_model_outcome
       ON ceelo_picks(sport, model_outcome) WHERE source='model';
                                                   -- 'llm' (v1) | 'model' (v2 math-driven)
+
+    -- ── Walters point-rating framework (NFL only, v3) ───────────────────
+    -- True Score: raw final score with ST TDs + late-game garbage stripped.
+    -- Used by C1 to update Power Ratings without rewarding lucky bounces.
+    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS home_true_score INTEGER;
+    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS away_true_score INTEGER;
+
+    -- Walters output block stamped onto each pick — surfaced to operator
+    -- alerts and the chat UI so the math is fully traceable.
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS raw_pr_diff      NUMERIC(5,2);
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS situational_sum  NUMERIC(5,2);
+    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS kelly_units      NUMERIC(4,2);
+
+    -- Ceelo's self-curated player grades. Populated by C0f auto-grading
+    -- (no operator input required for v1 — operator can override later).
+    --   qb_tier: 1=Elite (7.5pt) … 5=Backup (0pt). Only QBs.
+    --   blue_chip_pts: 1.4 (Wirfs-tier OT), 0.9 (top edge / CB), or 0.
+    CREATE TABLE IF NOT EXISTS ceelo_player_grades (
+      team           TEXT        NOT NULL,
+      player         TEXT        NOT NULL,
+      position       TEXT        NOT NULL,
+      qb_tier        INTEGER,
+      blue_chip_pts  NUMERIC(3,2),
+      rationale      TEXT,
+      graded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (team, player)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_player_grades_team
+      ON ceelo_player_grades(team, position);
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grades_at TIMESTAMPTZ;
   `)
   schemaReady = true
 }
