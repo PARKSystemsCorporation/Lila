@@ -4,6 +4,7 @@ import { PLAYBOOK } from '@/app/_components/strategy/copy'
 import { TONE as STRATEGY_TONE } from '@/app/_components/strategy/tone'
 import { WorkedExample } from '@/app/_components/strategy/worked-example'
 import { KellyCard } from '@/app/_components/strategy/kelly-card'
+import { KellyConvergence } from '@/app/_components/strategy/kelly-convergence'
 import { NoVigBar } from '@/app/_components/strategy/no-vig-bar'
 import { KeyNumbers } from '@/app/_components/strategy/key-numbers'
 import SportSculpture from '@/app/_components/strategy/sport-sculpture-client'
@@ -137,6 +138,25 @@ export default function LeaguePage({ params }: { params: { league: string } }) {
           </div>
         </div>
       </section>
+
+      {cfg.sport === 'NFL' && (
+        <section className="mx-auto max-w-7xl px-4 sm:px-8 pb-12 sm:pb-16">
+          <div className="flex items-baseline justify-between gap-4 mb-5 sm:mb-7">
+            <div>
+              <p className={`font-mono text-[10px] sm:text-[11px] tracking-[0.45em] uppercase ${t.accent}`}>
+                ▌▌▌ when kelly converges
+              </p>
+              <h3 className="mt-2 text-[clamp(1.4rem,4vw,2.2rem)] font-black tracking-tight uppercase text-white">
+                sample <span className={`${t.accent} ${t.glow}`}>size</span>.
+              </h3>
+            </div>
+            <p className="hidden sm:block font-mono text-[10px] tracking-[0.32em] text-slate-500 uppercase max-w-[18rem] text-right">
+              clt confidence band<br />on log-wealth
+            </p>
+          </div>
+          <KellyConvergence tone={cfg.tone} />
+        </section>
+      )}
 
       <section className="mx-auto max-w-7xl px-4 sm:px-8 pb-12 sm:pb-16 space-y-5 sm:space-y-7">
         <div className="flex items-baseline justify-between gap-4">
