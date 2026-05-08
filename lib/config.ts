@@ -41,6 +41,12 @@ export const cfg = Object.freeze({
   // Forge step interval (seconds). Fast Algora-only PR drafter — same
   // shape as Scout's old volume cycle, scoped to $50-$200 Bug/Feature.
   FORGE_RUN_SEC:          num('FORGE_RUN_SEC', 300),
+  // Artist step interval (seconds). One piece per cycle via fal.ai
+  // FLUX.1 schnell. Default 1h — adjust down for testing.
+  ARTIST_RUN_SEC:         num('ARTIST_RUN_SEC', 3600),
+  // Soft cap on dollars/day spent on artist generations. At ~$0.003
+  // per FLUX schnell render, $1 → ~333 pieces/day worst case.
+  ARTIST_DAILY_BUDGET_USD: num('ARTIST_DAILY_BUDGET_USD', 1),
   // Broadcast loop: one public post attempt every N minutes. Silent hours
   // skip automatically (no spam when nothing notable happened).
   BROADCAST_INTERVAL_MIN: num('BROADCAST_INTERVAL_MIN', 60),

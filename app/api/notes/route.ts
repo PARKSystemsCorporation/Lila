@@ -52,7 +52,7 @@ export async function GET(req: Request) {
     }
 
     // List + activity snapshot in parallel.
-    const [notesRes, vegaRes, cipherRes, targetRes, lilaChatRes, ceeloRes, scoutRes] = await Promise.all([
+    const [notesRes, vegaRes, cipherRes, targetRes, lilaChatRes, ceeloRes, scoutRes, artistRes] = await Promise.all([
       db.query(
         `SELECT id, path,
                 LEFT(content, 280) AS preview,
@@ -99,6 +99,13 @@ export async function GET(req: Request) {
                 (SELECT COUNT(*) FROM scout_findings WHERE status='reported') AS reported
          FROM scout_state WHERE id=1`
       ),
+      db.query(
+        `SELECT cycle,
+                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
+                (SELECT COUNT(*)::int FROM artist_gallery)            AS total_pieces,
+                (SELECT MAX(id) FROM artist_gallery)                  AS latest_id
+         FROM artist_state WHERE id=1`
+      ),
     ])
 
     const notes = notesRes.rows.map(r => ({
@@ -128,6 +135,7 @@ export async function GET(req: Request) {
     const lilaChat = lilaChatRes.rows[0]
     const ceelo = ceeloRes.rows[0]
     const scout = scoutRes.rows[0]
+    const artist = artistRes.rows[0]
 
     const activity = {
       vega: vega ? {
@@ -160,6 +168,12 @@ export async function GET(req: Request) {
         scanned:  Number(scout.scanned ?? 0),
         reported: Number(scout.reported ?? 0),
         last_ts:  scout.last_ts != null ? Number(scout.last_ts) : null,
+      } : null,
+      artist: artist ? {
+        cycle:        Number(artist.cycle ?? 0),
+        total_pieces: Number(artist.total_pieces ?? 0),
+        latest_id:    artist.latest_id != null ? Number(artist.latest_id) : null,
+        last_ts:      artist.last_ts != null ? Number(artist.last_ts) : null,
       } : null,
     }
 

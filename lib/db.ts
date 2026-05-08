@@ -337,6 +337,30 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     INSERT INTO forge_state (id) VALUES (1) ON CONFLICT DO NOTHING;
     ALTER TABLE forge_state ADD COLUMN IF NOT EXISTS introduced_at TIMESTAMPTZ;
 
+    -- ── Artist: autonomous painter ──────────────────────────────────────
+    -- One piece per cycle via fal.ai FLUX.1 schnell. Pieces persist as
+    -- base64 in artist_gallery so we don't need a blob store; the loop
+    -- trims to the most recent ~200 rows after each insert.
+    CREATE TABLE IF NOT EXISTS artist_state (
+      id              INTEGER     PRIMARY KEY DEFAULT 1,
+      cycle           INTEGER     NOT NULL DEFAULT 0,
+      last_step_at    TIMESTAMPTZ,
+      introduced_at   TIMESTAMPTZ,
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO artist_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS artist_gallery (
+      id          BIGSERIAL   PRIMARY KEY,
+      prompt      TEXT        NOT NULL,
+      image_b64   TEXT        NOT NULL,
+      mime_type   TEXT        NOT NULL DEFAULT 'image/png',
+      model       TEXT        NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_artist_gallery_created
+      ON artist_gallery (created_at DESC);
+
     -- Per-(agent, chat_message) ack ledger so Forge / Scout each
     -- acknowledge an operator/Lila mention exactly once.
     CREATE TABLE IF NOT EXISTS agent_chat_acks (

@@ -5,6 +5,7 @@ import { AnalystLoop } from './analyst-loop'
 import { TaskerLoop } from './tasker-loop'
 import { ScoutLoop } from './scout-loop'
 import { ForgeLoop } from './forge-loop'
+import { ArtistLoop } from './artist-loop'
 import { ManagementLoop } from './management-loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
@@ -109,6 +110,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (forgeResult) {
       await logEvent(db, forgeResult.logMessage, forgeResult.logType)
       logs.push(forgeResult.logMessage)
+    }
+
+    // 3a2. Artist — paints one image per cycle via fal.ai FLUX.1 schnell.
+    //      No-ops cleanly when FAL_API_KEY isn't set.
+    const artist = new ArtistLoop(db)
+    const artistResult = await artist.run().catch((e: unknown) => ({
+      logMessage: `Artist error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (artistResult) {
+      await logEvent(db, artistResult.logMessage, artistResult.logType)
+      logs.push(artistResult.logMessage)
     }
 
     // 3b. Scout — gig hunter (Contra → Wellfound fallback) + tutorial

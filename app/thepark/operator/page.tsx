@@ -5090,6 +5090,7 @@ interface AgentActivity {
   lila: { last_chat_ts: number | null }
   ceelo?: { cycle: number; rated: number; upcoming: number; last_ts: number | null } | null
   scout?: { cycle: number; scanned: number; reported: number; last_ts: number | null } | null
+  artist?: { cycle: number; total_pieces: number; latest_id: number | null; last_ts: number | null } | null
 }
 
 interface NotesData {
@@ -6483,10 +6484,11 @@ type FloorStation =
   | 'news' | 'charts' | 'writing'
   | 'brief' | 'bench' | 'broadcast'
   | 'draft' | 'ratings' | 'jobs'
+  | 'studio'
   | 'lounge' | 'offshift'
 
 interface FloorAgent {
-  key: 'lila' | 'cipher' | 'vega' | 'forge' | 'scout' | 'ceelo'
+  key: 'lila' | 'cipher' | 'vega' | 'forge' | 'scout' | 'ceelo' | 'artist'
   letter: string
   display: string
   ring: string
@@ -6665,6 +6667,24 @@ function FloorTab({ visible, agentData }: {
       list.push({ key: 'ceelo', letter: 'Ce', display: 'ceelo', ring: 'bg-rose-950 border-rose-800', text: 'text-rose-300', glow: '', station: 'offshift', status: 'off-shift', lastTs: null })
     }
 
+    // Artist — autonomous painter. Lives at the Studio when alive,
+    // off-shift otherwise (FAL_API_KEY not set, or no piece yet).
+    if (activity.artist) {
+      list.push({
+        key: 'artist',
+        letter: 'A',
+        display: 'artist',
+        ring: 'bg-fuchsia-950 border-fuchsia-800',
+        text: 'text-fuchsia-300',
+        glow: 'shadow-[0_0_20px_rgba(232,121,249,0.55)]',
+        station: 'studio',
+        status: `cycle ${activity.artist.cycle} · ${activity.artist.total_pieces} pieces`,
+        lastTs: activity.artist.last_ts,
+      })
+    } else {
+      list.push({ key: 'artist', letter: 'A', display: 'artist', ring: 'bg-fuchsia-950 border-fuchsia-800', text: 'text-fuchsia-300', glow: '', station: 'offshift', status: 'off-shift', lastTs: null })
+    }
+
     return list
   }, [activity, agentData, now])
 
@@ -6710,6 +6730,12 @@ function FloorTab({ visible, agentData }: {
               ))}
             </div>
 
+            <StudioStation
+              agents={byStation.get('studio') ?? []}
+              latestId={activity.artist?.latest_id ?? null}
+              now={now}
+            />
+
             <FloorStation
               label="Lounge"
               agents={byStation.get('lounge') ?? []}
@@ -6742,6 +6768,55 @@ function FloorTab({ visible, agentData }: {
             </div>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+function StudioStation({ agents, latestId, now }: {
+  agents: FloorAgent[]
+  latestId: number | null
+  now: number
+}) {
+  const active = agents.length > 0
+  const thumbSrc = latestId != null ? `/api/artist/image/${latestId}` : null
+  return (
+    <div
+      className={`relative rounded-2xl border bg-slate-900 overflow-hidden transition-colors ${
+        active ? 'border-fuchsia-900/60' : 'border-slate-800'
+      }`}
+    >
+      <div className="flex items-stretch gap-0">
+        <div className="shrink-0 w-20 h-20 md:w-28 md:h-28 bg-slate-950 border-r border-slate-800 flex items-center justify-center overflow-hidden">
+          {thumbSrc ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={thumbSrc}
+              alt="latest piece"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <span className="text-[9px] font-mono text-slate-700 tracking-widest uppercase">no piece yet</span>
+          )}
+        </div>
+        <div className="flex-1 min-w-0 p-4 flex flex-col justify-center">
+          <div className="flex items-baseline justify-between">
+            <p className="text-[10px] md:text-[11px] font-mono text-fuchsia-500 uppercase tracking-[0.2em]">
+              Studio
+            </p>
+            {active && (
+              <span className="text-[9px] font-mono text-fuchsia-400/70 tracking-wider uppercase">
+                ▶ live
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-start gap-3 mt-2">
+            {agents.length > 0
+              ? agents.map(a => <FloorAvatar key={a.key} a={a} now={now} />)
+              : <p className="text-[10px] font-mono text-slate-700">artist off-shift — set FAL_API_KEY to wake.</p>
+            }
+          </div>
+        </div>
       </div>
     </div>
   )
