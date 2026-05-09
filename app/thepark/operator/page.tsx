@@ -2783,24 +2783,26 @@ type ReportAction =
 
 // ─── Trading Tab ──────────────────────────────────────────────────────────────
 
-// "Reset paper bankroll" — calls /api/trading/reset which wipes our local
-// position history (closed + open in lila_positions), cancels pending picks,
-// and closes any actually-open paper positions on Alpaca side. Use this when
-// you want the displayed equity / realized P&L to reflect a fresh $100
-// bankroll rather than carrying over old results.
+// "Full reset" — calls /api/admin/full-reset. Wipes paper trading state
+// (open + closed positions, pending picks), the entire operator desk
+// (current + all past papers), and zeroes bounty earnings. Audit trail
+// in security_reports is preserved.
 
-function ResetPaperButton({ onDone }: { onDone: () => void }) {
+function FullResetButton({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
   const click = async () => {
     if (busy) return
-    if (!confirm('Reset paper bankroll?\n\nThis will:\n- Close any open paper positions on Alpaca\n- Wipe local position history (closed + open)\n- Cancel pending picks\n\nBounty earnings are NOT touched.')) return
+    if (!confirm('Full reset?\n\nThis will:\n- Close any open paper positions on Alpaca\n- Wipe ALL position history (open + closed)\n- Cancel pending picks\n- Delete every desk item (current + past)\n- Zero bounty earnings (total_earned → $0)\n\nAudit trail (security_reports) is preserved.')) return
     setBusy(true)
     try {
-      const res = await fetch('/api/trading/reset', { method: 'POST' })
+      const res = await fetch('/api/admin/full-reset', { method: 'POST' })
       if (res.ok) {
         const body = await res.json()
-        setDone(`Closed ${body.alpaca_closed ?? 0} on Alpaca · dropped ${body.positions_dropped?.closed ?? 0} closed / ${body.positions_dropped?.open ?? 0} open · cancelled ${body.picks_cancelled ?? 0} picks`)
+        const earnedBefore = typeof body.total_earned_before === 'number' ? body.total_earned_before : 0
+        setDone(
+          `Closed ${body.alpaca_closed ?? 0} on Alpaca · dropped ${body.positions_dropped?.closed ?? 0} closed / ${body.positions_dropped?.open ?? 0} open · cancelled ${body.picks_cancelled ?? 0} picks · wiped ${body.desk_dropped ?? 0} desk items · zeroed $${earnedBefore.toFixed(2)} earnings`
+        )
         setTimeout(onDone, 1500)
       } else {
         setDone('Reset failed.')
@@ -2816,9 +2818,9 @@ function ResetPaperButton({ onDone }: { onDone: () => void }) {
       <button
         onClick={click}
         disabled={busy}
-        className="w-full text-[10px] font-mono text-slate-400 border border-slate-700 rounded-lg py-2 active:bg-slate-800 disabled:opacity-50"
+        className="w-full text-[10px] font-mono text-red-400 border border-red-900 rounded-lg py-2 active:bg-red-950 disabled:opacity-50"
       >
-        {busy ? 'Resetting…' : 'Reset paper bankroll'}
+        {busy ? 'Resetting…' : 'Full reset (paper + desk + earnings)'}
       </button>
       {done && <p className="text-[9px] font-mono text-slate-500 mt-1.5 text-center">{done}</p>}
     </div>
@@ -3220,7 +3222,7 @@ function TradingTab({ visible }: { visible: boolean }) {
                 </div>
               )}
               {isPaper && (
-                <ResetPaperButton onDone={() => location.reload()} />
+                <FullResetButton onDone={() => location.reload()} />
               )}
             </div>
 
