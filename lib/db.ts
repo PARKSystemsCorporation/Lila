@@ -44,6 +44,11 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     -- inflated total_earned by positive PnL but v1 subtracted net PnL).
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS reconciled_paper_pnl    BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS reconciled_paper_pnl_v2 BOOLEAN NOT NULL DEFAULT FALSE;
+    -- One-shot retag for pre-2026-04-27 Lila auto-posts that the original
+    -- kind backfill missed. Heuristic below uses 'no preceding user
+    -- message in the prior 20 min' (same window replyToOperator uses) to
+    -- distinguish unsolicited posts from replies.
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS retag_legacy_lila_v1    BOOLEAN NOT NULL DEFAULT FALSE;
     DO $reconcile_v2$
     DECLARE
       paid_total NUMERIC;
@@ -129,6 +134,43 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
          OR content LIKE 'Earned $%'
          OR content ~ '^[A-Z]{1,3}\d ?[A-Z]?:'
       );
+    -- Trade-cycle stance posts carry a free-form LLM read of the market
+    -- followed by an optional "N new trades queued." / "Cut N positions."
+    -- suffix. The kind-default-message migration didn't catch these
+    -- because the prefix is unstructured. Suffix-match retag is idempotent
+    -- (already-tagged rows excluded by kind='message').
+    UPDATE chat_messages SET kind = 'status'
+      WHERE kind = 'message' AND sender = 'lila'
+        AND (
+              content LIKE '% new trade queued.%'
+           OR content LIKE '% new trades queued.%'
+           OR content ~ 'Cut [0-9]+ position'
+        );
+    -- One-shot heuristic retag for pre-2026-04-27 Lila posts that the
+    -- pattern-based backfill missed (free-form stance text with no
+    -- queue/close suffix). A legitimate operator reply is preceded by a
+    -- 'user' message in the prior 20 min (replyToOperator's own lookback);
+    -- anything else from that era was an unsolicited auto-post. Gated by
+    -- retag_legacy_lila_v1 so it only runs once per DB.
+    DO $retag_legacy_lila_v1$
+    BEGIN
+      IF NOT (SELECT retag_legacy_lila_v1 FROM lila_state WHERE id = 1) THEN
+        UPDATE chat_messages c SET kind = 'status'
+          WHERE c.kind = 'message'
+            AND c.sender = 'lila'
+            AND c.thread = 'main'
+            AND c.created_at < '2026-04-27'::timestamptz
+            AND NOT EXISTS (
+              SELECT 1 FROM chat_messages u
+              WHERE u.sender = 'user'
+                AND u.thread = 'main'
+                AND u.created_at < c.created_at
+                AND u.created_at > c.created_at - INTERVAL '20 minutes'
+            );
+        UPDATE lila_state SET retag_legacy_lila_v1 = TRUE WHERE id = 1;
+      END IF;
+    END
+    $retag_legacy_lila_v1$;
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_kind ON chat_messages(thread, kind, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_mirror ON chat_messages(thread, sender, mirrored_at)

@@ -654,19 +654,30 @@ export class ManagementLoop {
     const paidN = Number(paidWindow[0]?.n ?? 0)
     const paidTotal = parseFloat(paidWindow[0]?.total ?? '0')
 
+    // Event class is the stable dedup key — embedded counts in the
+    // human-readable `event` (e.g. "5 approved" → "6 approved") used to
+    // mint a fresh fingerprint every check, defeating the 1-hour dedup.
+    // Class strings stay the same regardless of count, so the same
+    // category can't repost within the dedup window.
     let event: string | null = null
+    let eventClass: string | null = null
     if (paidN > 0) {
       event = `${paidN} bounty payout${paidN > 1 ? 's' : ''} confirmed: +$${paidTotal.toFixed(2)}. Real money in. Acknowledge.`
+      eventClass = 'paid'
     } else if (delta >= BIG_WIN_THRESHOLD) {
       // Trading P&L (position closed at profit) is the only other path that
       // increments total_earned. Report it as trading, not "earnings".
       event = `Trading P&L up $${delta.toFixed(2)} since last check (closed position).`
+      eventClass = 'trading-pl-up'
     } else if (errors >= ERROR_THRESHOLD) {
       event = `${errors} warnings in the last 30 minutes. Cipher may be stuck.`
+      eventClass = 'errors-spike'
     } else if (docsUnderperforming) {
       event = `Docs KPI flag: ${docsAttempts} attempts filed, ${docsPaid} paid (ratio ${(docsPaid / Math.max(docsAttempts, 1) * 100).toFixed(0)}%). Per the alternation plan, I should recommend weighting audit over docs until a payout lands. Tell the operator and suggest the call.`
+      eventClass = 'docs-kpi'
     } else if (approvedCount > 0) {
       event = `${approvedCount} approved report${approvedCount > 1 ? 's' : ''} ready for operator to submit. Still unpaid — not earnings yet.`
+      eventClass = 'approved-queue'
     } else if (delta === 0 && totalEarned > 0) {
       const { rows: [last] } = await this.db.query(
         `SELECT last_check_at FROM management_state WHERE id=1`
@@ -674,7 +685,10 @@ export class ManagementLoop {
       const hrs = last?.last_check_at
         ? (Date.now() - new Date(last.last_check_at).getTime()) / 3_600_000
         : Infinity
-      if (hrs >= 3) event = 'No new earnings in a while. Probe what is blocking the queue.'
+      if (hrs >= 3) {
+        event = 'No new earnings in a while. Probe what is blocking the queue.'
+        eventClass = 'idle-earnings'
+      }
     }
 
     await this.db.query(
@@ -682,23 +696,34 @@ export class ManagementLoop {
       [totalEarned, errors]
     )
 
-    if (!event) return { logMessage: 'Nothing notable.', logType: 'info', posted: false }
+    if (!event || !eventClass) return { logMessage: 'Nothing notable.', logType: 'info', posted: false }
 
-    // Event-fingerprint dedup: same trigger within the last hour ⇒ skip.
-    // Without this, "X approved report ready" / "Y warnings in 30m" /
-    // "no new earnings" fire every MANAGEMENT_CHECK_SEC and Lila spams
-    // chat with the same observation. Fingerprint is the first 80 chars
-    // of the canonical event string (stable across LLM phrasing).
-    const fingerprint = event.slice(0, 80)
+    // Class-level dedup: the same event class within the last hour ⇒ skip.
+    // The class is invariant to embedded counts, so a steady drip of new
+    // approvals / payouts / warnings can't keep minting fresh chat posts.
     const { rows: [prev] } = await this.db.query(
       `SELECT last_proactive_event, last_proactive_at FROM management_state WHERE id=1`
     )
     if (
-      prev?.last_proactive_event === fingerprint &&
+      prev?.last_proactive_event === eventClass &&
       prev.last_proactive_at &&
       (Date.now() - new Date(prev.last_proactive_at).getTime()) < 60 * 60 * 1000
     ) {
-      return { logMessage: `Check-in dedup: same event as last (${fingerprint.slice(0, 40)})`, logType: 'info', posted: false }
+      return { logMessage: `Check-in dedup: same class as last (${eventClass})`, logType: 'info', posted: false }
+    }
+
+    // Hard floor: at most one Lila kind='message' chat post per hour,
+    // regardless of event class. Belt-and-suspenders cap so unrelated
+    // classes can't stack within the same hour. Runs BEFORE the LLM
+    // call so a suppressed check-in doesn't burn tokens.
+    const { rows: recent } = await this.db.query(
+      `SELECT 1 FROM chat_messages
+       WHERE thread='main' AND sender='lila' AND kind='message'
+         AND created_at > NOW() - INTERVAL '60 minutes'
+       LIMIT 1`
+    )
+    if (recent.length > 0) {
+      return { logMessage: `Check-in suppressed: lila posted within the hour`, logType: 'info', posted: false }
     }
 
     const context = await this.context(totalEarned)
@@ -709,24 +734,10 @@ export class ManagementLoop {
     )
     if (!msg) return { logMessage: `Check-in: ${event}`, logType: 'info', posted: false }
 
-    // Final dedup gate: if Lila has already posted a 'message'-kind chat
-    // within the last 60 seconds (e.g. desk processor or the streaming
-    // /api/chat reply finished after this run started), skip the post
-    // rather than stacking another message on top.
-    const { rows: recent } = await this.db.query(
-      `SELECT 1 FROM chat_messages
-       WHERE thread='main' AND sender='lila' AND kind='message'
-         AND created_at > NOW() - INTERVAL '60 seconds'
-       LIMIT 1`
-    )
-    if (recent.length > 0) {
-      return { logMessage: `Check-in suppressed: lila posted recently`, logType: 'info', posted: false }
-    }
-
     await this.chat('lila', msg.slice(0, 500))
     await this.db.query(
       `UPDATE management_state SET last_proactive_event=$1, last_proactive_at=NOW() WHERE id=1`,
-      [fingerprint]
+      [eventClass]
     )
     return { logMessage: `Lila check-in: ${event.slice(0, 80)}`, logType: 'success', posted: true }
   }
