@@ -80,7 +80,7 @@ export const cfg = Object.freeze({
   // lib/autonomy/) instead of the legacy ManagementLoop. ManagementLoop's
   // helper methods (replyToOperator, processDeskApprovals, reviewOne,
   // runTradeCycle, proactiveCheckIn) stay reachable via tree leaves.
-  LILA_AUTONOMY_TREE:     bool('LILA_AUTONOMY_TREE', false),
+  LILA_AUTONOMY_TREE:     bool('LILA_AUTONOMY_TREE', true),
   // Reuse last-routed leaf for this many seconds when nothing changed
   // (no new inbound desk row, no unanswered operator message). Saves the
   // routing LLM call when the loop would otherwise repeat the same pick.

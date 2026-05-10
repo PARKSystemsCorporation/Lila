@@ -15,6 +15,18 @@ import { resolveLeaf, PLAN_FORMAT_INSTRUCTIONS, type LeafNode, type ToolName } f
 //
 // Two LLM calls when starting a plan; one tool dispatch per following tick.
 
+// Wipes Lila's tree working state — the in-flight plan and the routing
+// cache. Called from the /api/autonomy resume path so the next tick after
+// an unpause re-routes fresh. Subloops keep their own internal step/phase.
+export async function resetTreeState(db: PoolClient): Promise<void> {
+  await db.query(`DELETE FROM lila_tasks WHERE status='pending'`)
+  await db.query(
+    `UPDATE management_state
+        SET last_route_path=NULL, last_route_at=NULL, updated_at=NOW()
+      WHERE id=1`
+  )
+}
+
 const LILA_PERSONA =
   'You are Lila — desk manager at Park Systems. Voice: direct, lowercase-first, ' +
   'brutalist punctuation, no hedging. You produce tight, executable 10-step plans ' +

@@ -71,6 +71,18 @@ async function runAgentTickInner(): Promise<TickOutcome> {
 
   try {
     await ensureSchema(db)
+
+    // Big-red-button check. When the operator has paused autonomy from
+    // the header, every subloop short-circuits — no trading, no Vega,
+    // no Cipher, no Ceelo, no Lila. The ticker keeps polling but each
+    // pass is a no-op until the flag clears via /api/autonomy resume.
+    const { rows: [pauseRow] } = await db.query(
+      `SELECT autonomy_paused FROM lila_state WHERE id=1`
+    )
+    if (pauseRow?.autonomy_paused) {
+      return { ran: false, logs: ['autonomy paused by operator'] }
+    }
+
     await db.query('UPDATE lila_state SET tick_count = tick_count + 1, updated_at = NOW() WHERE id = 1')
 
     // 1. Position monitoring runs every tick (honors tight stops).

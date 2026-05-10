@@ -1036,6 +1036,15 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     -- with '/'; 'last_route_at' is the timestamp.
     ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_route_path TEXT;
     ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_route_at   TIMESTAMPTZ;
+
+    -- Operator-controlled big-red-button. When TRUE, runAgentTick
+    -- short-circuits at entry — no subloop runs (trading, vega, cipher,
+    -- ceelo, forge, scout, broadcast, lila, none of it). Resume clears
+    -- the flag AND resets Lila's tree state (delete pending lila_tasks +
+    -- null management_state.last_route_path/at) so she re-routes fresh.
+    -- Subloops keep their own internal step/phase intact across pause.
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS autonomy_paused BOOLEAN     NOT NULL DEFAULT FALSE;
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS paused_at       TIMESTAMPTZ;
   `)
   schemaReady = true
 }

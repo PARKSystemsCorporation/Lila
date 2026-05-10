@@ -6908,6 +6908,10 @@ export default function Home() {
   const [chatSeenId, setChatSeenId] = useState(0)
   const [chatLatestId, setChatLatestId] = useState(0)
   const prevEarned = useRef<number | null>(null)
+  // Big-red-button. Source of truth is server-side (lila_state.autonomy_paused);
+  // the UI polls it every 5s and updates optimistically on click.
+  const [paused, setPaused] = useState(false)
+  const [pausing, setPausing] = useState(false)
 
   const setTabWithSeen = useCallback((t: Tab) => {
     if (t === 'chat') setChatSeenId(chatLatestId)
@@ -6964,6 +6968,43 @@ export default function Home() {
     const id = setInterval(poll, 5000)
     return () => clearInterval(id)
   }, [])
+
+  // Stop-button state poll. Cheap singleton read; same 5s cadence as
+  // the agent poll so the header's pause indicator never lags by more
+  // than one tick.
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/autonomy')
+        if (!res.ok) return
+        const { paused: p } = await res.json()
+        setPaused(!!p)
+      } catch { /* ignore — header just shows the last known value */ }
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  const togglePause = useCallback(async () => {
+    if (pausing) return
+    const next = !paused
+    // Optimistic flip — the next poll will reconcile if anything went wrong.
+    setPaused(next)
+    setPausing(true)
+    try {
+      await fetch('/api/autonomy', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: next ? 'pause' : 'resume' }),
+      })
+    } catch {
+      // Roll back optimistic update if the request never went out.
+      setPaused(!next)
+    } finally {
+      setPausing(false)
+    }
+  }, [paused, pausing])
 
   // Chat unread tracker: poll latest message id and compare to lastSeen.
   // Also load reports continuously so the Reports-tab badge counts
@@ -7063,6 +7104,38 @@ export default function Home() {
                   ▓ PARKSYSTEMS CORP
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={togglePause}
+                disabled={pausing}
+                aria-label={paused ? 'Resume Lila' : 'Pause Lila'}
+                aria-pressed={paused}
+                title={paused ? 'Lila paused — tap to resume' : 'Tap to pause everything'}
+                className={[
+                  'shrink-0 inline-flex items-center justify-center rounded-full',
+                  'w-9 h-9 md:w-10 md:h-10 transition-colors disabled:opacity-60',
+                  paused
+                    ? 'bg-red-600 hover:bg-red-500 ring-2 ring-red-400 animate-pulse shadow-lg shadow-red-900/40'
+                    : 'bg-red-600/15 hover:bg-red-600/35 ring-1 ring-red-500/70',
+                ].join(' ')}
+              >
+                {paused ? (
+                  // play triangle (resume)
+                  <span
+                    aria-hidden
+                    className="block ml-0.5"
+                    style={{
+                      width: 0, height: 0,
+                      borderLeft: '10px solid white',
+                      borderTop: '7px solid transparent',
+                      borderBottom: '7px solid transparent',
+                    }}
+                  />
+                ) : (
+                  // stop square
+                  <span aria-hidden className="block w-3 h-3 md:w-3.5 md:h-3.5 bg-red-500 rounded-sm" />
+                )}
+              </button>
             </div>
             {data && (
               <div className="text-right">
