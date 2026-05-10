@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { getPool, ensureSchema } from '@/lib/db'
 import { logStreamedUsage } from '@/lib/llm'
+import { digest } from '@/lib/memory/digest'
 
 export const dynamic = 'force-dynamic'
 
@@ -98,6 +99,10 @@ async function reserveTurn(userMsg: string): Promise<number | null> {
     const db = await pool.connect()
     try {
       await db.query('INSERT INTO chat_messages (sender, content) VALUES ($1,$2)', ['user', userMsg])
+      // User-side digest into memory. Does NOT swallow the lila-row
+      // insertion below — the await runs before the placeholder INSERT so
+      // anything memory-related stays sequenced before the response stream.
+      await digest(db, { source: 'chat', actor: 'user', text: userMsg }).catch(() => { /* best-effort */ })
       const { rows } = await db.query(
         `INSERT INTO chat_messages (sender, content) VALUES ('lila','') RETURNING id`
       )
@@ -113,6 +118,7 @@ async function fillLila(id: number, content: string): Promise<void> {
     const db = await pool.connect()
     try {
       await db.query('UPDATE chat_messages SET content=$1 WHERE id=$2', [content, id])
+      await digest(db, { source: 'chat', actor: 'lila', text: content, source_id: `chat:${id}` }).catch(() => { /* best-effort */ })
     } finally { db.release() }
   } catch { /* ignore */ }
 }

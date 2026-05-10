@@ -2,6 +2,8 @@ import OpenAI from 'openai'
 import type { PoolClient } from 'pg'
 import type { UnifiedBounty } from './bounties-fetch'
 import { llmCall, LLMBudgetExceeded } from './llm'
+import { digest } from './memory/digest'
+import { recall, renderRecall } from './memory/retrieve'
 
 // ── Research engine ───────────────────────────────────────────────────────────
 //
@@ -405,21 +407,52 @@ export class ResearchEngine {
         `=== ${r.kind}${r.ref ? ` [${r.ref}]` : ''} ===\n${r.content}`
       )
       .join('\n\n')
-    // If it overflows, keep architecture + surfaces + invariants in full and truncate the rest.
-    if (blob.length <= MAX_NOTE_BLOB) return blob
+
+    // Cross-target memory hit — pulls episodes/summaries from other bounties
+    // (memory.recall scope.target_id excludes hits whose target_id matches).
+    let crossBlock = ''
+    try {
+      const target = await this.db.query(`SELECT title, scope FROM research_targets WHERE id=$1`, [targetId])
+      const t = target.rows[0]
+      if (t) {
+        const queryText = `${t.title ?? ''} ${t.scope ?? ''}`.slice(0, 600)
+        const hits = await recall(this.db, {
+          text: queryText,
+          scope: { target_id: targetId },
+          k_episodes: 4,
+          k_summaries: 2,
+          k_correlations: 5,
+        })
+        const rendered = renderRecall(hits, 700)
+        if (rendered) crossBlock = `\n\n=== cross-target memory ===\n${rendered}`
+      }
+    } catch { /* memory hiccup never breaks research */ }
+
+    // If the notes blob overflows, keep architecture + surfaces + invariants in full and truncate the rest.
+    if ((blob.length + crossBlock.length) <= MAX_NOTE_BLOB) return blob + crossBlock
     const prefix = rows
       .filter((r: { kind: string }) => ['arch', 'surfaces', 'invariants'].includes(r.kind))
       .map((r: { kind: string; content: string }) => `=== ${r.kind} ===\n${r.content}`)
       .join('\n\n')
-    const tail = blob.slice(-Math.max(MAX_NOTE_BLOB - prefix.length - 100, 1000))
-    return `${prefix}\n\n...[older evidence truncated]...\n\n${tail}`
+    const tail = blob.slice(-Math.max(MAX_NOTE_BLOB - prefix.length - crossBlock.length - 100, 1000))
+    return `${prefix}\n\n...[older evidence truncated]...\n\n${tail}${crossBlock}`
   }
 
   private async saveNote(targetId: number, kind: string, content: string, ref?: string): Promise<void> {
-    await this.db.query(
-      `INSERT INTO research_notes (target_id, kind, content, ref) VALUES ($1,$2,$3,$4)`,
+    const { rows: [row] } = await this.db.query(
+      `INSERT INTO research_notes (target_id, kind, content, ref) VALUES ($1,$2,$3,$4) RETURNING id`,
       [targetId, kind, content, ref ?? null]
     )
+    // Feed the note into memory. Architecture / surfaces / invariants / findings
+    // are the durable kinds — those carry the episode flag a bit louder via actor.
+    digest(this.db, {
+      source: 'research_note',
+      source_id: row?.id != null ? String(row.id) : null,
+      actor: 'cipher',
+      text: content,
+      detail: ref ?? null,
+      target_id: targetId,
+    }).catch(() => { /* memory ingest is best-effort */ })
   }
 
   private async nextOpenHypothesis(targetId: number): Promise<{ id: number; content: string } | null> {

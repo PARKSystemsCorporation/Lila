@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import OpenAI from 'openai'
 import { llmCall, LLMBudgetExceeded } from './llm'
+import { digest } from './memory/digest'
 
 // Operator's desk — Lila / Cipher / Vega / Scout / Ceelo file docs here
 // for the operator to review. Approval queues a 'read & report' task
@@ -71,7 +72,15 @@ export async function submit(db: PoolClient, item: DeskSubmit): Promise<{ id: nu
       item.kind ?? 'doc',
     ]
   )
-  return { id: Number(row.id) }
+  const id = Number(row.id)
+  digest(db, {
+    source: 'desk',
+    source_id: String(id),
+    actor: item.from,
+    text: `${item.title}\n${summary}`,
+    detail: item.body,
+  }).catch(() => { /* best-effort */ })
+  return { id }
 }
 
 // Pending operator → Lila inbox (the three top-level DESK leaves).
@@ -207,11 +216,18 @@ Reply in 2-4 sentences. CEO briefing-an-investor tone — direct, no filler. Sta
     if (!reply) continue
 
     // Post to chat as a real conversational message + close out the item.
+    const chatBody = `📄 ${it.title} (from ${String(it.from_agent)}):\n${reply}`
     await db.query(
       `INSERT INTO chat_messages (sender, content, thread, kind)
        VALUES ('lila', $1, 'main', 'message')`,
-      [`📄 ${it.title} (from ${String(it.from_agent)}):\n${reply}`]
+      [chatBody]
     )
+    digest(db, {
+      source: 'chat',
+      actor: 'lila',
+      text: chatBody,
+      source_id: `desk:${it.id}`,
+    }).catch(() => { /* best-effort */ })
     await db.query(
       `UPDATE desk_items
          SET status='reported', reported_at=NOW(), report_message=$1, updated_at=NOW()

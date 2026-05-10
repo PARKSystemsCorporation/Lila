@@ -1045,6 +1045,160 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     -- Subloops keep their own internal step/phase intact across pause.
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS autonomy_paused BOOLEAN     NOT NULL DEFAULT FALSE;
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS paused_at       TIMESTAMPTZ;
+
+    -- ── Memory layer (port of PARKSystemsCorporation/2dkira) ────────────
+    -- Three-tier word-pair correlation store + Lila-specific extensions
+    -- (entities, episodes, summaries, durable message archive). All tables
+    -- additive — none reference or alter pre-existing rows. Pruning is
+    -- handled by the layer itself (correlations.runDecay, summarize
+    -- rollups + retention's optional rolled-up episode sweep). The
+    -- existing retention RULES intentionally do NOT include memory_*
+    -- tables.
+
+    -- Singleton state row (counter for KIRA's nextIdx + decay/rollup
+    -- bookkeeping). Mirrors lila_state pattern.
+    CREATE TABLE IF NOT EXISTS memory_state (
+      id                    INTEGER     PRIMARY KEY DEFAULT 1,
+      counter               BIGINT      NOT NULL DEFAULT 0,
+      last_decay_short_at   TIMESTAMPTZ,
+      last_decay_medium_at  TIMESTAMPTZ,
+      last_decay_long_at    TIMESTAMPTZ,
+      last_rollup_hour_at   TIMESTAMPTZ,
+      last_rollup_day_at    TIMESTAMPTZ,
+      last_rollup_week_at   TIMESTAMPTZ,
+      tuning_version        INTEGER     NOT NULL DEFAULT 1,
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO memory_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+    -- KIRA's three correlation tiers. Identical column shape across the
+    -- three tables so promotion/demotion is DELETE-from-old + INSERT-into-
+    -- new (matches 2dkira processMsg verbatim).
+    CREATE TABLE IF NOT EXISTS memory_short (
+      id        TEXT     PRIMARY KEY,
+      pk        TEXT     UNIQUE NOT NULL,
+      w1        TEXT     NOT NULL,
+      w2        TEXT     NOT NULL,
+      p1        TEXT,
+      p2        TEXT,
+      rel       TEXT,
+      sent      TEXT,
+      score     REAL     NOT NULL,
+      reinf     INTEGER  NOT NULL DEFAULT 1,
+      decay_at  BIGINT,
+      last_msg  BIGINT,
+      created   BIGINT,
+      updated   BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_short_w1    ON memory_short(w1);
+    CREATE INDEX IF NOT EXISTS idx_memory_short_w2    ON memory_short(w2);
+    CREATE INDEX IF NOT EXISTS idx_memory_short_score ON memory_short(score DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_medium (
+      id        TEXT     PRIMARY KEY,
+      pk        TEXT     UNIQUE NOT NULL,
+      w1        TEXT     NOT NULL,
+      w2        TEXT     NOT NULL,
+      p1        TEXT,
+      p2        TEXT,
+      rel       TEXT,
+      sent      TEXT,
+      score     REAL     NOT NULL,
+      reinf     INTEGER  NOT NULL DEFAULT 1,
+      decay_at  BIGINT,
+      last_msg  BIGINT,
+      created   BIGINT,
+      updated   BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_medium_w1    ON memory_medium(w1);
+    CREATE INDEX IF NOT EXISTS idx_memory_medium_w2    ON memory_medium(w2);
+    CREATE INDEX IF NOT EXISTS idx_memory_medium_score ON memory_medium(score DESC);
+
+    CREATE TABLE IF NOT EXISTS memory_long (
+      id        TEXT     PRIMARY KEY,
+      pk        TEXT     UNIQUE NOT NULL,
+      w1        TEXT     NOT NULL,
+      w2        TEXT     NOT NULL,
+      p1        TEXT,
+      p2        TEXT,
+      rel       TEXT,
+      sent      TEXT,
+      score     REAL     NOT NULL,
+      reinf     INTEGER  NOT NULL DEFAULT 1,
+      decay_at  BIGINT,
+      last_msg  BIGINT,
+      created   BIGINT,
+      updated   BIGINT
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_long_w1    ON memory_long(w1);
+    CREATE INDEX IF NOT EXISTS idx_memory_long_w2    ON memory_long(w2);
+    CREATE INDEX IF NOT EXISTS idx_memory_long_score ON memory_long(score DESC);
+
+    -- Durable message archive — KIRA's "messages" table. Distinct from
+    -- chat_messages (which has 30-day retention and a different schema).
+    -- This is the never-pruned conversational record that recall draws on.
+    CREATE TABLE IF NOT EXISTS memory_messages (
+      id          TEXT      PRIMARY KEY,
+      role        TEXT,
+      content     TEXT,
+      created_at  BIGINT,
+      metadata    JSONB
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_messages_created ON memory_messages(created_at DESC);
+
+    -- Canonical topic nodes — bounty / codebase / person / ticker / agent
+    -- / concept. Lets episodes and summaries point at a stable identifier
+    -- so cross-target linking actually means something.
+    CREATE TABLE IF NOT EXISTS memory_entities (
+      id            BIGSERIAL   PRIMARY KEY,
+      kind          TEXT        NOT NULL,
+      slug          TEXT        NOT NULL,
+      display_name  TEXT        NOT NULL,
+      aliases       TEXT[]      NOT NULL DEFAULT '{}'::text[],
+      target_id     INTEGER     REFERENCES research_targets(id) ON DELETE SET NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(kind, slug)
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_entities_slug    ON memory_entities(slug);
+    CREATE INDEX IF NOT EXISTS idx_memory_entities_aliases ON memory_entities USING GIN (aliases);
+
+    -- Events on a timeline (Lila-specific; KIRA has no episode table).
+    -- target_id makes cross-target recall tractable; entity_id makes
+    -- entity-scoped recall tractable.
+    CREATE TABLE IF NOT EXISTS memory_summaries (
+      id              BIGSERIAL    PRIMARY KEY,
+      level           TEXT         NOT NULL,
+      window_start    TIMESTAMPTZ  NOT NULL,
+      window_end      TIMESTAMPTZ  NOT NULL,
+      entity_id       BIGINT       REFERENCES memory_entities(id) ON DELETE SET NULL,
+      target_id       INTEGER      REFERENCES research_targets(id) ON DELETE SET NULL,
+      content         TEXT         NOT NULL,
+      episode_count   INTEGER      NOT NULL DEFAULT 0,
+      created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_summaries_window ON memory_summaries(level, window_end DESC);
+    -- Expression-based unique index so writeSummary's ON CONFLICT clause
+    -- can match on a stable group key even when entity_id / target_id are
+    -- NULL (raw UNIQUE() can't COALESCE).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_summaries_unique
+      ON memory_summaries (level, window_start, (COALESCE(entity_id, 0)), (COALESCE(target_id, 0)));
+
+    CREATE TABLE IF NOT EXISTS memory_episodes (
+      id              BIGSERIAL    PRIMARY KEY,
+      source          TEXT         NOT NULL,
+      source_id       TEXT,
+      actor           TEXT,
+      entity_id       BIGINT       REFERENCES memory_entities(id) ON DELETE SET NULL,
+      target_id       INTEGER      REFERENCES research_targets(id) ON DELETE SET NULL,
+      content         TEXT         NOT NULL,
+      detail          TEXT,
+      occurred_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      rolled_up_into  BIGINT       REFERENCES memory_summaries(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_episodes_occurred ON memory_episodes(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_episodes_entity   ON memory_episodes(entity_id, occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_episodes_target   ON memory_episodes(target_id, occurred_at DESC);
   `)
   schemaReady = true
 }

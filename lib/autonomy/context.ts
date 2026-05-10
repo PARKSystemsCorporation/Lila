@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { recall, renderRecall, type RecallHits } from '../memory/retrieve'
 
 // Build the context block fed into both the router and plan-gen prompts.
 // Kept tight — ~1500 chars max — to keep token cost predictable.
@@ -13,6 +14,10 @@ export interface AutonomyContext {
   recent_chat:         { sender: string; kind: string; content: string }[]
   agent_status:        { agent: string; last_step_at: string | null; step: string | null; next_primary_set: boolean }[]
   active_plan:         { plan_id: string; branch_path: string; remaining: number } | null
+  // ── Additive: KIRA-style recall against memory_episodes / memory_summaries
+  // and the three correlation tiers. Existing fields above are unchanged so
+  // anything reading the old shape keeps working.
+  memory:              RecallHits | null
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -76,6 +81,25 @@ export async function buildContext(db: PoolClient): Promise<AutonomyContext> {
       ORDER BY MIN(created_at) ASC LIMIT 1`
   )
 
+  // Memory recall — derive a query string from what's hot right now (the
+  // unanswered operator message + inbound titles + recent chat) and ask
+  // memory.recall for relevant episodes/summaries/correlations. Wrapped in
+  // try/catch so any memory failure degrades to an empty block, never
+  // breaking context build.
+  let memory: RecallHits | null = null
+  try {
+    const queryParts: string[] = []
+    if (unanswered?.text) queryParts.push(unanswered.text)
+    for (const r of inbound.slice(0, 3)) queryParts.push(String(r.title ?? ''))
+    for (const c of chatRows.slice(-3)) queryParts.push(String((c as { content: string }).content ?? ''))
+    const queryText = queryParts.filter(Boolean).join(' ').slice(0, 600)
+    if (queryText) {
+      memory = await recall(db, { text: queryText, k_correlations: 6, k_episodes: 4, k_summaries: 2 })
+    }
+  } catch {
+    memory = null
+  }
+
   return {
     utc:     now.toISOString(),
     weekday: WEEKDAYS[now.getUTCDay()],
@@ -97,6 +121,7 @@ export async function buildContext(db: PoolClient): Promise<AutonomyContext> {
     active_plan: planRow[0]
       ? { plan_id: String(planRow[0].plan_id), branch_path: String(planRow[0].branch_path), remaining: Number(planRow[0].remaining) }
       : null,
+    memory,
   }
 }
 
@@ -129,6 +154,14 @@ export function renderContext(ctx: AutonomyContext): string {
   if (ctx.recent_chat.length) {
     lines.push(`recent chat:`)
     for (const c of ctx.recent_chat) lines.push(`  ${c.sender} (${c.kind}): ${c.content}`)
+  }
+  // Memory block (additive). Budget-deferred per plan: keep the existing
+  // 1800-char overall cap; the memory block competes for that budget. After
+  // observing real recall output we can revisit (raise the cap or make it
+  // env-configurable).
+  if (ctx.memory) {
+    const block = renderRecall(ctx.memory, 600)
+    if (block) lines.push(block)
   }
   return lines.join('\n').slice(0, 1800)
 }

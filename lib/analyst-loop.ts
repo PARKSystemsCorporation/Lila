@@ -4,6 +4,8 @@ import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 import * as Telegram from './channels/telegram'
+import { digest } from './memory/digest'
+import { maybeRunSummaries } from './memory/summarize'
 
 // ── Vega watchlist ─────────────────────────────────────────────────────────
 // No biotech, no retail. Commodity ETFs + leveraged index + global macro only.
@@ -250,6 +252,10 @@ export class AnalystLoop {
       `Summarize these analyst notes into a concise market brief (5-7 bullets):\n\n${combined}`, 250
     )
     await this.note(`analyst/summaries/${today()}-maintenance.md`, `# Maintenance Summary ${today()}\n\n${summary}`)
+    // Maintenance phase (NOT the autonomy loop) — piggyback the memory
+    // progressive-summarization pass. Internally gated by memory_state so
+    // re-runs within the cadence are no-ops.
+    await maybeRunSummaries(this.db, this.ai).catch(() => { /* best-effort */ })
     return 'Notes summarized.'
   }
 
@@ -316,6 +322,12 @@ export class AnalystLoop {
        ON CONFLICT (path) DO UPDATE SET content=$2, updated_at=NOW()`,
       [path, content]
     )
+    digest(this.db, {
+      source: 'analyst_note',
+      source_id: path,
+      actor: 'vega',
+      text: content,
+    }).catch(() => { /* best-effort */ })
   }
 
   // kind: 'message' (chat-visible) | 'status' (work update, hidden from Chat)
@@ -324,6 +336,11 @@ export class AnalystLoop {
       `INSERT INTO chat_messages (sender, content, kind) VALUES ($1,$2,$3)`,
       [sender, content, kind]
     )
+    digest(this.db, {
+      source: 'chat',
+      actor: sender,
+      text: content,
+    }).catch(() => { /* best-effort */ })
   }
 }
 
