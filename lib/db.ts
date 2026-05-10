@@ -970,6 +970,72 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_ceelo_player_grades_team
       ON ceelo_player_grades(team, position);
     ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grades_at TIMESTAMPTZ;
+
+    -- ── Autonomy tree (hierarchical decision loop) ──────────────────────
+    -- Lila navigates a 3-branch tree (DESK / AUTONOMY / LILA) each tick;
+    -- at the leaf she emits a 10-step plan persisted in lila_tasks. One
+    -- step per tick. Operator can also file inbound desk requests
+    -- (direction='to_lila') the tree services.
+
+    -- Operator → Lila inbox + structured request kinds. 'direction' is the
+    -- new field that disambiguates legacy agent→operator items
+    -- ('to_operator', the default) from operator→Lila inbox ('to_lila')
+    -- and lila→teammate routing ('to_agent'). Same desk_items storage,
+    -- different consumers — matches the green-line in the operator's tree
+    -- diagram where the three DESK boxes are one shared queue viewed from
+    -- three angles.
+    ALTER TABLE desk_items ADD COLUMN IF NOT EXISTS to_agent  TEXT;
+    ALTER TABLE desk_items ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'to_operator';
+    ALTER TABLE desk_items ADD COLUMN IF NOT EXISTS category  TEXT;
+    ALTER TABLE desk_items ADD COLUMN IF NOT EXISTS payload   JSONB;
+    CREATE INDEX IF NOT EXISTS idx_desk_inbound
+      ON desk_items(direction, status, created_at)
+      WHERE direction='to_lila' AND status='pending';
+
+    -- Bluesky title/category metadata. content stays the published
+    -- payload (≤260 chars enforced in compose); title/category surface in
+    -- the operator UI so a stream of posts is groupable.
+    ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS title    TEXT;
+    ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS category TEXT;
+
+    -- @mentions on chat. visible artifact for team updates; the
+    -- load-bearing delivery is next_primary on each agent's state row.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS mentions TEXT[];
+
+    -- Persistent 10-step plan queue. Distinct from lila_state.active_tasks
+    -- (which Cipher's BT0 owns for chat-derived task strings). Each plan
+    -- groups 10 rows by plan_id; AutonomyLoop executes the lowest-step_no
+    -- pending row each tick.
+    CREATE TABLE IF NOT EXISTS lila_tasks (
+      id           SERIAL      PRIMARY KEY,
+      plan_id      UUID        NOT NULL,
+      branch_path  TEXT        NOT NULL,
+      step_no      INTEGER     NOT NULL,
+      description  TEXT        NOT NULL,
+      tool         TEXT        NOT NULL,
+      args         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+      status       TEXT        NOT NULL DEFAULT 'pending',
+      result       TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      done_at      TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_lila_tasks_active
+      ON lila_tasks(plan_id, step_no) WHERE status='pending';
+
+    -- "NEXT LOOP TASKS PRIMARY" — Lila's TEAM tools write a
+    -- {goal,hint?,deadline_at?} JSONB blob here; each agent reads + nulls
+    -- it at the top of its own run() so the seed influences exactly one
+    -- iteration.
+    ALTER TABLE analyst_state    ADD COLUMN IF NOT EXISTS next_primary JSONB;
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS next_primary JSONB;
+    ALTER TABLE ceelo_state      ADD COLUMN IF NOT EXISTS next_primary JSONB;
+    ALTER TABLE lila_loop_state  ADD COLUMN IF NOT EXISTS next_primary JSONB;
+
+    -- AutonomyLoop's last-routed leaf (cache so we don't burn an LLM call
+    -- when nothing changed). 'last_route_path' = full leaf path joined
+    -- with '/'; 'last_route_at' is the timestamp.
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_route_path TEXT;
+    ALTER TABLE management_state ADD COLUMN IF NOT EXISTS last_route_at   TIMESTAMPTZ;
   `)
   schemaReady = true
 }

@@ -74,4 +74,27 @@ export const cfg = Object.freeze({
   // lila_positions, analyst_picks, watch_targets, research_targets) are never
   // touched.
   ENABLE_RETENTION:       bool('ENABLE_RETENTION', true),
+
+  // ── Autonomy tree ────────────────────────────────────────────────────────
+  // When true, agent-tick.ts uses AutonomyLoop (the hierarchical tree in
+  // lib/autonomy/) instead of the legacy ManagementLoop. ManagementLoop's
+  // helper methods (replyToOperator, processDeskApprovals, reviewOne,
+  // runTradeCycle, proactiveCheckIn) stay reachable via tree leaves.
+  LILA_AUTONOMY_TREE:     bool('LILA_AUTONOMY_TREE', false),
+  // Reuse last-routed leaf for this many seconds when nothing changed
+  // (no new inbound desk row, no unanswered operator message). Saves the
+  // routing LLM call when the loop would otherwise repeat the same pick.
+  LILA_TREE_CACHE_SEC:    num('LILA_TREE_CACHE_SEC', 300),
+  // Comma-separated host suffixes the SOLO web-fetch tool will hit.
+  // Empty = a sensible default list. Hosts match by suffix so e.g.
+  // 'github.com' matches 'raw.githubusercontent.com' as well via separate
+  // entries below.
+  LILA_WEB_ALLOWLIST:     process.env.LILA_WEB_ALLOWLIST ??
+    'github.com,raw.githubusercontent.com,news.ycombinator.com,en.wikipedia.org,arxiv.org',
+  // When true, all autonomy tools become no-ops that record their intent
+  // but produce no side effects. Intended for dev-autonomy-tick.ts.
+  LILA_DRY_RUN:           bool('LILA_DRY_RUN', false),
+  // Gate code.run_tests behind an explicit opt-in so Lila never shells
+  // out to npm test without operator authorization.
+  LILA_RUN_TESTS:         bool('LILA_RUN_TESTS', false),
 })

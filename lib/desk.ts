@@ -27,23 +27,104 @@ export type DeskKind =
   | 'plan'       // multi-step plan
   | 'briefing'   // periodic data report (P&L, edges, etc)
 
+// Three-way direction. 'to_operator' is the legacy agent→operator flow.
+// 'to_lila' is the operator's inbox where structured requests are filed
+// (code-request / help-request / web-post). 'to_agent' lets Lila route an
+// item to a specific teammate (paired with to_agent='vega'|'cipher'|'ceelo').
+export type DeskDirection = 'to_operator' | 'to_lila' | 'to_agent'
+
+// Inbound (operator → Lila) request categories. Free-form on the column,
+// but these are the v1 tree leaves.
+export type DeskCategory = 'code-request' | 'help-request' | 'web-post' | string
+
 export interface DeskSubmit {
   from: DeskAgent
   title: string
   summary?: string         // optional one-liner; falls back to first 140 chars of body
   body: string             // markdown
   kind?: DeskKind
+  // Optional routing fields — defaults preserve legacy agent→operator flow.
+  direction?: DeskDirection
+  toAgent?: DeskAgent
+  category?: DeskCategory
+  payload?: unknown        // arbitrary JSON, e.g. {repo_path, instruction} for code-request
 }
 
 export async function submit(db: PoolClient, item: DeskSubmit): Promise<{ id: number }> {
   const summary = item.summary ?? firstLine(item.body, 140)
+  const direction: DeskDirection = item.direction ?? 'to_operator'
   const { rows: [row] } = await db.query(
-    `INSERT INTO desk_items (from_agent, title, summary, body, kind, status)
-     VALUES ($1,$2,$3,$4,$5,'pending')
+    `INSERT INTO desk_items
+       (from_agent, to_agent, direction, category, payload,
+        title, summary, body, kind, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
      RETURNING id`,
-    [item.from, item.title.slice(0, 200), summary, item.body, item.kind ?? 'doc']
+    [
+      item.from,
+      item.toAgent ?? null,
+      direction,
+      item.category ?? null,
+      item.payload === undefined ? null : JSON.stringify(item.payload),
+      item.title.slice(0, 200),
+      summary,
+      item.body,
+      item.kind ?? 'doc',
+    ]
   )
   return { id: Number(row.id) }
+}
+
+// Pending operator → Lila inbox (the three top-level DESK leaves).
+export interface DeskInboundRow {
+  id: number
+  category: DeskCategory | null
+  title: string
+  summary: string | null
+  body: string
+  payload: unknown
+  created_ts: number
+}
+export async function readInbound(
+  db: PoolClient,
+  opts: { category?: DeskCategory; limit?: number } = {}
+): Promise<DeskInboundRow[]> {
+  const params: unknown[] = []
+  let where = `direction='to_lila' AND status='pending'`
+  if (opts.category) { params.push(opts.category); where += ` AND category=$${params.length}` }
+  params.push(opts.limit ?? 5)
+  const { rows } = await db.query(
+    `SELECT id, category, title, summary, body, payload,
+            (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
+       FROM desk_items
+      WHERE ${where}
+      ORDER BY created_at ASC
+      LIMIT $${params.length}`,
+    params
+  )
+  return rows.map((r: { id: number; category: string | null; title: string; summary: string | null; body: string; payload: unknown; created_ts: string }) => ({
+    id: Number(r.id),
+    category: r.category,
+    title: r.title,
+    summary: r.summary,
+    body: r.body,
+    payload: r.payload,
+    created_ts: Number(r.created_ts),
+  }))
+}
+
+// Mark a desk item as serviced. Used by tools that close out an inbound
+// request without going through the operator approve/deny flow.
+export async function markServiced(
+  db: PoolClient,
+  id: number,
+  reportMessage: string,
+): Promise<void> {
+  await db.query(
+    `UPDATE desk_items
+        SET status='reported', reported_at=NOW(), report_message=$2, updated_at=NOW()
+      WHERE id=$1`,
+    [id, reportMessage.slice(0, 1400)]
+  )
 }
 
 // Recent denials for this agent — feed into the agent's prompt so they
