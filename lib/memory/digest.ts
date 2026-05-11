@@ -50,7 +50,7 @@ export interface DigestResult {
 // graph. System sources (web HTML dumps, structured notes) only feed
 // episodes/messages — they'd swamp the graph with junk grams.
 const CORRELATION_SOURCES: ReadonlySet<EpisodeSource> = new Set<EpisodeSource>([
-  'chat', 'desk', 'research_note', 'analyst_note', 'telegram', 'broadcast',
+  'chat', 'desk', 'research_note', 'analyst_note', 'broadcast',
 ])
 
 export async function digest(db: PoolClient, signal: DigestSignal): Promise<DigestResult> {

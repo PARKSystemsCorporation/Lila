@@ -100,7 +100,6 @@ export interface SubmitOptions {
   listingId: string
   content: string                                    // goes into otherInfo
   link?: string
-  telegram?: string                                  // required for project listings
   eligibilityAnswers?: { question: string; answer: string }[]
   ask?: number | null
 }
@@ -114,7 +113,6 @@ export async function submitWork(apiKey: string, opts: SubmitOptions): Promise<b
     eligibilityAnswers: opts.eligibilityAnswers ?? [],
     ask: opts.ask ?? null,
   }
-  if (opts.telegram) body.telegram = opts.telegram
 
   const res = await fetch(`${BASE}/api/agents/submissions/create`, {
     method: 'POST',
@@ -134,7 +132,6 @@ export async function updateSubmission(apiKey: string, opts: SubmitOptions): Pro
     eligibilityAnswers: opts.eligibilityAnswers ?? [],
     ask: opts.ask ?? null,
   }
-  if (opts.telegram) body.telegram = opts.telegram
 
   const res = await fetch(`${BASE}/api/agents/submissions/update`, {
     method: 'POST',

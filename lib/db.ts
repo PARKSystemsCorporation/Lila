@@ -112,11 +112,6 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     -- Migration: thread column was added after the table first shipped.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS thread       TEXT NOT NULL DEFAULT 'main';
-    -- Telegram bridge: 'via' tags where a message came from
-    -- ('telegram' | 'web' | NULL). 'mirrored_at' marks Lila replies that
-    -- have been pushed back to Telegram so we don't double-send.
-    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS via          TEXT;
-    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS mirrored_at  TIMESTAMPTZ;
     -- 'kind' separates true conversational messages from agent status posts
     -- and system alerts. The Chat tab only renders kind='message' so the
     -- conversation isn't drowned in cycle-completion / earnings rollups.
@@ -173,8 +168,6 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     $retag_legacy_lila_v1$;
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_kind ON chat_messages(thread, kind, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_chat_messages_mirror ON chat_messages(thread, sender, mirrored_at)
-      WHERE sender='lila' AND mirrored_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS analyst_notes (
       id         SERIAL      PRIMARY KEY,
@@ -536,14 +529,6 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_ceelo_backtest_sport_ran ON ceelo_backtest(sport, ran_at DESC);
 
-    -- Telegram alert dedup — stamped when a row's first
-    -- alert-eligible state change has been pushed to the operator's
-    -- chat. NULL = never alerted. Schema additions only; alert worker
-    -- decides which transitions deserve a ping.
-    ALTER TABLE security_reports ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
-    ALTER TABLE ceelo_picks      ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
-    ALTER TABLE lila_positions   ADD COLUMN IF NOT EXISTS tg_alerted_at TIMESTAMPTZ;
-
     -- Operator's desk — agents push docs here for review. Workflow:
     --   pending  → agent just filed it; operator hasn't acted
     --   approved → operator hit approve; Lila will read + report on next tick
@@ -697,8 +682,6 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       -- Payout state
       paid_amount_usd NUMERIC(12,2),
       paid_at         TIMESTAMPTZ,
-      -- Telemetry
-      tg_alerted_at   TIMESTAMPTZ,                            -- alerts.ts dedup
       created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (source, external_id)
@@ -1209,6 +1192,20 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_memory_episodes_occurred ON memory_episodes(occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_memory_episodes_entity   ON memory_episodes(entity_id, occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_memory_episodes_target   ON memory_episodes(target_id, occurred_at DESC);
+
+    -- One-shot cleanup of legacy side-channel rows + columns. Wipe rows
+    -- before dropping the columns those rows reference. All idempotent:
+    -- no-op on a fresh DB, single-pass cleanup on existing prod.
+    DELETE FROM broadcasts WHERE channel = 'telegram';
+    UPDATE memory_episodes SET source = 'chat' WHERE source = 'telegram';
+
+    ALTER TABLE chat_messages    DROP COLUMN IF EXISTS via;
+    ALTER TABLE chat_messages    DROP COLUMN IF EXISTS mirrored_at;
+    ALTER TABLE security_reports DROP COLUMN IF EXISTS tg_alerted_at;
+    ALTER TABLE ceelo_picks      DROP COLUMN IF EXISTS tg_alerted_at;
+    ALTER TABLE lila_positions   DROP COLUMN IF EXISTS tg_alerted_at;
+    ALTER TABLE bounty_picks     DROP COLUMN IF EXISTS tg_alerted_at;
+    DROP INDEX  IF EXISTS idx_chat_messages_mirror;
   `)
   schemaReady = true
 }

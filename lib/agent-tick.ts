@@ -13,9 +13,7 @@ import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
 import { DmLoop } from './dm-loop'
 import { runGumroadReverify } from './gumroad-reverify'
-import { mirrorLilaToTelegram } from './telegram-mirror'
 import { runNoonArticles } from './article-engine'
-import { runAlerts } from './alerts'
 import { runRetention } from './retention'
 import { runSubmitter } from './github-pr'
 import { runDevtoPublisher } from './devto-publish'
@@ -167,20 +165,7 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(mgmtResult.logMessage)
     }
 
-    // 4b. Telegram bridge — mirror Lila's replies back to Telegram when
-    //     the active conversation came from there. Runs immediately after
-    //     management so any reply just generated this tick goes out now.
-    const mirrorResult = await mirrorLilaToTelegram(db).catch((e: unknown) => ({
-      sent: 0, failed: 0,
-      logMessage: `Telegram mirror error: ${String(e)}`,
-      logType: 'warn' as const,
-    }))
-    if (mirrorResult?.logMessage) {
-      await logEvent(db, mirrorResult.logMessage, mirrorResult.logType ?? 'info')
-      logs.push(mirrorResult.logMessage)
-    }
-
-    // 4b2. Gumroad subscription poller — re-verifies one active viewer per
+    // 4b. Gumroad subscription poller — re-verifies one active viewer per
     //      tick (oldest verified_at first). Catches cancellations / refunds /
     //      failed renewals without depending on Gumroad webhooks. Skips when
     //      Gumroad isn't configured.
@@ -280,19 +265,6 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (devtoResult?.logMessage) {
       await logEvent(db, devtoResult.logMessage, devtoResult.logType ?? 'info')
       logs.push(devtoResult.logMessage)
-    }
-
-    // 6c. Telegram alerts — paid bounties, ready-to-submit Scout drafts,
-    //     high-confidence Ceelo edges, meaningful trade closes. Per-row
-    //     dedup via tg_alerted_at. Silent if Telegram isn't configured.
-    const alertResult = await runAlerts(db).catch((e: unknown) => ({
-      sent: 0, failed: 0, classes: {},
-      logMessage: `Alert error: ${String(e).slice(0, 80)}`,
-      logType: 'warn' as const,
-    }))
-    if (alertResult?.logMessage) {
-      await logEvent(db, alertResult.logMessage, alertResult.logType ?? 'info')
-      logs.push(alertResult.logMessage)
     }
 
     // 7. Retention — once per 24h, trims stale log/usage/chat/broadcast rows.

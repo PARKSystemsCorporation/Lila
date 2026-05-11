@@ -3,7 +3,6 @@ import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
 import * as Bluesky from './channels/bluesky'
-import * as Telegram from './channels/telegram'
 import * as Alpaca from './platforms/alpaca'
 
 // Market quant context: tickers Vega tracks. Same list as analyst-loop's
@@ -76,7 +75,6 @@ export class BroadcastLoop {
   static enabledChannels(): string[] {
     const out: string[] = []
     if (Bluesky.isConfigured())  out.push('bluesky')
-    if (Telegram.isConfigured()) out.push('telegram')
     return out
   }
 
@@ -510,11 +508,6 @@ export class BroadcastLoop {
     if (channel === 'bluesky') {
       const r = await Bluesky.postSkeet(text)
       return { ok: r.ok, id: r.uri, error: r.error }
-    }
-    if (channel === 'telegram') {
-      // No parse_mode — plain text so stray * or _ can't trip Telegram.
-      const r = await Telegram.sendMessage(`🤖 Lila update\n\n${text}`)
-      return { ok: r.ok, error: r.error }
     }
     return { ok: false, error: 'unknown channel' }
   }

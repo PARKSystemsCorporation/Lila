@@ -36,10 +36,10 @@ A three-role autonomous team inside one Next.js app:
   reviews it the same way she reviews bounty drafts, and approved
   tutorials auto-publish to dev.to.
 - **Analyst (Vega)** — market intelligence. Reads news, scans watchlists, files
-  picks with tight stops. Mirrors picks to Telegram when configured.
+  picks with tight stops.
 - **Handicapper (Ceelo)** — autonomous NFL sports betting model. Maintains an internal 
   Elo ratings graph from nflverse historical data, fetches live spreads from 
-  The Odds API, and flags +EV edges. Mirrors picks to Telegram.
+  The Odds API, and flags +EV edges.
 
 All of it runs on a single server-side ticker so Lila keeps working whether
 you have the PWA open or not.
@@ -51,7 +51,6 @@ you have the PWA open or not.
 - **DeepSeek** for all LLM calls (budget-gated, per-module cost tracking)
 - **Alpaca** for trading (paper by default, live via `ALPACA_PAPER=false`)
 - **Bluesky** via AT Proto for hourly public broadcasts
-- **Telegram** Bot API for Analyst picks & Ceelo alerts
 - **The Odds API** for live NFL spreads and totals
 - **nflverse** data for historical Elo ratings
 - **TradingView lightweight-charts** for the Trades and Picks edge graphs
@@ -110,10 +109,9 @@ Open `http://localhost:3000/login` and sign in with your `AUTH_PASSWORD`.
 ```
 
 Plus a parallel **Analyst** state machine (T0/T1/T2/T3/F0/M0/M1) that
-reads news and market bars, files picks into `analyst_picks`, and
-mirrors them to Telegram. **TradingEngine** runs every tick, monitors
-open positions, closes on target/stop, and executes pending picks during
-market hours.
+reads news and market bars, files picks into `analyst_picks`.
+**TradingEngine** runs every tick, monitors open positions, closes on
+target/stop, and executes pending picks during market hours.
 
 A **Handicapper (Ceelo)** loop (C0/C1/C2/C3/C4/C5) maintains an internal Elo
 graph using nflverse data, diffs model spreads against live Odds API book
@@ -238,7 +236,6 @@ See [`.env.example`](.env.example) for the full commented reference.
 - Forge auto-submit → `GITHUB_TOKEN` + `LILA_AUTO_SUBMIT=true`
 - Scout tutorial publisher → `DEVTO_API_KEY` (+ optional `SCOUT_TUTORIAL_TOPICS`)
 - Bluesky broadcasts → `BSKY_HANDLE` + `BSKY_APP_PASSWORD`
-- Telegram picks feed → `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`
 - Ceelo Edge Gate → `ODDS_API_KEY`
 
 **Tuning knobs** (all optional, defaults sensible):

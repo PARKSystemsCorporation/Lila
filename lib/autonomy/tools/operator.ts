@@ -8,7 +8,6 @@ import * as Desk from '../../desk'
 
 export interface ReplyArgs {
   text: string
-  via?: 'web' | 'telegram' | null
 }
 
 export async function reply(db: PoolClient, args: ReplyArgs): Promise<{ logMessage: string }> {
@@ -18,9 +17,9 @@ export async function reply(db: PoolClient, args: ReplyArgs): Promise<{ logMessa
     return { logMessage: `[dry-run] operator.reply "${text.slice(0, 60)}"` }
   }
   await db.query(
-    `INSERT INTO chat_messages (sender, content, thread, kind, via)
-     VALUES ('lila', $1, 'main', 'message', $2)`,
-    [text, args.via ?? null]
+    `INSERT INTO chat_messages (sender, content, thread, kind)
+     VALUES ('lila', $1, 'main', 'message')`,
+    [text]
   )
   return { logMessage: `operator.reply (${text.length}B)` }
 }

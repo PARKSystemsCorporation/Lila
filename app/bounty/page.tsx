@@ -67,11 +67,10 @@ const DISPATCH: DispatchRow[] = [
   { step:  3, loop: 'TaskerLoop · Cipher',    cadence: 'time-gated',     blurb: 'security audits, files reports' },
   { step:  4, loop: 'ScoutLoop',              cadence: '5-min gate',     blurb: 'fetches Gitcoin + Algora, drafts PRs' },
   { step:  5, loop: 'ManagementLoop · Lila',  cadence: 'priority-gated', blurb: 'reviews, replies, desk approvals', head: true },
-  { step:  6, loop: 'Telegram mirror',        cadence: 'if active',      blurb: 'bridges replies back to Telegram' },
-  { step:  7, loop: 'DmLoop',                 cadence: 'one DM / tick',  blurb: 'answers a queued marketplace DM' },
-  { step:  8, loop: 'CeeloLoop',              cadence: '30-min cycle',   blurb: 'NFL handicapper math, no LLM' },
-  { step:  9, loop: 'DiscoveryLoop',          cadence: 'daily',          blurb: 'protocol + repo scan' },
-  { step: 10, loop: 'BroadcastLoop',          cadence: 'intervaled',     blurb: 'Bluesky + Telegram posts' },
+  { step:  6, loop: 'DmLoop',                 cadence: 'one DM / tick',  blurb: 'answers a queued marketplace DM' },
+  { step:  7, loop: 'CeeloLoop',              cadence: '30-min cycle',   blurb: 'NFL handicapper math, no LLM' },
+  { step:  8, loop: 'DiscoveryLoop',          cadence: 'daily',          blurb: 'protocol + repo scan' },
+  { step:  9, loop: 'BroadcastLoop',          cadence: 'intervaled',     blurb: 'Bluesky posts' },
 ]
 
 interface PipelineState {
@@ -86,7 +85,7 @@ const PIPELINE: PipelineState[] = [
   { state: 'drafted',    actor: 'Scout S1',         what: 'DeepSeek writes draft_title + draft_body (200–600 words, markdown) + draft_diff (unified, 3-line context). 2k-token cap.', tone: 'orange' },
   { state: 'approved',   actor: 'Lila',             what: 'BOUNTY_REVIEW_PROMPT vets truthfulness, diff plausibility, scope match. One-shot decision.', tone: 'amber' },
   { state: 'submitted',  actor: 'github-pr.ts',     what: 'fork upstream → sync → branch → apply hunks via Contents API → open PR from the bot account.', tone: 'amber' },
-  { state: 'paid',       actor: 'platform',         what: 'paid_amount_usd recorded, Telegram alert fires.', tone: 'red' },
+  { state: 'paid',       actor: 'platform',         what: 'paid_amount_usd recorded.', tone: 'red' },
 ]
 
 const SOURCES: { name: string; url: string; cap: string; filter: string; tone: Tone }[] = [
@@ -230,7 +229,7 @@ export default function BountyPage() {
                 the <span className="text-amber-400">pipeline</span>.
               </h2>
               <p className="mt-3 max-w-2xl text-sm text-slate-400 leading-relaxed">
-                Five states in <span className="font-mono text-amber-300">bounty_picks.status</span>. Each one is a database row anyone with operator access can audit, and a Telegram ping when it advances.
+                Five states in <span className="font-mono text-amber-300">bounty_picks.status</span>. Each one is a database row anyone with operator access can audit.
               </p>
             </div>
           </div>
@@ -262,7 +261,7 @@ export default function BountyPage() {
                 'Reads the draft against the original bounty body and the linked GitHub issue. Looks for three things: truthfulness, diff plausibility, scope match.',
                 'Approve → status flips to approved, GitHub PR submitter picks it up next tick (if LILA_AUTO_SUBMIT and a GITHUB_TOKEN are set). Reject → status flips to rejected, the cycle skips it.',
                 'No revisions. No "let me reword the body." If the draft is wrong, it is rejected and Scout drafts a new one next pass. The review is a gate, not an editor.',
-                'Lila posts the approval to operator chat with the bounty title and reward. Telegram pings if the bridge is hot.',
+                'Lila posts the approval to operator chat with the bounty title and reward.',
               ]}
               tone="amber"
             />

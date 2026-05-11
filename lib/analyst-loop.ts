@@ -3,7 +3,6 @@ import * as Alpaca from './platforms/alpaca'
 import type { PoolClient } from 'pg'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
-import * as Telegram from './channels/telegram'
 import { digest } from './memory/digest'
 import { maybeRunSummaries } from './memory/summarize'
 import { WATCHLIST_ALL as ALL } from './analyst-watchlist'
@@ -165,7 +164,6 @@ export class AnalystLoop {
   private async f0(cycle: number): Promise<string> {
     const { rows: [s] } = await this.db.query('SELECT notes_buffer FROM analyst_state WHERE id=1')
     let queued = 0
-    const queuedPicks: Array<{ symbol: string; entry: number; target: number; stop: number; confidence: number; reason: string }> = []
 
     if (s?.notes_buffer) {
       try {
@@ -184,7 +182,6 @@ export class AnalystLoop {
                 [p.symbol, entry, target, stop, p.confidence, p.reason]
               )
               queued++
-              queuedPicks.push({ symbol: p.symbol, entry, target, stop, confidence: p.confidence, reason: p.reason })
             }
           }
         }
@@ -197,35 +194,6 @@ export class AnalystLoop {
       : `Cycle ${cycle + 1} complete — no trades this cycle.`
 
     await this.chat('analyst', msg, 'status')
-
-    // Mirror new picks to Telegram. Log success AND failure so the
-    // operator can see what happened from the Activity log on Dash.
-    if (queuedPicks.length > 0 && Telegram.isConfigured()) {
-      // Plain text only — reason strings from the LLM might contain
-      // underscores or asterisks that would break Markdown parsing.
-      const body = queuedPicks.map(p =>
-        `• ${p.symbol}  @ $${p.entry.toFixed(2)}  →  tgt $${p.target.toFixed(2)}  ·  stop $${p.stop.toFixed(2)}  ·  conf ${Math.round(p.confidence * 100)}%\n  ${p.reason}`
-      ).join('\n\n')
-      const tgText = `📊 Vega picks — cycle ${cycle + 1}\n\n${body}\n\nTight stops. Long only.`
-      const res = await Telegram.sendMessage(tgText)
-      if (res.ok) {
-        await this.db.query(
-          'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
-          [`Telegram: pushed ${queuedPicks.length} pick${queuedPicks.length > 1 ? 's' : ''} to your chat.`, 'success']
-        )
-      } else {
-        await this.db.query(
-          'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
-          [`Telegram push failed: ${res.error ?? 'unknown'}`, 'warn']
-        )
-      }
-    } else if (queuedPicks.length > 0) {
-      // Picks were ready to share but Telegram isn't configured — noise-free info.
-      await this.db.query(
-        'INSERT INTO lila_log (message, type) VALUES ($1,$2)',
-        [`Telegram not configured — ${queuedPicks.length} pick${queuedPicks.length > 1 ? 's' : ''} stayed internal.`, 'info']
-      )
-    }
 
     return msg
   }

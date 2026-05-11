@@ -11,9 +11,8 @@ import type { PoolClient } from 'pg'
 //   - LILA_AUTO_SUBMIT 'true' to actually open PRs (default OFF)
 //
 // When GITHUB_TOKEN is set but LILA_AUTO_SUBMIT is not 'true', this file
-// is a no-op — drafts stay in 'approved' state and Telegram alerts ping
-// the operator to copy the draft manually. Flip the env to 'true' on
-// Railway to go fully autonomous.
+// is a no-op — drafts stay in 'approved' state for the operator to copy
+// manually. Flip the env to 'true' on Railway to go fully autonomous.
 //
 // Flow per row:
 //   1. Resolve bot username from the token.

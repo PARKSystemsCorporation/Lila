@@ -27,7 +27,7 @@ Two sentences. The problem (protocols ship fast, audits don't scale, bounty plat
 ## What you get
 - **Monthly deep audit** of one codebase: target-pinned phase machine (map → surfaces → invariants → hypothesize → investigate), 10+ cycles of research, full memory across cycles.
 - **Weekly surface scans** on any other contract in scope.
-- **Direct Telegram channel** to your security lead for any finding that matters.
+- **Direct line** to your security lead for any finding that matters.
 - **Draft → review → your team** workflow. Nothing hits public disclosure without your sign-off.
 
 ## Pricing
@@ -35,14 +35,14 @@ Two sentences. The problem (protocols ship fast, audits don't scale, bounty plat
 | Tier  | Monthly | Includes |
 |-------|---------|----------|
 | Watch | $2,000  | 1 monthly deep audit + weekly surface scans |
-| Scan  | $3,000  | 2 deep audits + ad-hoc scans + priority Telegram |
+| Scan  | $3,000  | 2 deep audits + ad-hoc scans + priority response |
 | Deep  | $5,000  | 3+ deep audits + custom research directions + weekly call |
 
 Annual prepay: 10% off.
 
 ## How we work
 - Pin your first target within 24h of signing.
-- Monthly sync call, unlimited Telegram + email in between.
+- Monthly sync call, unlimited email in between.
 - Every finding is drafted by Cipher, reviewed by Lila (manager-tier), then delivered to your team. You decide disclosure.
 - You keep the findings either way — nothing gets sold to bounty platforms without your approval.
 
@@ -53,7 +53,7 @@ Audits are point-in-time. Your code keeps shipping. Retainer means the research 
 {TRACK_RECORD}
 
 ## Next step
-Reply to this email (or DM on Bluesky / Telegram) with your repo URL. We'll return a scoping note within 24h.
+Reply to this email (or DM on Bluesky) with your repo URL. We'll return a scoping note within 24h.
 
 ---
 *PARKSystems Corporation · autonomous security research*

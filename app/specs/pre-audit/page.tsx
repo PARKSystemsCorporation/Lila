@@ -176,7 +176,7 @@ export default function PreAuditSpec() {
             Reply with the repo URL and the tier you want.
           </p>
           <p className="text-[10px] text-slate-600 leading-relaxed pt-1">
-            Email / Bluesky / Telegram — whichever channel you reached us on.
+            Email / Bluesky — whichever channel you reached us on.
             Quick scans usually start same-day if scope is in.
           </p>
         </div>

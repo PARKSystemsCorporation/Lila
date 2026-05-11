@@ -1352,93 +1352,6 @@ interface BroadcastData {
 
 const CHANNEL_STYLE: Record<string, string> = {
   bluesky:  'bg-blue-950 text-blue-300 border-blue-900',
-  telegram: 'bg-sky-950 text-sky-300 border-sky-900',
-}
-
-// ─── Telegram card — connectivity check + one-tap test ────────────────────────
-
-interface TelegramStatus {
-  configured: boolean
-  missing: string[]
-}
-
-function TelegramCard() {
-  const [status, setStatus] = useState<TelegramStatus | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/telegram/test')
-      if (res.ok) setStatus(await res.json())
-    } catch { /* ignore */ }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const runTest = async () => {
-    setBusy(true)
-    setResult(null)
-    try {
-      const res = await fetch('/api/telegram/test', { method: 'POST' })
-      const d = await res.json().catch(() => ({}))
-      if (res.ok && d.ok) {
-        setResult({ ok: true, msg: 'Check your Telegram — message sent.' })
-      } else {
-        setResult({ ok: false, msg: d.error ?? `HTTP ${res.status}` })
-      }
-    } catch (e) {
-      setResult({ ok: false, msg: String(e) })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Telegram</p>
-          <p className="text-[10px] font-mono text-slate-600 mt-0.5">
-            Vega picks + broadcast mirror
-          </p>
-        </div>
-        <span className={`text-[9px] font-mono px-2 py-0.5 rounded border ${
-          status?.configured
-            ? 'bg-emerald-950 text-emerald-400 border-emerald-900'
-            : 'bg-slate-800 text-slate-500 border-slate-700'
-        }`}>
-          {status?.configured ? 'CONNECTED' : 'NOT SET'}
-        </span>
-      </div>
-
-      {status && !status.configured && status.missing.length > 0 && (
-        <p className="text-[10px] font-mono text-slate-600 leading-relaxed">
-          Set on Railway: {status.missing.join(' + ')}. Full setup guide in <span className="text-slate-400">.env.example</span>.
-        </p>
-      )}
-
-      <button
-        onClick={runTest}
-        disabled={busy || !status?.configured}
-        className="w-full text-[10px] font-mono bg-emerald-700 text-white rounded-lg py-2 active:bg-emerald-600 disabled:bg-slate-800 disabled:text-slate-600"
-      >
-        {busy ? 'Sending…' : 'Send test message'}
-      </button>
-
-      {result && (
-        <p className={`text-[10px] font-mono leading-relaxed ${result.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-          {result.ok ? '✓ ' : '✗ '}{result.msg}
-        </p>
-      )}
-
-      {status?.configured && !result && (
-        <p className="text-[10px] font-mono text-slate-600 leading-relaxed">
-          Vega fires picks on F0 cycles; Broadcast mirrors hourly status. Tap test if you&apos;ve just added the keys.
-        </p>
-      )}
-    </div>
-  )
 }
 
 // ─── Bluesky card — test auth without leaving a public skeet ──────────────────
@@ -2735,7 +2648,6 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
           <PendingBroadcastCard />
           <BroadcastCard />
           <BlueskyCard />
-          <TelegramCard />
           <TargetCard onNavigate={onNavigate} />
           <DiscoveryCard />
         </Section>
@@ -5551,11 +5463,10 @@ const TERM_HELP = [
   '  loops               last-fired timestamps for every loop',
   '  post                fire a broadcast NOW (skips hourly gate)',
   '  verify bluesky      auth check (post + auto-delete)',
-  '  verify telegram     auth check (sends a test message)',
   '  pitch retainer      regenerate the retainer one-pager',
   '  article             draft an article from latest finished research',
   '  watchlist refresh   force discovery scan now',
-  '  say <text>          post <text> to Bluesky + Telegram immediately',
+  '  say <text>          post <text> to Bluesky immediately',
   '  ceelo seed          seed Ceelo historical NFL ratings',
   '  clear               wipe scrollback',
   '  help                this list',
@@ -5567,7 +5478,7 @@ const TERM_HELP = [
 // operator. Workflow:
 //   approve → Lila reads it on her next tick and posts a 2-4 sentence
 //             report to the chat (kind='message', shows up as Lila's
-//             reply in the Chat tab + Telegram bridge).
+//             reply in the Chat tab).
 //   deny    → operator captures a comment so the agent's future drafts
 //             can avoid the dead-end direction. (Agent prompts can pull
 //             recentDenials() from lib/desk.ts when generating.)
@@ -5919,14 +5830,6 @@ function TerminalTab({ visible }: { visible: boolean }) {
         const d = await res.json().catch(() => ({}))
         append(cmd,
           d.ok ? (d.error ? `OK: ${d.error}` : 'OK · post + auto-delete succeeded')
-               : `FAIL: ${d.error ?? res.status}`,
-          d.ok ? 'ok' : 'err'
-        )
-      } else if (lower === 'verify telegram' || lower === 'verify tg') {
-        const res = await fetch('/api/telegram/test', { method: 'POST' })
-        const d = await res.json().catch(() => ({}))
-        append(cmd,
-          d.ok ? 'OK · check Telegram'
                : `FAIL: ${d.error ?? res.status}`,
           d.ok ? 'ok' : 'err'
         )

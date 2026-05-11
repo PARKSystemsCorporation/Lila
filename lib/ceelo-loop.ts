@@ -1040,28 +1040,6 @@ export class CeeloLoop {
         ]
       )
 
-      // Emit a real-time broadcast alert for the operator. NFL picks
-      // render the full Walters block; non-NFL picks keep the legacy
-      // short form.
-      const alertMsg = w
-        ? [
-            `🚨 Ceelo Edge Alert`,
-            `${game_label} — ${side}`,
-            ``,
-            `Sierra Line: ${fmtSpread(model)}  |  Book: ${fmtSpread(book)} (${r.book})`,
-            `Raw PR Diff: ${signedFixed(w.rawPrDiff, 2)}`,
-            `Situational Sum: ${signedFixed(w.situationalSum, 2)}${w.adjustmentsLabel ? ` (${w.adjustmentsLabel})` : ''}`,
-            `Market Edge: ${Math.abs(edge).toFixed(1)} pts toward ${takeHome ? 'home' : 'away'} (${conf})`,
-            `Kelly: ${units}u @ ${fmtAmericanOdds(sideOdds)}`,
-          ].join('\n')
-        : `🚨 Ceelo Edge Alert\n${game_label} — ${side}\n\nModel: ${fmtSpread(model)}\nBook: ${fmtSpread(book)} (${r.book})\nEdge: ${Math.abs(edge).toFixed(1)} pts (${conf})`
-
-      await this.db.query(
-        `INSERT INTO broadcasts (channel, content, status, scheduled_publish_at)
-         VALUES ('telegram', $1, 'pending_publish', NOW())`,
-        [alertMsg]
-      )
-
       inserted++
     }
     return inserted > 0 ? `C4 ${inserted} picks` : ''
