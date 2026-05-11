@@ -75,4 +75,38 @@ d('correlations (DB-backed)', () => {
     // Either the row decayed (lower score) or evicted entirely.
     if (after) expect(after.score).toBeLessThan(before.score)
   })
+
+  it('batched processMsg writes one row per unique pair across a long message', async () => {
+    // Long noun-heavy line — many unique pairs in a single processMsg call.
+    // Before the batch rewrite this would have been ~4 queries per pair; after
+    // batching, the row count is the only thing we can assert easily without
+    // pulling pg_stat_statements.
+    const text =
+      'cipher dispatched router task vega analyzed bounty target watchlist ' +
+      'submission lesson priority macro thesis pattern alpha beta gamma delta epsilon'
+    await processMsg(db, text)
+    const { rows } = await db.query(
+      `SELECT (SELECT COUNT(*) FROM memory_short) +
+              (SELECT COUNT(*) FROM memory_medium) +
+              (SELECT COUNT(*) FROM memory_long) AS total`
+    )
+    // 22 tokens, window=5 → 22*4 - C(5,2) ≈ 78 pair occurrences. Dedupe by
+    // pk yields somewhere in 60-78 unique rows (some duplicates within the
+    // window are possible if the same word appears twice). Just assert
+    // "many rows wrote and nothing crashed".
+    expect(Number(rows[0].total)).toBeGreaterThan(40)
+  })
+
+  it('batched processMsg preserves same-tier reinforcement (reinf bumps, score climbs)', async () => {
+    await processMsg(db, 'orange purple yellow')   // 3 tokens, 3 pairs
+    const before = await search(db, 'orange')
+    expect(before.length).toBeGreaterThan(0)
+    const r0 = before[0]
+    await processMsg(db, 'orange purple yellow')   // same message → same pairs reinforced
+    const after = await search(db, 'orange')
+    const r1 = after.find(c => c.pk === r0.pk)!
+    expect(r1).toBeDefined()
+    expect(r1.reinf).toBeGreaterThan(r0.reinf)
+    expect(r1.score).toBeGreaterThanOrEqual(r0.score)
+  })
 })

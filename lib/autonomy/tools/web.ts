@@ -1,6 +1,5 @@
 import { cfg } from '../../config'
-import { getPool } from '../../db'
-import { digest } from '../../memory/digest'
+import { enqueueDigest } from '../../memory/digest'
 
 // Real allowlisted web fetch. Hosts match by suffix on the URL hostname.
 // Size cap: 512 KB raw response. Timeout: 10s. HTML stripped to plain text
@@ -110,21 +109,17 @@ export async function fetchUrl(args: { url: string }): Promise<FetchResult> {
     const ct = (res.headers.get('content-type') ?? '').toLowerCase()
     const isHtml = ct.includes('text/html') || /<html[\s>]/i.test(body.slice(0, 200))
     const { title, text } = isHtml ? stripHtml(body) : { title: null, text: body.slice(0, 8000) }
-    if (res.ok && process.env.DATABASE_URL) {
-      // Best-effort memory ingest. Own connection so we don't depend on the
-      // caller having a db handle. Errors silently dropped.
-      void getPool().connect().then(async conn => {
-        try {
-          await digest(conn, {
-            source: 'web',
-            source_id: url,
-            actor: 'web',
-            text: `${title ?? ''}\n${text}`.trim().slice(0, 2000),
-            detail: text.slice(0, 4000),
-          })
-        } catch { /* swallow */ }
-        finally { conn.release() }
-      }).catch(() => { /* connect failed; ignore */ })
+    if (res.ok) {
+      // Best-effort memory ingest through the single-concurrency queue. The
+      // queue serializes digests so a research cycle hitting many URLs in
+      // parallel can't starve the pool (max 5 in lib/db.ts).
+      enqueueDigest({
+        source: 'web',
+        source_id: url,
+        actor: 'web',
+        text: `${title ?? ''}\n${text}`.trim().slice(0, 2000),
+        detail: text.slice(0, 4000),
+      })
     }
     return {
       url, ok: res.ok, status: res.status, title, text, bytes,

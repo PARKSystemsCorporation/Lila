@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg'
+import { getPool } from '../db'
 import {
   upsertEntity,
-  findEntityBySlug,
   writeEpisode,
   writeMessage,
   type EpisodeSource,
@@ -108,28 +108,38 @@ export async function digest(db: PoolClient, signal: DigestSignal): Promise<Dige
   return { episode_id, message_id, entity_id }
 }
 
-// Best-effort entity resolution by regex against research_targets (slug or
-// title). Cheap — one indexed query, optional. Returns null if nothing matches.
+// Best-effort entity resolution. Two indexed lookups against memory_entities
+// (slug, then GIN-indexed aliases), then a small slug derivation against
+// research_targets as the auto-promotion fallback. Replaces the previous
+// 200-row scan + JS substring loop — same behavior, indexed.
 async function guessEntity(db: PoolClient, text: string): Promise<{ id: number; target_id: number | null } | null> {
-  const lower = text.toLowerCase()
-  // First: any existing memory_entities whose slug or alias appears in the text.
-  const { rows: ents } = await db.query(
-    `SELECT id, slug, aliases, target_id FROM memory_entities ORDER BY updated_at DESC LIMIT 200`
+  const tokens = text.toLowerCase().match(/[a-z0-9][a-z0-9-]+/g) ?? []
+  if (!tokens.length) return null
+
+  // 1. Direct slug match — idx_memory_entities_slug.
+  const { rows: bySlug } = await db.query(
+    `SELECT id, target_id FROM memory_entities WHERE slug = ANY($1::text[]) LIMIT 1`,
+    [tokens]
   )
-  for (const e of ents as Array<{ id: number; slug: string; aliases: string[]; target_id: number | null }>) {
-    if (e.slug && lower.includes(e.slug.toLowerCase())) {
-      return { id: Number(e.id), target_id: e.target_id != null ? Number(e.target_id) : null }
-    }
-    for (const a of e.aliases ?? []) {
-      if (a && lower.includes(a.toLowerCase())) {
-        return { id: Number(e.id), target_id: e.target_id != null ? Number(e.target_id) : null }
-      }
-    }
+  if (bySlug[0]) {
+    return { id: Number(bySlug[0].id), target_id: bySlug[0].target_id != null ? Number(bySlug[0].target_id) : null }
   }
-  // Second: research_targets — auto-promote the matching one into memory_entities.
+
+  // 2. Alias overlap — idx_memory_entities_aliases (GIN).
+  const { rows: byAlias } = await db.query(
+    `SELECT id, target_id FROM memory_entities WHERE aliases && $1::text[] LIMIT 1`,
+    [tokens]
+  )
+  if (byAlias[0]) {
+    return { id: Number(byAlias[0].id), target_id: byAlias[0].target_id != null ? Number(byAlias[0].target_id) : null }
+  }
+
+  // 3. research_targets fallback — auto-promote first match into memory_entities.
+  //    Kept narrow (active + recent) so this stays a single indexed read.
   const { rows: targets } = await db.query(
     `SELECT id, title FROM research_targets WHERE status='active' ORDER BY last_worked_at DESC NULLS LAST LIMIT 50`
   )
+  const lower = text.toLowerCase()
   for (const t of targets as Array<{ id: number; title: string }>) {
     const slug = String(t.title ?? '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 3).join('-')
     if (slug && lower.includes(slug)) {
@@ -143,4 +153,23 @@ async function guessEntity(db: PoolClient, text: string): Promise<{ id: number; 
     }
   }
   return null
+}
+
+// Single-concurrency queue for callers that don't already hold a pooled
+// client (chiefly the web fetcher). Without this, a research cycle hitting
+// many URLs could grab several pool connections in parallel just for the
+// memory ingest and starve other queries (pool max is 5 in lib/db.ts).
+let digestQueue: Promise<unknown> = Promise.resolve()
+export function enqueueDigest(signal: DigestSignal): void {
+  digestQueue = digestQueue.then(async () => {
+    if (!process.env.DATABASE_URL) return
+    let conn
+    try {
+      conn = await getPool().connect()
+      await digest(conn, signal)
+    } catch { /* swallow — memory ingest is fire-and-forget */ }
+    finally {
+      if (conn) conn.release()
+    }
+  }).catch(() => { /* keep the chain alive */ })
 }

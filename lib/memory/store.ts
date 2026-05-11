@@ -138,19 +138,37 @@ export async function markRolledUp(
   )
 }
 
-// KIRA-style chat archive. Distinct from chat_messages — never auto-pruned,
-// holds the durable conversational record used by recall.
+// KIRA-style chat archive. Distinct from chat_messages — separate retention
+// model. Hard-capped at MEMORY_MESSAGES_CAP rows: every insert opportunistically
+// prunes anything older than the 1001st-newest row, so the archive stays
+// bounded without a separate retention job. No reader uses this table yet —
+// it's the durable buffer for a future raw-message recall path. Correlations
+// + episodes + summaries still preserve the conversational shape long after
+// raw rows leave.
 export interface WriteMessage {
   role: string
   content: string
   metadata?: Record<string, unknown>
 }
+const MEMORY_MESSAGES_CAP = 1000
+
 export async function writeMessage(db: PoolClient, m: WriteMessage): Promise<string> {
   const id = randomUUID()
   await db.query(
     `INSERT INTO memory_messages (id, role, content, created_at, metadata)
      VALUES ($1, $2, $3, $4, $5)`,
     [id, m.role, m.content, Date.now(), m.metadata ? JSON.stringify(m.metadata) : null]
+  )
+  // Trim trail. Sub-select avoids dragging 1000 IDs through Node and only
+  // deletes rows once the buffer is at or above cap (the OFFSET row simply
+  // doesn't exist below cap, so the WHERE clause matches nothing).
+  await db.query(
+    `DELETE FROM memory_messages
+       WHERE created_at < (
+         SELECT created_at FROM memory_messages
+          ORDER BY created_at DESC OFFSET $1 LIMIT 1
+       )`,
+    [MEMORY_MESSAGES_CAP]
   )
   return id
 }

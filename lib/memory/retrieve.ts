@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { memoryContext, recallCorrelations, type Correlation } from './correlations'
+import { recallCorrelations, type Correlation } from './correlations'
 
 // Lila-specific recall. Composes three channels:
 //   1. KIRA correlation lookup — the word-pair association graph.
@@ -57,9 +57,13 @@ export async function recall(db: PoolClient, q: RecallQuery): Promise<RecallHits
   const k_episodes     = q.k_episodes     ?? 5
   const k_summaries    = q.k_summaries    ?? 2
 
-  // 1. Correlation channel ----------------------------------------------------
+  // 1. Correlation channel — single batched UNION-ALL across tiers (one
+  //    query for the whole channel; was 1 + N before).
   const correlations = await recallCorrelations(db, q.text, k_correlations)
-  const context_line = await memoryContext(db, q.text, k_correlations)
+  const context_line = correlations.length
+    ? 'Things you remember: ' +
+        correlations.map(c => `${c.w1} and ${c.w2} are connected`).join('; ') + '.'
+    : ''
 
   // 2. Recency channel — recent episodes, cross-target by default ------------
   const params: unknown[] = []

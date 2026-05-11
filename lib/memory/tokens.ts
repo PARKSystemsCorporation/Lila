@@ -33,6 +33,7 @@ const POS_FAMILY: Record<string, string> = {
 // dep is missing (e.g. CI without devDeps installed).
 type Tagger = { tagSentence: (s: string) => Array<{ value: string; tag: string }> }
 let cachedTagger: Tagger | null | undefined  // undefined = not tried, null = tried & unavailable
+let warnedNoTagger = false
 
 function getTagger(): Tagger | null {
   if (cachedTagger !== undefined) return cachedTagger
@@ -43,7 +44,25 @@ function getTagger(): Tagger | null {
   } catch {
     cachedTagger = null
   }
+  if (cachedTagger === null && !warnedNoTagger) {
+    warnedNoTagger = true
+    // One-shot stderr note. Don't reach for lila_log here — that would couple
+    // the tokenizer to a DB pool and pull on cold-start cycles.
+    if (typeof console !== 'undefined') {
+      console.warn('[memory.tokens] wink-pos-tagger unavailable; using suffix-heuristic POS fallback')
+    }
+  }
   return cachedTagger
+}
+
+// Cheap suffix rules so the fallback path still produces sensible POS
+// families. Without this, every fallback token gets 'noun', killing the
+// noun+noun=0.3 cat-bonus distinctions and the adj/verb tiers.
+function suffixPos(w: string): string {
+  if (/(ing|ed|ize|ise|ate)$/.test(w)) return 'verb'
+  if (/ly$/.test(w)) return 'adv'
+  if (/(ous|ful|less|ive|able|al|ic)$/.test(w)) return 'adj'
+  return 'noun'
 }
 
 export function tokenize(text: string): Token[] {
@@ -66,12 +85,10 @@ export function tokenize(text: string): Token[] {
       }))
   }
 
-  // Fallback: whitespace split, no POS tags. spos defaults to 'noun' so the
-  // scoring formula still produces something sensible.
   return clean
     .split(/\s+/)
     .filter(w => w && !STOPS.has(w) && w.length >= 3)
-    .map((w, i) => ({ word: w, pos: '', spos: 'noun', idx: i }))
+    .map((w, i) => ({ word: w, pos: '', spos: suffixPos(w), idx: i }))
 }
 
 // Sorted pair key — same convention as 2dkira `[a.word, b.word].sort().join('_')`.
