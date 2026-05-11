@@ -25,6 +25,8 @@ function isViewerPath(pathname: string): boolean {
   return (
     pathname === '/local' ||
     pathname.startsWith('/local/') ||
+    pathname === '/handicappers' ||
+    pathname.startsWith('/handicappers/') ||
     pathname === '/viewer' ||
     pathname.startsWith('/viewer/') ||
     pathname === '/marketplace' ||

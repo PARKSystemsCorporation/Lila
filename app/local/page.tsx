@@ -96,6 +96,29 @@ export default function LocalPage() {
         </div>
       </section>
 
+      {/* The locals — people who work the room. */}
+      <section className="relative px-5 sm:px-8 py-12 max-w-7xl mx-auto">
+        <div className="mb-6 flex items-baseline justify-between gap-4">
+          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-rose-400/90 uppercase">
+            ▌▌▌ the locals
+          </p>
+          <p className="hidden sm:block font-mono text-[10px] tracking-[0.32em] text-slate-500 uppercase">
+            people · around · the · park
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+          <LocalCard
+            href="/handicappers"
+            name="Morgan Tanaka"
+            role="handicapper · the fade"
+            tagline="Fades the public opinion."
+            initials="MT"
+            chip="fade"
+          />
+        </div>
+      </section>
+
       {/* Supporting doors — the legacy /thepark hub, condensed. */}
       <section className="relative px-5 sm:px-8 py-12 max-w-7xl mx-auto">
         <p className="font-mono text-[10px] tracking-[0.45em] text-amber-500/80 uppercase mb-4">
@@ -204,6 +227,74 @@ function Feature({ icon, title, body }: { icon: JSX.Element; title: string; body
       <h4 className="font-mono text-[11px] tracking-[0.32em] uppercase text-white">{title}</h4>
       <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-[18ch]">{body}</p>
     </div>
+  )
+}
+
+function LocalCard({
+  href, name, role, tagline, initials, chip,
+}: {
+  href: string
+  name: string
+  role: string
+  tagline: string
+  initials: string
+  chip: string
+}) {
+  return (
+    <Link
+      href={href}
+      className="group relative border-2 border-rose-500/40 hover:border-rose-300 bg-slate-950/70 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_0_60px_-15px_rgba(244,63,94,0.55)] overflow-hidden"
+    >
+      <div className="relative aspect-[3/4] overflow-hidden border-b border-slate-800/80">
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(120% 80% at 50% 0%, rgba(244,63,94,0.18), transparent 60%), linear-gradient(180deg, #15161f 0%, #0a0c14 100%)',
+          }}
+        />
+        <div
+          className="absolute inset-0 opacity-[0.12] mix-blend-overlay"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(45deg, rgba(255,255,255,0.6) 0 1px, transparent 1px 6px)',
+          }}
+        />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="font-mono text-[clamp(4rem,12vw,7rem)] font-black tracking-tight text-white/10 group-hover:text-white/20 transition-colors leading-none">
+            {initials}
+          </span>
+        </div>
+        <div className="absolute top-3 left-3 flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shadow-[0_0_10px_currentColor]" />
+          <span className="font-mono text-[9px] tracking-[0.3em] uppercase text-rose-300">local</span>
+        </div>
+        <div
+          className="absolute bottom-0 inset-x-0 h-1/2 pointer-events-none"
+          style={{ background: 'linear-gradient(180deg, transparent, rgba(10,12,20,0.85) 80%)' }}
+        />
+      </div>
+
+      <div className="relative p-4 sm:p-5">
+        <div className="flex items-baseline justify-between gap-3 mb-2">
+          <h3 className="text-xl sm:text-2xl font-black tracking-tight text-white leading-tight uppercase">
+            {name}
+          </h3>
+          <span className="font-mono text-[9px] tracking-[0.3em] uppercase px-1.5 py-0.5 border border-rose-500/50 text-rose-200 whitespace-nowrap">
+            {chip}
+          </span>
+        </div>
+        <div className="font-mono text-[10px] sm:text-[11px] tracking-[0.3em] text-slate-500 uppercase mb-3">
+          {role}
+        </div>
+        <p className="text-sm text-slate-300 leading-relaxed">{tagline}</p>
+
+        <div className="mt-4 border-t border-slate-800 pt-3 flex items-center justify-between font-mono text-[9px] tracking-[0.32em] uppercase text-slate-600">
+          <span>{href}</span>
+          <span className="group-hover:text-rose-300 transition-colors">open →</span>
+        </div>
+      </div>
+    </Link>
   )
 }
 
