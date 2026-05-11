@@ -16,6 +16,29 @@ export async function reply(db: PoolClient, args: ReplyArgs): Promise<{ logMessa
   if (cfg.LILA_DRY_RUN) {
     return { logMessage: `[dry-run] operator.reply "${text.slice(0, 60)}"` }
   }
+  // Plans are queued one tick at a time. By the time this step fires, the
+  // streaming /api/chat path (or any other reply path) may already have
+  // posted a Lila reply to the latest operator turn. Without this guard,
+  // both paths insert and the operator sees the same answer twice.
+  // Mirrors ManagementLoop.replyToOperator's pre-INSERT recheck.
+  const { rows: latestOp } = await db.query(
+    `SELECT created_at FROM chat_messages
+      WHERE thread='main' AND kind='message' AND sender <> 'lila'
+        AND created_at > NOW() - INTERVAL '20 minutes'
+      ORDER BY created_at DESC LIMIT 1`
+  )
+  if (latestOp.length > 0) {
+    const { rows: alreadyReplied } = await db.query(
+      `SELECT 1 FROM chat_messages
+        WHERE thread='main' AND kind='message' AND sender='lila'
+          AND created_at > $1::timestamptz
+        LIMIT 1`,
+      [latestOp[0].created_at]
+    )
+    if (alreadyReplied.length > 0) {
+      return { logMessage: 'operator.reply skipped — reply already landed' }
+    }
+  }
   await db.query(
     `INSERT INTO chat_messages (sender, content, thread, kind)
      VALUES ('lila', $1, 'main', 'message')`,
