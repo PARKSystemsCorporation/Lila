@@ -8,6 +8,10 @@ export interface AutonomyContext {
   utc:                 string
   weekday:             string
   hour:                number
+  // Operator's sticky note + open macro thesis. Same fields are also
+  // prefixed onto every Cipher / Vega LLM call via lib/agent-brief.
+  priority:            string | null
+  macro_thesis:        string | null
   inbound:             { id: number; category: string | null; title: string; summary: string | null }[]
   approvals:           { id: number; from_agent: string; title: string }[]
   unanswered_operator: { ts: string; text: string } | null
@@ -24,6 +28,10 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export async function buildContext(db: PoolClient): Promise<AutonomyContext> {
   const now = new Date()
+
+  const { rows: [pri] } = await db.query(
+    `SELECT current_priority, macro_thesis FROM lila_state WHERE id=1`
+  )
 
   const { rows: inbound } = await db.query(
     `SELECT id, category, title, summary
@@ -101,9 +109,11 @@ export async function buildContext(db: PoolClient): Promise<AutonomyContext> {
   }
 
   return {
-    utc:     now.toISOString(),
-    weekday: WEEKDAYS[now.getUTCDay()],
-    hour:    now.getUTCHours(),
+    utc:          now.toISOString(),
+    weekday:      WEEKDAYS[now.getUTCDay()],
+    hour:         now.getUTCHours(),
+    priority:     pri?.current_priority ?? null,
+    macro_thesis: pri?.macro_thesis     ?? null,
     inbound: inbound.map((r: { id: number; category: string | null; title: string; summary: string | null }) => ({
       id: Number(r.id), category: r.category, title: r.title, summary: r.summary,
     })),
@@ -129,6 +139,8 @@ export async function buildContext(db: PoolClient): Promise<AutonomyContext> {
 export function renderContext(ctx: AutonomyContext): string {
   const lines: string[] = []
   lines.push(`utc=${ctx.utc} (${ctx.weekday} ${ctx.hour}h)`)
+  lines.push(`priority: ${ctx.priority ?? 'none'}`)
+  if (ctx.macro_thesis) lines.push(`macro_thesis: ${ctx.macro_thesis}`)
   lines.push(`active_plan=${ctx.active_plan ? `${ctx.active_plan.branch_path} (${ctx.active_plan.remaining} pending)` : 'none'}`)
   if (ctx.unanswered_operator) {
     lines.push(`unanswered_operator: "${ctx.unanswered_operator.text}"`)

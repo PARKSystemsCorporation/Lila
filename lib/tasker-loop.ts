@@ -5,6 +5,7 @@ import { fetchAllBounties, type UnifiedBounty } from './bounties-fetch'
 import { ResearchEngine } from './research-engine'
 import { llmCall, LLMBudgetExceeded } from './llm'
 import { cfg } from './config'
+import { buildCipherBrief, renderBrief } from './agent-brief'
 
 // ── Cipher autonomy loop ──────────────────────────────────────────────────────
 //
@@ -41,6 +42,10 @@ Rules:
 export class TaskerLoop {
   private db: PoolClient
   private ai: OpenAI | null
+  // Per-tick rendered brief. Built lazily on first llm() call, cleared
+  // at the end of run(). Cap is applied at injection time in llm(), not
+  // here — keeps renderBrief honest as a pure formatter.
+  private briefPrefix: string | null = null
 
   constructor(db: PoolClient) {
     this.db = db
@@ -69,10 +74,12 @@ export class TaskerLoop {
       }
     } catch (e) {
       await this.advance(step)
+      this.briefPrefix = null
       return { step, logMessage: `Cipher ${step} error: ${String(e)}`, logType: 'warn' }
     }
 
     await this.advance(next)
+    this.briefPrefix = null
     return { step, logMessage: `Cipher ${step}: ${result.logMessage}`, logType: result.logType }
   }
 
@@ -352,11 +359,23 @@ export class TaskerLoop {
   // ── helpers ────────────────────────────────────────────────────────────────
 
   private async llm(module: string, prompt: string, maxTokens: number): Promise<string> {
+    // Build the brief prefix once per tick. Capped at 800 chars at
+    // injection so a verbose brief can't crowd out the actual prompt.
+    if (this.briefPrefix === null) {
+      try {
+        this.briefPrefix = renderBrief(await buildCipherBrief(this.db)).slice(0, 800)
+      } catch {
+        this.briefPrefix = ''
+      }
+    }
+    const finalPrompt = this.briefPrefix
+      ? `${this.briefPrefix}\n---\n${prompt}`
+      : prompt
     try {
       const { content } = await llmCall({
         ai: this.ai!,
         module,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: finalPrompt }],
         max_tokens: maxTokens,
         temperature: 0.4,
       })

@@ -1046,6 +1046,16 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS autonomy_paused BOOLEAN     NOT NULL DEFAULT FALSE;
     ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS paused_at       TIMESTAMPTZ;
 
+    -- Shared coordination primitives readable by all three agents (Lila,
+    -- Cipher, Vega). current_priority is the operator's "sticky note" — a
+    -- single directive that surfaces in every agent's prompt prefix so a
+    -- new instruction doesn't need to be relayed twice. macro_thesis is
+    -- the operator's currently-open market thesis, mirrored into Vega's
+    -- brief. Provenance for both lives in memory_episodes (source=
+    -- 'priority_set' | 'thesis_set'); no audit columns here.
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS current_priority TEXT;
+    ALTER TABLE lila_state ADD COLUMN IF NOT EXISTS macro_thesis     TEXT;
+
     -- ── Memory layer (port of PARKSystemsCorporation/2dkira) ────────────
     -- Three-tier word-pair correlation store + Lila-specific extensions
     -- (entities, episodes, summaries, durable message archive). All tables

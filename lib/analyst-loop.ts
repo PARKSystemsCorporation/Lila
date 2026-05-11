@@ -6,16 +6,8 @@ import { cfg } from './config'
 import * as Telegram from './channels/telegram'
 import { digest } from './memory/digest'
 import { maybeRunSummaries } from './memory/summarize'
-
-// ── Vega watchlist ─────────────────────────────────────────────────────────
-// No biotech, no retail. Commodity ETFs + leveraged index + global macro only.
-
-const WATCHLIST = {
-  commodity: ['GLD', 'SLV', 'USO', 'GDX', 'UNG', 'CPER', 'PDBC'],
-  leveraged:  ['SPXL', 'TQQQ', 'UPRO', 'QLD', 'SOXL'],
-  macro:      ['TLT', 'HYG', 'UUP', 'EEM', 'EFA', 'FXI', 'EWJ', 'VWO'],
-}
-const ALL = [...WATCHLIST.commodity, ...WATCHLIST.leveraged, ...WATCHLIST.macro]
+import { WATCHLIST_ALL as ALL } from './analyst-watchlist'
+import { buildVegaBrief, renderBrief } from './agent-brief'
 
 const MAX_CYCLES = 11  // cycles before maintenance
 
@@ -26,6 +18,9 @@ export type AnalystStep = 'T0' | 'T1' | 'T2' | 'T3' | 'F0' | 'M0' | 'M1'
 export class AnalystLoop {
   private ai: OpenAI
   private db: PoolClient
+  // Per-tick rendered brief. Built lazily on first llm() call, cleared
+  // at the end of run(). Cap is applied at injection time in llm().
+  private briefPrefix: string | null = null
 
   constructor(db: PoolClient) {
     this.db = db
@@ -61,6 +56,7 @@ export class AnalystLoop {
         default:   result = 'State reset.';             next = 'T0'
       }
     } catch (e) {
+      this.briefPrefix = null
       return { logMessage: `Vega ${step} error: ${String(e)}`, logType: 'warn' }
     }
 
@@ -68,6 +64,7 @@ export class AnalystLoop {
       'UPDATE analyst_state SET step=$1, cycle=$2, last_step_at=NOW(), updated_at=NOW() WHERE id=1',
       [next, nextCycle]
     )
+    this.briefPrefix = null
     return { logMessage: `Vega ${step}: ${result}`, logType: step === 'F0' || step === 'M1' ? 'success' : 'info' }
   }
 
@@ -297,11 +294,24 @@ export class AnalystLoop {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   private async llm(module: string, prompt: string, maxTokens: number): Promise<string> {
+    // Build the brief prefix once per tick. Capped at 800 chars so it
+    // can't crowd out the prompt body. The `---` separator delimits
+    // the brief from JSON-shape instructions further down.
+    if (this.briefPrefix === null) {
+      try {
+        this.briefPrefix = renderBrief(await buildVegaBrief(this.db)).slice(0, 800)
+      } catch {
+        this.briefPrefix = ''
+      }
+    }
+    const finalPrompt = this.briefPrefix
+      ? `${this.briefPrefix}\n---\n${prompt}`
+      : prompt
     try {
       const { content } = await llmCall({
         ai: this.ai,
         module,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: finalPrompt }],
         max_tokens: maxTokens,
         temperature: 0.3,
       })

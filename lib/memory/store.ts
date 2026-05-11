@@ -11,6 +11,7 @@ export type EntityKind =
   | 'bounty' | 'codebase' | 'person' | 'token' | 'agent' | 'topic'
 export type EpisodeSource =
   | 'chat' | 'desk' | 'research_note' | 'analyst_note' | 'web' | 'telegram' | 'broadcast'
+  | 'priority_set' | 'thesis_set' | 'lesson'
 export type SummaryLevel = 'hour' | 'day' | 'week' | 'month'
 
 export interface UpsertEntity {
