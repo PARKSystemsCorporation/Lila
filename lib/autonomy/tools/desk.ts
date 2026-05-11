@@ -4,8 +4,7 @@ import * as Desk from '../../desk'
 import { processApprovedItems } from '../../desk'
 
 // Desk tools the autonomy tree calls. These are thin — heavy lifting lives
-// in lib/desk.ts (which the legacy ManagementLoop also uses, so the tree
-// inherits the same approval / report semantics).
+// in lib/desk.ts so the file/submit/approve semantics stay centralized.
 
 export interface DeskFileArgs {
   title: string

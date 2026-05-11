@@ -84,7 +84,7 @@ Open `http://localhost:3000/login` and sign in with your `AUTH_PASSWORD`.
                    └───────────────┬───────────────┘
                                    │ chat
                    ┌───────────────▼───────────────┐
-                   │    Lila (ManagementLoop)      │
+                   │    Lila (autonomy tree)       │
                    │  replies · reviews · trades   │
                    │    proactive check-ins        │
                    └───────┬───────┬───────┬───────┘
@@ -240,8 +240,7 @@ See [`.env.example`](.env.example) for the full commented reference.
 
 **Tuning knobs** (all optional, defaults sensible):
 `TASKER_STEP_SEC`, `RESEARCH_CYCLE_SEC`, `FORGE_RUN_SEC`, `SCOUT_RUN_SEC`,
-`SCOUT_DRY_HOURS`, `MANAGEMENT_CHECK_SEC`, `MANAGEMENT_TRADE_SEC`,
-`ANALYST_STEP_MIN`, `BROADCAST_INTERVAL_MIN`, `AUTONOMY_TICK_MS`,
+`SCOUT_DRY_HOURS`, `ANALYST_STEP_MIN`, `BROADCAST_INTERVAL_MIN`, `AUTONOMY_TICK_MS`,
 `DAILY_LLM_BUDGET_USD`, `ENABLE_AUTONOMY_TICKER`, `ENABLE_BROADCAST`.
 
 ## Cost discipline

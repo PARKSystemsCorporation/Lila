@@ -3,9 +3,9 @@ import { getPool, ensureSchema } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
-// Per-kind funnel metrics so the operator (and ManagementLoop) can see
-// whether docs are converting. Flags are mechanical thresholds, not
-// opinions — the UI decides how loud to be about them.
+// Per-kind funnel metrics so the operator (and Lila's autonomy tree)
+// can see whether docs are converting. Flags are mechanical thresholds,
+// not opinions — the UI decides how loud to be about them.
 //
 // Thresholds (for docs):
 //   attempts >= 3 and 0 paid            → flag 'no-payouts'

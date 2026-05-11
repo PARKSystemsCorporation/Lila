@@ -17,7 +17,7 @@ import { buildCipherBrief, renderBrief } from './agent-brief'
 //         one-shot execute via BountyEngine.
 //   BZ0 — post an execution status update to the team chat
 //
-// Trading, report review, operator replies all belong to Lila (ManagementLoop).
+// Trading, report review, operator replies all belong to Lila (autonomy tree).
 
 export type TaskerStep = 'BT0' | 'BH0' | 'BZ0'
 

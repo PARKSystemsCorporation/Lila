@@ -66,7 +66,7 @@ const DISPATCH: DispatchRow[] = [
   { step:  2, loop: 'AnalystLoop · Vega',     cadence: 'time-gated',     blurb: 'equities + commodity ETFs' },
   { step:  3, loop: 'TaskerLoop · Cipher',    cadence: 'time-gated',     blurb: 'security audits, files reports' },
   { step:  4, loop: 'ScoutLoop',              cadence: '5-min gate',     blurb: 'fetches Gitcoin + Algora, drafts PRs' },
-  { step:  5, loop: 'ManagementLoop · Lila',  cadence: 'priority-gated', blurb: 'reviews, replies, desk approvals', head: true },
+  { step:  5, loop: 'AutonomyLoop · Lila',    cadence: 'priority-gated', blurb: 'reviews, replies, desk approvals', head: true },
   { step:  6, loop: 'DmLoop',                 cadence: 'one DM / tick',  blurb: 'answers a queued marketplace DM' },
   { step:  7, loop: 'CeeloLoop',              cadence: '30-min cycle',   blurb: 'NFL handicapper math, no LLM' },
   { step:  8, loop: 'DiscoveryLoop',          cadence: 'daily',          blurb: 'protocol + repo scan' },

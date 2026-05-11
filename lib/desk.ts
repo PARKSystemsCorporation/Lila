@@ -14,9 +14,9 @@ import { digest } from './memory/digest'
 //
 // Operator side: /api/desk + /api/desk/[id]/{approve,deny}.
 //
-// Lila reads approved items via processApprovedItems(db) — runs in the
-// management-loop's high-priority path so reports show up in chat
-// within one tick of approval.
+// Lila reads approved items via processApprovedItems(db) — dispatched
+// from the autonomy tree's desk.process_approvals tool so reports show
+// up in chat within one tick of approval.
 
 export type DeskAgent = 'lila' | 'cipher' | 'vega' | 'scout' | 'ceelo'
 
@@ -157,9 +157,9 @@ export async function recentDenials(
   }))
 }
 
-// Lila reads + reports on every approved desk item. Called from the
-// management-loop priority path (after replyToOperator). One tick per
-// item — keeps token costs predictable.
+// Lila reads + reports on every approved desk item. Dispatched from the
+// autonomy tree via the desk.process_approvals tool. One tick per item
+// — keeps token costs predictable.
 export async function processApprovedItems(db: PoolClient): Promise<{ reported: number; logMessage?: string }> {
   if (!process.env.DEEPSEEK_API_KEY) return { reported: 0 }
   const ai = new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/v1' })

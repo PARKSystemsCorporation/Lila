@@ -18,9 +18,9 @@ import {
 // Forge pulls funded GitHub-issue bounties from Algora in the $50-$200
 // range tagged 'Bug' or 'Feature' (or GitHub's stock 'enhancement') and
 // drafts the FULL submission deliverable: a PR description in markdown
-// plus a unified diff. Lila reviews each draft (management-loop), and
-// when LILA_AUTO_SUBMIT=true + GITHUB_TOKEN is set, github-pr.ts opens
-// the PR.
+// plus a unified diff. Lila reviews each draft via the autonomy tree,
+// and when LILA_AUTO_SUBMIT=true + GITHUB_TOKEN is set, github-pr.ts
+// opens the PR.
 //
 // One step per cycle, time-gated by FORGE_RUN_SEC (default 5min):
 //   F0 — If queue has no 'discovered' rows authored by 'forge' OR

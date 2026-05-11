@@ -21,10 +21,6 @@ export const cfg = Object.freeze({
   // Minimum spacing between research cycles on the SAME pinned target.
   // Bigger = fewer deep-research burns, more room for cheap bounty work.
   RESEARCH_CYCLE_SEC:     num('RESEARCH_CYCLE_SEC', 180),
-  // Management proactive check-in interval.
-  MANAGEMENT_CHECK_SEC:   num('MANAGEMENT_CHECK_SEC', 300),
-  // Trade cycle interval (Lila).
-  MANAGEMENT_TRADE_SEC:   num('MANAGEMENT_TRADE_SEC', 900),
   // Vega step interval (minutes).
   ANALYST_STEP_MIN:       num('ANALYST_STEP_MIN', 2),
   // Ceelo run interval (minutes). State-machine cycle ticks; each step is
@@ -76,11 +72,6 @@ export const cfg = Object.freeze({
   ENABLE_RETENTION:       bool('ENABLE_RETENTION', true),
 
   // ── Autonomy tree ────────────────────────────────────────────────────────
-  // When true, agent-tick.ts uses AutonomyLoop (the hierarchical tree in
-  // lib/autonomy/) instead of the legacy ManagementLoop. ManagementLoop's
-  // helper methods (replyToOperator, processDeskApprovals, reviewOne,
-  // runTradeCycle, proactiveCheckIn) stay reachable via tree leaves.
-  LILA_AUTONOMY_TREE:     bool('LILA_AUTONOMY_TREE', true),
   // Reuse last-routed leaf for this many seconds when nothing changed
   // (no new inbound desk row, no unanswered operator message). Saves the
   // routing LLM call when the loop would otherwise repeat the same pick.

@@ -1,7 +1,6 @@
 // Local verification harness for the autonomy tree.
 //
-// Run with: LILA_DRY_RUN=true LILA_AUTONOMY_TREE=true \
-//           DATABASE_URL=... DEEPSEEK_API_KEY=... \
+// Run with: LILA_DRY_RUN=true DATABASE_URL=... DEEPSEEK_API_KEY=... \
 //           npx tsx scripts/dev-autonomy-tick.ts
 //
 // 1. ensureSchema applies the new ALTERs.

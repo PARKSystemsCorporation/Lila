@@ -26,13 +26,10 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [tasker, analyst, mgmt, broadcast, discovery, research] = await Promise.all([
+    const [tasker, analyst, autonomy, broadcast, discovery, research] = await Promise.all([
       db.query(`SELECT (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS ts FROM lila_loop_state WHERE id=1`),
       db.query(`SELECT (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS ts FROM analyst_state   WHERE id=1`),
-      db.query(`SELECT
-                  (EXTRACT(EPOCH FROM last_check_at) * 1000)::bigint AS check_ts,
-                  (EXTRACT(EPOCH FROM last_trade_at) * 1000)::bigint AS trade_ts
-                FROM management_state WHERE id=1`),
+      db.query(`SELECT (EXTRACT(EPOCH FROM last_route_at) * 1000)::bigint AS ts FROM management_state WHERE id=1`),
       db.query(`SELECT (EXTRACT(EPOCH FROM last_broadcast_at) * 1000)::bigint AS ts FROM broadcast_state WHERE id=1`),
       db.query(`SELECT (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS ts FROM discovery_state WHERE id=1`),
       db.query(`SELECT title, phase, (EXTRACT(EPOCH FROM last_worked_at) * 1000)::bigint AS ts
@@ -56,18 +53,11 @@ export async function GET() {
         next_at: nextAt(analyst.rows[0]?.ts, cfg.ANALYST_STEP_MIN * 60_000),
       },
       {
-        key: 'management.check',
-        label: 'Lila check-in',
-        last_at: mgmt.rows[0]?.check_ts ? Number(mgmt.rows[0].check_ts) : null,
-        interval_sec: cfg.MANAGEMENT_CHECK_SEC,
-        next_at: nextAt(mgmt.rows[0]?.check_ts, cfg.MANAGEMENT_CHECK_SEC * 1000),
-      },
-      {
-        key: 'management.trade',
-        label: 'Lila trade cycle',
-        last_at: mgmt.rows[0]?.trade_ts ? Number(mgmt.rows[0].trade_ts) : null,
-        interval_sec: cfg.MANAGEMENT_TRADE_SEC,
-        next_at: nextAt(mgmt.rows[0]?.trade_ts, cfg.MANAGEMENT_TRADE_SEC * 1000),
+        key: 'autonomy.tree',
+        label: 'Lila autonomy',
+        last_at: autonomy.rows[0]?.ts ? Number(autonomy.rows[0].ts) : null,
+        interval_sec: cfg.AUTONOMY_TICK_MS / 1000,
+        next_at: nextAt(autonomy.rows[0]?.ts, cfg.AUTONOMY_TICK_MS),
       },
       {
         key: 'research',

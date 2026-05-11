@@ -6,7 +6,6 @@ import { TaskerLoop } from './tasker-loop'
 import { ScoutLoop } from './scout-loop'
 import { ForgeLoop } from './forge-loop'
 import { ArtistLoop } from './artist-loop'
-import { ManagementLoop } from './management-loop'
 import { AutonomyLoop } from './autonomy/loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
@@ -149,14 +148,12 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(scoutResult.logMessage)
     }
 
-    // 4. Management Lila — replies to operator, proactive check-ins.
-    //    cfg.LILA_AUTONOMY_TREE swaps the legacy hard-coded sequence for
-    //    the hierarchical decision tree in lib/autonomy/. Both expose the
-    //    same { logMessage, logType, posted } shape so the surrounding
-    //    ticker doesn't care which one is active.
-    const mgmt = cfg.LILA_AUTONOMY_TREE ? new AutonomyLoop(db) : new ManagementLoop(db)
+    // 4. Lila — hierarchical decision tree in lib/autonomy/. Routes to
+    //    a leaf each tick, queues a 10-step plan, then advances one step
+    //    per tick until the plan drains.
+    const mgmt = new AutonomyLoop(db)
     const mgmtResult = await mgmt.run().catch((e: unknown) => ({
-      logMessage: `Management error: ${String(e)}`,
+      logMessage: `Autonomy error: ${String(e)}`,
       logType: 'warn' as const,
       posted: false,
     }))

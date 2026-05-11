@@ -16,9 +16,8 @@ import { extractTitle } from './article-engine'
 //
 // When both sources have been dry for SCOUT_DRY_HOURS (default 24h),
 // Scout switches modes and drafts a technical tutorial instead. Drafts
-// land in `articles` with kind='tutorial'; once Lila approves
-// (management-loop.reviewTutorialDraft), devto-publish.ts posts them
-// to dev.to.
+// land in `articles` with kind='tutorial'; once Lila approves via the
+// autonomy tree, devto-publish.ts posts them to dev.to.
 //
 // One step per cycle, time-gated by SCOUT_RUN_SEC (default 5min):
 //   S0 — Fetch new postings (RemoteOK → WWR fallback) when queue empty

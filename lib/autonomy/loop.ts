@@ -8,7 +8,7 @@ import { dispatch } from './dispatch'
 import { pickPath, gateAllows } from './router'
 import { resolveLeaf, PLAN_FORMAT_INSTRUCTIONS, type LeafNode, type ToolName } from './tree'
 
-// Replaces ManagementLoop.run() when cfg.LILA_AUTONOMY_TREE is true.
+// Lila's autonomy loop. Called once per agent tick from lib/agent-tick.ts.
 //
 //   1. resume: take the lowest pending step from lila_tasks, dispatch it.
 //   2. else: route to a leaf (with cache), then generate + persist a plan.
