@@ -23,6 +23,8 @@ function isViewerPath(pathname: string): boolean {
   if (pathname.startsWith('/thepark/operator')) return false
   if (pathname === '/thepark' || pathname.startsWith('/thepark/')) return true
   return (
+    pathname === '/local' ||
+    pathname.startsWith('/local/') ||
     pathname === '/viewer' ||
     pathname.startsWith('/viewer/') ||
     pathname === '/marketplace' ||
