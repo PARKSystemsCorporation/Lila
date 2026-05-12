@@ -337,8 +337,9 @@ const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
   { key: 'desk',     label: 'Desk',    Icon: IconDesk     },
 ]
 
-// Unified responsive primary nav. Phones: off-canvas drawer with scrim.
-// md+: in-flex rail, icon-only when closed, labels-visible when open.
+// Unified primary nav. Off-canvas drawer at every viewport: slides in
+// from the left over content, with a scrim, dismissed on scrim click,
+// Escape, or tab selection.
 function SideNav({ tab, onTab, badges, open, onClose }: {
   tab: Tab
   onTab: (t: Tab) => void
@@ -356,7 +357,7 @@ function SideNav({ tab, onTab, badges, open, onClose }: {
         <div
           onClick={onClose}
           aria-hidden
-          className="md:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm"
         />
       )}
       <nav
@@ -365,23 +366,18 @@ function SideNav({ tab, onTab, badges, open, onClose }: {
         aria-label="Primary"
         aria-hidden={!open}
         className={[
-          'flex shrink-0 flex-col border-r border-slate-800 bg-slate-950',
-          'transition-[transform,width] duration-200 ease-out',
-          'fixed inset-y-0 left-0 z-40 w-72',
+          'fixed inset-y-0 left-0 z-40 w-72 md:w-80',
+          'flex flex-col border-r border-slate-800 bg-slate-950',
+          'transition-transform duration-200 ease-out',
           open ? 'translate-x-0' : '-translate-x-full',
-          'md:static md:translate-x-0 md:z-auto',
-          open ? 'md:w-56' : 'md:w-20',
         ].join(' ')}
         style={{ paddingTop: 'max(16px, env(safe-area-inset-top))' }}
       >
-        <div className={`px-3 md:px-5 pb-4 ${open ? 'block' : 'hidden md:hidden'}`}>
+        <div className="px-5 pb-4">
           <p className="text-[9px] font-mono text-emerald-500/80 uppercase tracking-[0.32em]">▓ park</p>
           <p className="text-xs font-mono text-slate-500 mt-1">operator console</p>
         </div>
-        <div className={`px-3 pb-3 justify-center ${open ? 'hidden' : 'hidden md:flex'}`}>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-        </div>
-        <div className="flex-1 flex flex-col gap-1 px-2 md:px-3 overflow-y-auto">
+        <div className="flex-1 flex flex-col gap-1 px-3 overflow-y-auto">
           {TABS.map(({ key, label, Icon }) => {
             const active = tab === key
             const count = badges?.[key] ?? 0
@@ -389,11 +385,11 @@ function SideNav({ tab, onTab, badges, open, onClose }: {
               <button
                 key={key}
                 onClick={() => handlePick(key)}
-                className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors ${
+                className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors justify-start ${
                   active
                     ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/60'
                     : 'text-slate-500 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
-                } ${open ? 'justify-start' : 'justify-center md:justify-center'}`}
+                }`}
                 title={label}
               >
                 <div className="relative shrink-0">
@@ -404,7 +400,7 @@ function SideNav({ tab, onTab, badges, open, onClose }: {
                     </span>
                   )}
                 </div>
-                <span className={`text-[12px] font-mono tracking-widest uppercase ${open ? 'inline' : 'hidden'}`}>
+                <span className="text-[12px] font-mono tracking-widest uppercase">
                   {label}
                 </span>
               </button>
@@ -412,7 +408,7 @@ function SideNav({ tab, onTab, badges, open, onClose }: {
           })}
         </div>
         <div
-          className={`px-3 md:px-5 py-4 border-t border-slate-800/60 ${open ? 'block' : 'hidden md:hidden'}`}
+          className="px-5 py-4 border-t border-slate-800/60"
           style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
         >
           <p className="text-[9px] font-mono text-slate-700 tracking-[0.28em] uppercase">
@@ -6814,15 +6810,9 @@ export default function Home() {
   // the UI polls it every 5s and updates optimistically on click.
   const [paused, setPaused] = useState(false)
   const [pausing, setPausing] = useState(false)
-  // Primary nav state. Starts closed on every breakpoint to match SSR;
-  // a post-mount effect opens it on lg+ so desktop keeps its expanded rail.
+  // Primary nav drawer. Closed by default at every viewport; the hamburger
+  // in the header opens it, scrim/Escape/tab-pick closes it.
   const [navOpen, setNavOpen] = useState(false)
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
-      setNavOpen(true)
-    }
-  }, [])
 
   useEffect(() => {
     if (!navOpen) return
@@ -6998,9 +6988,8 @@ export default function Home() {
   }
 
   return (
-    // Root: collapsible primary nav + main column. Hamburger in the header
-    // toggles the nav: on phones it slides in as a drawer with a scrim, on
-    // md+ it expands the rail in place. The main column is centered and
+    // Root: full-bleed main column with a hamburger-triggered drawer that
+    // overlays content at every viewport. The main column is centered and
     // capped wider on iPad than the legacy 448px phone column.
     <div className="h-dvh flex bg-slate-950 select-none">
       <SideNav
