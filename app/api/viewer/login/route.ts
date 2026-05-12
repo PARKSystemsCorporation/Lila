@@ -28,11 +28,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'license_key required' }, { status: 400 })
   }
 
-  const productId = process.env.GUMROAD_PRODUCT_ID!
-  const secret    = process.env.VIEWER_COOKIE_SECRET!
+  // Trim defensively — env editors (Railway, .env files) routinely smuggle
+  // in trailing whitespace or newlines that Gumroad then rejects.
+  const productId = (process.env.GUMROAD_PRODUCT_ID ?? '').trim()
+  const secret    = (process.env.VIEWER_COOKIE_SECRET ?? '').trim()
 
   const result = await Gumroad.verifyLicense(productId, licenseKey, { incrementUses: false })
   if (!result.ok) {
+    // Tail-only product id so the log is useful without leaking the env value.
+    const tail = productId.slice(-4) || '(empty)'
+    console.warn(`[viewer/login] gumroad rejected key (product ...${tail}): ${result.error}`)
     return NextResponse.json({ error: result.error ?? 'Gumroad rejected the key.' }, { status: 401 })
   }
   if (!result.active) {
