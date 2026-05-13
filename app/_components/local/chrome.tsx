@@ -62,18 +62,18 @@ export function LocalShell({ title, subtitle, accent = 'amber', back, hero, chil
             <Link href="/" className="group flex items-center gap-2.5">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
               <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase group-hover:text-amber-300 transition-colors">
-                ▓ park · local
+                ▓ the park · members
               </span>
             </Link>
           )}
 
           {back && (
             <Link
-              href="/local"
+              href="/"
               className="hidden sm:block font-mono text-[10px] tracking-[0.32em] uppercase text-white"
-              aria-label="the park · local"
+              aria-label="the park"
             >
-              ▓ the park · <span className="text-amber-400">local</span>
+              ▓ the <span className="text-amber-400">park</span>
             </Link>
           )}
 
@@ -119,6 +119,23 @@ export function LocalShell({ title, subtitle, accent = 'amber', back, hero, chil
       )}
 
       {children}
+
+      <Link
+        href="/help"
+        className="group block border-t-2 border-red-500/40 hover:border-red-300 transition-colors"
+      >
+        <div className="mx-auto max-w-7xl px-5 sm:px-8 py-6 sm:py-8 flex items-center justify-between gap-4">
+          <div>
+            <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] uppercase text-red-400">
+              ▌▌▌ help
+            </p>
+            <h3 className="mt-2 text-[clamp(1.6rem,4vw,2.4rem)] font-black tracking-tight uppercase text-white group-hover:text-red-200 transition-colors">
+              i&rsquo;ve signed up, now what?
+            </h3>
+          </div>
+          <span className="font-mono text-2xl text-red-400 group-hover:translate-x-0.5 transition-transform">→</span>
+        </div>
+      </Link>
 
       <footer
         className="px-5 sm:px-8 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 font-mono text-[9px] sm:text-[10px] tracking-[0.32em] uppercase text-slate-700 border-t border-slate-900"

@@ -23,8 +23,9 @@ function isViewerPath(pathname: string): boolean {
   if (pathname.startsWith('/thepark/operator')) return false
   if (pathname === '/thepark' || pathname.startsWith('/thepark/')) return true
   return (
-    pathname === '/local' ||
-    pathname.startsWith('/local/') ||
+    pathname === '/theyield' ||
+    pathname.startsWith('/theyield/') ||
+    pathname === '/help' ||
     pathname === '/handicappers' ||
     pathname.startsWith('/handicappers/') ||
     pathname === '/viewer' ||
@@ -41,6 +42,17 @@ function isViewerPath(pathname: string): boolean {
   )
 }
 
+// Legacy /local/* paths — moved out from under /local. Redirect to preserve
+// bookmarks. Issued before auth so the redirect works for everyone.
+const LOCAL_REDIRECTS: Record<string, string> = {
+  '/local':                       '/',
+  '/local/sports':                '/theyield/edges',
+  '/local/commodities':           '/theyield/commodities',
+  '/local/theyield':              '/theyield',
+  '/local/theyield/sports':       '/theyield/sports',
+  '/local/theyield/commodities':  '/theyield/commodities',
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
@@ -48,6 +60,12 @@ export async function middleware(request: NextRequest) {
   if (pathname === '/lila' || pathname.startsWith('/lila/')) {
     const tail = pathname.slice('/lila'.length)
     return NextResponse.redirect(new URL(`/thepark/operator${tail}`, request.url))
+  }
+
+  // /local/* paths are gone. Bounce to the new homes before auth checks.
+  const localRedirect = LOCAL_REDIRECTS[pathname]
+  if (localRedirect) {
+    return NextResponse.redirect(new URL(localRedirect, request.url))
   }
 
   // Public / always-allowed paths.

@@ -1,7 +1,6 @@
-// Post-login landing — "the local" — the room you walk into after the door
-// closes behind you. Two main doors (vault1022 — soon — and the yield) plus
-// the supporting links that used to live at /thepark. Members & operators
-// both land here.
+// Post-login landing — the room you walk into after signing in. Two main
+// doors (vault1022 — soon — and the yield) plus supporting links. Rendered
+// at `/` for any visitor with a viewer or operator cookie.
 
 'use client'
 
@@ -12,13 +11,13 @@ import {
   IconBasketball, IconFootball, IconBaseball, IconBull,
 } from '@/app/_components/local/chrome'
 
-export default function LocalPage() {
+export default function MemberLanding() {
   return (
     <LocalShell>
       {/* Hero */}
       <section className="relative px-5 sm:px-8 pt-10 sm:pt-16 pb-12 max-w-5xl mx-auto text-center">
         <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-500/80 uppercase mb-5">
-          ▌▌▌ the local
+          ▌▌▌ the park · members
         </p>
         <h1 className="text-[clamp(2.8rem,11vw,7.5rem)] font-black tracking-tight leading-[0.88] uppercase">
           <span className="block text-white">make every</span>
@@ -52,7 +51,7 @@ export default function LocalPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           <MarketDoor
-            href="/local/theyield"
+            href="/theyield"
             kicker="sports + commodities · live edges"
             title="THE YIELD"
             tone="orange"
@@ -141,7 +140,7 @@ export default function LocalPage() {
             Join thousands of sharp bettors and traders who trust the park.
           </p>
           <Link
-            href="/local/theyield"
+            href="/theyield"
             className="mt-7 inline-flex items-center justify-between gap-4 bg-amber-400 hover:bg-amber-300 text-black border-2 border-amber-300 px-7 py-4 font-mono text-[11px] tracking-[0.32em] uppercase transition-colors min-w-[280px]"
           >
             <span>let&rsquo;s go</span>

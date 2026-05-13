@@ -349,7 +349,7 @@ const TABS: NavEntry[] = [
   { kind: 'tab',  key: 'library',  label: 'Library', Icon: IconNotes    },
   { kind: 'tab',  key: 'picks',    label: 'Picks',   Icon: IconPicks    },
   { kind: 'tab',  key: 'desk',     label: 'Desk',    Icon: IconDesk     },
-  { kind: 'link', href: '/local',  label: 'Member',  Icon: IconMember   },
+  { kind: 'link', href: '/',       label: 'Member',  Icon: IconMember   },
 ]
 
 // Unified primary nav. Off-canvas drawer at every viewport: slides in

@@ -1,6 +1,5 @@
-// /local/theyield — the yield hub. Two doors: SPORTS (the scoreboard) and
-// COMMODITIES (the existing /local/commodities dashboard). Sits between
-// /local and /local/theyield/sports in the navigation.
+// /theyield — the yield hub. Two doors: SPORTS (the scoreboard) and
+// COMMODITIES (the futures dashboard).
 
 'use client'
 
@@ -17,7 +16,7 @@ export default function TheYieldHub() {
       title="THE YIELD"
       subtitle="Sports and commodities. The full board."
       accent="amber"
-      back={{ href: '/local', label: 'back to local' }}
+      back={{ href: '/', label: 'back to home' }}
     >
       <section className="relative px-5 sm:px-8 pt-10 sm:pt-14 pb-6 max-w-5xl mx-auto text-center">
         <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-500/80 uppercase mb-4">
@@ -34,7 +33,7 @@ export default function TheYieldHub() {
       <section className="relative px-5 sm:px-8 pb-14 max-w-7xl mx-auto">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           <YieldDoor
-            href="/local/theyield/sports"
+            href="/theyield/sports"
             kicker="live games · spreads + totals"
             title="SPORTS"
             tone="amber"
@@ -47,7 +46,7 @@ export default function TheYieldHub() {
             ]}
           />
           <YieldDoor
-            href="/local/theyield/commodities"
+            href="/theyield/commodities"
             kicker="track the markets · spot the moves"
             title="COMMODITIES"
             tone="orange"

@@ -1,4 +1,4 @@
-// /local/sports — the live edges dashboard. Real Ceelo data for NFL/NBA/MLB;
+// /theyield/edges — the live edges dashboard. Real Ceelo data for NFL/NBA/MLB;
 // NHL/UFC/SOCCER tabs render greyed-out "soon" placeholders.
 //
 // Three sections, top to bottom:
@@ -123,7 +123,7 @@ export default function LocalSports() {
       title="SPORTS"
       subtitle="Live games. Real-time edges."
       accent="amber"
-      back={{ href: '/local', label: 'back to markets' }}
+      back={{ href: '/theyield', label: 'back to the yield' }}
       hero={<HeroSport />}
     >
       {/* Tabs */}
@@ -438,7 +438,7 @@ function SoonPanel({ label }: { label: Tab }) {
         Ceelo doesn&rsquo;t cover {label.toLowerCase()} yet. We&rsquo;ll wire the feed once the model has enough data to call edges with conviction.
       </p>
       <Link
-        href="/local/sports"
+        href="/theyield/edges"
         onClick={(e) => { e.preventDefault(); }}
         className="mt-7 inline-block font-mono text-[10px] tracking-[0.32em] uppercase border-2 border-amber-500/30 text-amber-300/60 px-4 py-3 cursor-not-allowed"
       >

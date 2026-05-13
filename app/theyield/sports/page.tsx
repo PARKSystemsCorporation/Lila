@@ -1,4 +1,4 @@
-// /local/theyield/sports — the scoreboard. FanDuel-style row layout:
+// /theyield/sports — the scoreboard. FanDuel-style row layout:
 //   league dropdown · tab row · date stepper · book selector
 //   then one row per game with: team logos · team + record ·
 //   current line · open line · Bets% · Money%.
@@ -114,7 +114,7 @@ export default function TheYieldSports() {
       title="SCOREBOARD"
       subtitle="Live lines. Real-time edges."
       accent="amber"
-      back={{ href: '/local/theyield', label: 'back to the yield' }}
+      back={{ href: '/theyield', label: 'back to the yield' }}
     >
       {/* League header */}
       <section className="border-b border-amber-500/15 bg-slate-950/40">

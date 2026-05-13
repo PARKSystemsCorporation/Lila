@@ -46,7 +46,7 @@ export default function Login() {
       body: JSON.stringify({ license_key: code.trim() }),
     })
     if (res.ok) {
-      router.replace('/local')
+      router.replace('/')
     } else {
       const body = await res.json().catch(() => null)
       setError(body?.error ?? 'Could not verify the key.')

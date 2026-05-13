@@ -1,5 +1,5 @@
 // /api/viewer/scoreboard — packs the FanDuel-style scoreboard rows for
-// /local/theyield/sports. Returns one row per game for the requested sport
+// /theyield/sports. Returns one row per game for the requested sport
 // on the requested date, with FanDuel + consensus snapshots for the spread
 // and total markets and a heuristic Bets%/Money% derived from line move.
 

@@ -45,14 +45,14 @@ export default function HandicappersPage() {
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <Link
-              href="/local"
+              href="/"
               className="inline-flex items-center justify-between gap-3 border-2 border-rose-500/50 hover:border-rose-300 px-5 py-3 font-mono text-[10px] tracking-[0.32em] uppercase text-rose-200 hover:text-white transition-colors"
             >
-              <span>back to the local</span>
+              <span>back to the park</span>
               <span>→</span>
             </Link>
             <Link
-              href="/local/sports"
+              href="/theyield/edges"
               className="inline-flex items-center justify-between gap-3 border-2 border-amber-500/50 hover:border-amber-300 px-5 py-3 font-mono text-[10px] tracking-[0.32em] uppercase text-amber-200 hover:text-white transition-colors"
             >
               <span>see ceelo&rsquo;s edges</span>

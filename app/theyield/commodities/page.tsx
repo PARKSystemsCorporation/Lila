@@ -1,4 +1,4 @@
-// /local/commodities — futures dashboard mirroring /local/sports's structure.
+// /theyield/commodities — futures dashboard mirroring /theyield/edges's structure.
 // No live feed yet: prices, edges, sparklines are mocked and every cell
 // carries an "//awaiting feed" tag so it's obvious this is placeholder data.
 // Real wiring lands when we hook up a commodities price service.
@@ -125,7 +125,7 @@ export default function LocalCommodities() {
       title="COMMODITIES"
       subtitle="Track the markets. Spot the moves."
       accent="orange"
-      back={{ href: '/local', label: 'back to markets' }}
+      back={{ href: '/theyield', label: 'back to the yield' }}
       hero={<HeroPump />}
     >
       {/* Tabs */}
