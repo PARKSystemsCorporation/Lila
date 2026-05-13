@@ -32,6 +32,7 @@ function isViewerPath(pathname: string): boolean {
     pathname === '/marketplace' ||
     pathname.startsWith('/marketplace/') ||
     pathname === '/api/viewer/edges' ||
+    pathname === '/api/viewer/scoreboard' ||
     pathname === '/api/viewer/articles' ||
     pathname === '/api/viewer/wallet' ||
     pathname === '/api/viewer/dms' ||

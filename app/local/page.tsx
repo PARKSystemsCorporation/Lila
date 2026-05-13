@@ -1,6 +1,7 @@
 // Post-login landing — "the local" — the room you walk into after the door
-// closes behind you. Two main doors (sports, commodities) plus the supporting
-// links that used to live at /thepark. Members & operators both land here.
+// closes behind you. Two main doors (vault1022 — soon — and the yield) plus
+// the supporting links that used to live at /thepark. Members & operators
+// both land here.
 
 'use client'
 
@@ -8,8 +9,7 @@ import Link from 'next/link'
 import {
   LocalShell,
   IconTarget, IconTrophy, IconDroplet, IconBolt, IconShield,
-  IconBasketball, IconFootball, IconSoccer, IconBaseball, IconHockey,
-  IconGold, IconWheat, IconFlame, IconBull,
+  IconBasketball, IconFootball, IconBaseball, IconBull,
 } from '@/app/_components/local/chrome'
 
 export default function LocalPage() {
@@ -52,20 +52,20 @@ export default function LocalPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           <MarketDoor
-            href="/local/sports"
-            kicker="live games · real-time edges"
-            title="SPORTS"
+            kicker="locked · members soon"
+            title="VAULT1022"
             tone="amber"
-            cta="explore sports →"
-            icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconSoccer key="sc" />, <IconBaseball key="bs" />, <IconHockey key="hk" />]}
+            cta="vault opens soon"
+            icons={[<IconShield key="sh" />, <IconBolt key="bt" />, <IconTarget key="tg" />]}
+            soon
           />
           <MarketDoor
-            href="/local/commodities"
-            kicker="track the markets · spot the moves"
-            title="COMMODITIES"
+            href="/local/theyield"
+            kicker="sports + commodities · live edges"
+            title="THE YIELD"
             tone="orange"
-            cta="explore commodities →"
-            icons={[<IconDroplet key="oil" />, <IconGold key="gd" />, <IconWheat key="wt" />, <IconFlame key="ng" />, <IconBull key="bl" />]}
+            cta="enter the yield →"
+            icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconBaseball key="bs" />, <IconDroplet key="oil" />, <IconBull key="bl" />]}
           />
         </div>
       </section>
@@ -141,7 +141,7 @@ export default function LocalPage() {
             Join thousands of sharp bettors and traders who trust the park.
           </p>
           <Link
-            href="/local/sports"
+            href="/local/theyield"
             className="mt-7 inline-flex items-center justify-between gap-4 bg-amber-400 hover:bg-amber-300 text-black border-2 border-amber-300 px-7 py-4 font-mono text-[11px] tracking-[0.32em] uppercase transition-colors min-w-[280px]"
           >
             <span>let&rsquo;s go</span>
@@ -167,28 +167,31 @@ function StatPip({ icon, label }: { icon: JSX.Element; label: React.ReactNode })
 }
 
 function MarketDoor({
-  href, kicker, title, tone, cta, icons,
+  href, kicker, title, tone, cta, icons, soon,
 }: {
-  href: string
+  href?: string
   kicker: string
   title: string
   tone: 'amber' | 'orange'
   cta: string
   icons: JSX.Element[]
+  soon?: boolean
 }) {
   const c = tone === 'amber'
     ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', glow: 'hover:shadow-[0_0_80px_-20px_rgba(245,158,11,0.65)]', titleGlow: '[text-shadow:0_0_40px_rgba(245,158,11,0.5)]' }
     : { border: 'border-orange-500/60 hover:border-orange-300', text: 'text-orange-300', glow: 'hover:shadow-[0_0_80px_-20px_rgba(251,146,60,0.65)]', titleGlow: '[text-shadow:0_0_40px_rgba(251,146,60,0.5)]' }
 
-  return (
-    <Link
-      href={href}
-      className={`group relative border-2 ${c.border} bg-slate-950/70 p-6 sm:p-8 flex flex-col items-center text-center transition-all duration-300 hover:-translate-y-1 ${c.glow}`}
-    >
-      <div className={`text-[clamp(2.4rem,6vw,3.6rem)] font-black tracking-tight uppercase text-white leading-[0.95] ${c.titleGlow}`}>
+  const inner = (
+    <>
+      {soon && (
+        <span className="absolute top-3 right-3 font-mono text-[9px] tracking-[0.32em] uppercase text-slate-500 border border-slate-700 px-1.5 py-0.5">
+          soon
+        </span>
+      )}
+      <div className={`text-[clamp(2.4rem,6vw,3.6rem)] font-black tracking-tight uppercase text-white leading-[0.95] ${c.titleGlow} ${soon ? 'opacity-60' : ''}`}>
         {title}
       </div>
-      <p className={`mt-2 font-mono text-[10px] sm:text-[11px] tracking-[0.25em] uppercase ${c.text}`}>
+      <p className={`mt-2 font-mono text-[10px] sm:text-[11px] tracking-[0.25em] uppercase ${c.text} ${soon ? 'opacity-60' : ''}`}>
         {kicker}
       </p>
 
@@ -208,14 +211,38 @@ function MarketDoor({
         </svg>
       </div>
 
-      <div className={`w-full border-2 ${c.border} py-3 flex items-center justify-between px-4 mb-5 group-hover:bg-slate-950 transition-colors`}>
-        <span className="font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase text-white">{cta.replace(' →', '')}</span>
-        <span className={`${c.text} group-hover:translate-x-0.5 transition-transform`}>›</span>
+      <div className={`w-full border-2 ${c.border} py-3 flex items-center justify-between px-4 mb-5 ${soon ? '' : 'group-hover:bg-slate-950'} transition-colors`}>
+        <span className={`font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase ${soon ? 'text-slate-500' : 'text-white'}`}>
+          {cta.replace(' →', '')}
+        </span>
+        <span className={`${soon ? 'text-slate-700' : `${c.text} group-hover:translate-x-0.5`} transition-transform`}>
+          {soon ? '✕' : '›'}
+        </span>
       </div>
 
-      <div className={`flex items-center gap-4 ${c.text}`}>
+      <div className={`flex items-center gap-4 ${c.text} ${soon ? 'opacity-50' : ''}`}>
         {icons.map((ic, i) => <span key={i} className="opacity-70 group-hover:opacity-100 transition-opacity">{ic}</span>)}
       </div>
+    </>
+  )
+
+  if (soon || !href) {
+    return (
+      <div
+        aria-disabled
+        className={`group relative border-2 ${c.border} bg-slate-950/70 p-6 sm:p-8 flex flex-col items-center text-center opacity-80 cursor-not-allowed`}
+      >
+        {inner}
+      </div>
+    )
+  }
+
+  return (
+    <Link
+      href={href}
+      className={`group relative border-2 ${c.border} bg-slate-950/70 p-6 sm:p-8 flex flex-col items-center text-center transition-all duration-300 hover:-translate-y-1 ${c.glow}`}
+    >
+      {inner}
     </Link>
   )
 }
