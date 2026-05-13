@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import Link from 'next/link'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -316,17 +317,31 @@ const IconFloor = () => (
   </svg>
 )
 
+const IconMember = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    {/* door with an arrow pointing in — "step into the member view" */}
+    <path d="M14 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5" />
+    <path d="M10 8l-4 4 4 4" />
+    <line x1="6" y1="12" x2="15" y2="12" />
+  </svg>
+)
+
 // ─── Bottom Nav ───────────────────────────────────────────────────────────────
 
-const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
-  { key: 'chat',     label: 'Chat',    Icon: IconChat     },
-  { key: 'dash',     label: 'Dash',    Icon: IconDash     },
-  { key: 'floor',    label: 'Floor',   Icon: IconFloor    },
-  { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
-  { key: 'bounties', label: 'Board',   Icon: IconBounties },
-  { key: 'library',  label: 'Library', Icon: IconNotes    },
-  { key: 'picks',    label: 'Picks',   Icon: IconPicks    },
-  { key: 'desk',     label: 'Desk',    Icon: IconDesk     },
+type NavEntry =
+  | { kind: 'tab';  key: Tab;     label: string; Icon: () => JSX.Element }
+  | { kind: 'link'; href: string; label: string; Icon: () => JSX.Element }
+
+const TABS: NavEntry[] = [
+  { kind: 'tab',  key: 'chat',     label: 'Chat',    Icon: IconChat     },
+  { kind: 'tab',  key: 'dash',     label: 'Dash',    Icon: IconDash     },
+  { kind: 'tab',  key: 'floor',    label: 'Floor',   Icon: IconFloor    },
+  { kind: 'tab',  key: 'trading',  label: 'Trades',  Icon: IconTrading  },
+  { kind: 'tab',  key: 'bounties', label: 'Board',   Icon: IconBounties },
+  { kind: 'tab',  key: 'library',  label: 'Library', Icon: IconNotes    },
+  { kind: 'tab',  key: 'picks',    label: 'Picks',   Icon: IconPicks    },
+  { kind: 'tab',  key: 'desk',     label: 'Desk',    Icon: IconDesk     },
+  { kind: 'link', href: '/local',  label: 'Member',  Icon: IconMember   },
 ]
 
 function BottomNav({ tab, onTab, badges }: {
@@ -339,13 +354,30 @@ function BottomNav({ tab, onTab, badges }: {
       className="shrink-0 flex border-t border-slate-800 bg-slate-950 md:hidden"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      {TABS.map(({ key, label, Icon }) => {
-        const active = tab === key
-        const count = badges?.[key] ?? 0
+      {TABS.map(entry => {
+        const { label, Icon } = entry
+        if (entry.kind === 'link') {
+          return (
+            <Link
+              key={`link:${entry.href}`}
+              href={entry.href}
+              className="flex-1 flex flex-col items-center gap-0.5 py-2 min-h-[52px] transition-colors relative text-slate-600 active:text-slate-400"
+            >
+              <div className="relative">
+                <Icon />
+              </div>
+              <span className="text-[8px] font-mono tracking-wider uppercase text-slate-700">
+                {label}
+              </span>
+            </Link>
+          )
+        }
+        const active = tab === entry.key
+        const count = badges?.[entry.key] ?? 0
         return (
           <button
-            key={key}
-            onClick={() => onTab(key)}
+            key={entry.key}
+            onClick={() => onTab(entry.key)}
             className={`flex-1 flex flex-col items-center gap-0.5 py-2 min-h-[52px] transition-colors relative ${active ? 'text-emerald-400' : 'text-slate-600 active:text-slate-400'}`}
           >
             <div className="relative">
@@ -387,13 +419,31 @@ function SideNav({ tab, onTab, badges }: {
         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
       </div>
       <div className="flex-1 flex flex-col gap-1 px-2 lg:px-3 overflow-y-auto">
-        {TABS.map(({ key, label, Icon }) => {
-          const active = tab === key
-          const count = badges?.[key] ?? 0
+        {TABS.map(entry => {
+          const { label, Icon } = entry
+          if (entry.kind === 'link') {
+            return (
+              <Link
+                key={`link:${entry.href}`}
+                href={entry.href}
+                className="group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors text-slate-500 hover:text-slate-200 hover:bg-slate-900 border border-transparent justify-center lg:justify-start"
+                title={label}
+              >
+                <div className="relative shrink-0">
+                  <Icon />
+                </div>
+                <span className="hidden lg:inline text-[12px] font-mono tracking-widest uppercase">
+                  {label}
+                </span>
+              </Link>
+            )
+          }
+          const active = tab === entry.key
+          const count = badges?.[entry.key] ?? 0
           return (
             <button
-              key={key}
-              onClick={() => onTab(key)}
+              key={entry.key}
+              onClick={() => onTab(entry.key)}
               className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors ${
                 active
                   ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/60'
