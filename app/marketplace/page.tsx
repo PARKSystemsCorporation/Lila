@@ -79,7 +79,7 @@ export default function Marketplace() {
       <header className="sticky top-0 z-30 border-b-2 border-amber-500/20 bg-[#0a0c14]/85 backdrop-blur-md">
         <div className="mx-auto max-w-5xl px-4 sm:px-8 py-3 flex items-center justify-between gap-3">
           <Link href="/viewer" className="group flex items-center gap-3">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase group-hover:text-amber-300 transition-colors">
               ▓ park · marketplace
             </span>
@@ -126,7 +126,7 @@ export default function Marketplace() {
               <article key={a.key} className={`relative border-2 ${c.ring} ${c.bg} p-5 sm:p-6 transition-all duration-300`}>
                 <div className="flex items-center justify-between mb-4">
                   <span className={`font-mono text-[10px] tracking-[0.32em] uppercase ${c.text}`}>{a.role}</span>
-                  <span className={`w-1.5 h-1.5 rounded-full ${c.dot} shadow-[0_0_8px_currentColor]`} />
+                  <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
                 </div>
                 <div className={`text-[clamp(2rem,5vw,2.8rem)] font-black tracking-tight ${c.text} leading-[0.95]`}>{a.name}</div>
                 <p className="mt-3 font-mono text-[11px] leading-relaxed text-slate-400">{a.blurb}</p>

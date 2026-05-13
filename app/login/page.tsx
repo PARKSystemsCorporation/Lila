@@ -88,7 +88,7 @@ export default function Login() {
         style={{ paddingTop: 'max(16px, env(safe-area-inset-top))' }}
       >
         <div className="flex items-center gap-2.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
           <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase">
             ▓ parksystems · corp
           </span>
@@ -109,7 +109,7 @@ export default function Login() {
           </p>
           <h1 className="mt-3 text-[clamp(2rem,7vw,3rem)] font-black tracking-tight leading-[0.95] uppercase">
             <span className="text-white">the</span>{' '}
-            <span className="text-amber-400 [text-shadow:0_0_30px_rgba(245,158,11,0.5)]">park</span>
+            <span className="text-amber-400">park</span>
             <span className="text-slate-600">.world</span>
           </h1>
           <p className="mt-3 text-sm text-slate-400 leading-relaxed">

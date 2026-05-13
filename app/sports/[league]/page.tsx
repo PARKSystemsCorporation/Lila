@@ -20,9 +20,9 @@ const LEAGUES: Record<string, { sport: SportKey; full: string; tone: 'amber' | '
 }
 
 const HERO_TONE: Record<'amber' | 'orange' | 'red', { accent: string; glow: string }> = {
-  amber:  { accent: 'text-amber-400',  glow: '[text-shadow:0_0_40px_rgba(245,158,11,0.45)]' },
-  orange: { accent: 'text-orange-400', glow: '[text-shadow:0_0_40px_rgba(251,146,60,0.45)]' },
-  red:    { accent: 'text-red-400',    glow: '[text-shadow:0_0_40px_rgba(239,68,68,0.45)]' },
+  amber:  { accent: 'text-amber-400',  glow: '' },
+  orange: { accent: 'text-orange-400', glow: '' },
+  red:    { accent: 'text-red-400',    glow: '' },
 }
 
 export function generateStaticParams() {

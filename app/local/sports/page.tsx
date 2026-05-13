@@ -275,9 +275,9 @@ function HeroSport() {
 
 function TopEdgeCard({ rank, edge }: { rank: number; edge: TopEdge }) {
   const tone =
-    edge.confidence === 'high'   ? { txt: 'text-amber-300',  border: 'border-amber-500/40 hover:border-amber-300',   glow: 'hover:shadow-[0_0_60px_-15px_rgba(245,158,11,0.55)]', big: 'text-amber-300' } :
-    edge.confidence === 'medium' ? { txt: 'text-orange-300', border: 'border-orange-500/40 hover:border-orange-300', glow: 'hover:shadow-[0_0_60px_-15px_rgba(251,146,60,0.55)]', big: 'text-orange-300' } :
-                                   { txt: 'text-red-300',    border: 'border-red-500/40 hover:border-red-300',       glow: 'hover:shadow-[0_0_60px_-15px_rgba(239,68,68,0.55)]',  big: 'text-red-300' }
+    edge.confidence === 'high'   ? { txt: 'text-amber-300',  border: 'border-amber-500/40 hover:border-amber-300',   glow: '', big: 'text-amber-300' } :
+    edge.confidence === 'medium' ? { txt: 'text-orange-300', border: 'border-orange-500/40 hover:border-orange-300', glow: '', big: 'text-orange-300' } :
+                                   { txt: 'text-red-300',    border: 'border-red-500/40 hover:border-red-300',       glow: '',  big: 'text-red-300' }
 
   const ko = formatKickoff(edge.kickoff_ts)
   const edgePct = edge.edge_pct != null ? Math.round(edge.edge_pct) : null

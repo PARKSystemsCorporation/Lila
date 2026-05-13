@@ -31,7 +31,7 @@ export function LocalShell({ title, subtitle, accent = 'amber', back, hero, chil
   }
 
   const accentText = accent === 'amber' ? 'text-amber-300' : 'text-orange-300'
-  const accentGlow = accent === 'amber' ? '[text-shadow:0_0_40px_rgba(245,158,11,0.5)]' : '[text-shadow:0_0_40px_rgba(251,146,60,0.45)]'
+  const accentGlow = accent === 'amber' ? '' : ''
 
   return (
     <main className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden">
@@ -60,7 +60,7 @@ export function LocalShell({ title, subtitle, accent = 'amber', back, hero, chil
             </Link>
           ) : (
             <Link href="/" className="group flex items-center gap-2.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
               <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase group-hover:text-amber-300 transition-colors">
                 ▓ park · local
               </span>

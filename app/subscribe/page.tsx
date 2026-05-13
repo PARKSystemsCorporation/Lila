@@ -56,7 +56,7 @@ export default function SubscribePage() {
           </p>
           <h1 className="mt-4 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white">
             one month.<br />
-            <span className="text-yellow-400 [text-shadow:0_0_40px_rgba(250,204,21,0.5)]">
+            <span className="text-yellow-400">
               fifty park gates.
             </span>
           </h1>
@@ -80,7 +80,7 @@ export default function SubscribePage() {
           </h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
-            <div className="group border-2 border-yellow-500/30 hover:border-yellow-300 bg-[#0a0c14]/60 hover:-translate-y-0.5 hover:shadow-[0_0_60px_-15px_rgba(250,204,21,0.55)] transition-all p-6 sm:p-8">
+            <div className="group border-2 border-yellow-500/30 hover:border-yellow-300 bg-[#0a0c14]/60 hover:-translate-y-0.5 transition-all p-6 sm:p-8">
               <p className="font-mono text-[10px] tracking-[0.45em] uppercase text-yellow-400/90">
                 01 · access
               </p>
@@ -99,7 +99,7 @@ export default function SubscribePage() {
               </ul>
             </div>
 
-            <div className="group border-2 border-yellow-500/30 hover:border-yellow-300 bg-[#0a0c14]/60 hover:-translate-y-0.5 hover:shadow-[0_0_60px_-15px_rgba(250,204,21,0.55)] transition-all p-6 sm:p-8">
+            <div className="group border-2 border-yellow-500/30 hover:border-yellow-300 bg-[#0a0c14]/60 hover:-translate-y-0.5 transition-all p-6 sm:p-8">
               <p className="font-mono text-[10px] tracking-[0.45em] uppercase text-yellow-400/90">
                 02 · currency
               </p>
@@ -172,7 +172,7 @@ export default function SubscribePage() {
               </p>
               <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white">
                 ten dollars.<br />
-                <span className="text-yellow-400 [text-shadow:0_0_40px_rgba(250,204,21,0.5)]">
+                <span className="text-yellow-400">
                   fifty park gates.
                 </span>
               </h2>
@@ -188,7 +188,7 @@ export default function SubscribePage() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => track('buy_click', 'subscribe_page')}
-                className="group block border-2 border-yellow-300 bg-yellow-400 hover:bg-yellow-300 text-black px-5 py-5 transition-colors shadow-[0_0_0_0_rgba(250,204,21,0)] hover:shadow-[0_0_60px_-10px_rgba(250,204,21,0.7)]"
+                className="group block border-2 border-yellow-300 bg-yellow-400 hover:bg-yellow-300 text-black px-5 py-5 transition-colors"
               >
                 <div className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">
                   continue to checkout

@@ -35,7 +35,7 @@ export default function CommoditiesLanding() {
       <header className="sticky top-0 z-30 border-b-2 border-orange-500/20 bg-[#0a0c14]/85 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-8 py-3 flex items-center justify-between">
           <Link href="/" className="group flex items-center gap-3">
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse shadow-[0_0_10px_rgba(251,146,60,0.9)]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
             <span className="font-mono text-[10px] tracking-[0.32em] text-orange-500/80 uppercase group-hover:text-orange-300 transition-colors">
               ▓ park · commodities
             </span>
@@ -59,7 +59,7 @@ export default function CommoditiesLanding() {
             ▌▌▌ futures, full markdown
           </p>
           <h1 className="mt-3 text-[clamp(2.2rem,7vw,4.4rem)] font-black tracking-tight leading-[0.92] uppercase">
-            <span className="text-orange-400 [text-shadow:0_0_30px_rgba(251,146,60,0.45)]">FUTURES</span>
+            <span className="text-orange-400">FUTURES</span>
             <span className="text-slate-500">, written down.</span>
           </h1>
           <p className="mt-5 max-w-2xl text-sm sm:text-base text-slate-400 leading-relaxed">
@@ -173,7 +173,7 @@ function PlaybookSection() {
               ▌▌▌ the desk · worked
             </p>
             <h2 className="mt-2 text-[clamp(1.6rem,5vw,3rem)] font-black tracking-tight uppercase text-white">
-              how to <span className="text-orange-400 [text-shadow:0_0_30px_rgba(251,146,60,0.45)]">read</span> it.
+              how to <span className="text-orange-400">read</span> it.
             </h2>
             <p className="mt-3 max-w-xl text-sm text-slate-400 leading-relaxed">
               Each headline contract has its own term structure and its own way to use the curve.

@@ -116,7 +116,7 @@ export default function BountyPage() {
       <header className="sticky top-0 z-30 border-b-2 border-amber-500/20 bg-[#0a0c14]/85 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-8 py-3 flex items-center justify-between">
           <Link href="/" className="group flex items-center gap-3">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase group-hover:text-amber-300 transition-colors">
               ▓ park · bounty
             </span>
@@ -140,7 +140,7 @@ export default function BountyPage() {
             ▌▌▌ how it works
           </p>
           <h1 className="mt-3 text-[clamp(2.2rem,7vw,4.4rem)] font-black tracking-tight leading-[0.92] uppercase">
-            <span className="text-amber-400 [text-shadow:0_0_30px_rgba(245,158,11,0.45)]">BOUNTY</span>
+            <span className="text-amber-400">BOUNTY</span>
             <span className="text-slate-500"> hunting, in the open.</span>
           </h1>
           <p className="mt-5 max-w-2xl text-sm sm:text-base text-slate-400 leading-relaxed">

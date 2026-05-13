@@ -97,7 +97,7 @@ export default function SportsLanding() {
       <header className="sticky top-0 z-30 border-b-2 border-amber-500/20 bg-[#0a0c14]/85 backdrop-blur-md">
         <div className="mx-auto max-w-7xl px-4 sm:px-8 py-3 flex items-center justify-between">
           <Link href="/" className="group flex items-center gap-3">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase group-hover:text-amber-300 transition-colors">
               ▓ park · sports
             </span>
@@ -125,7 +125,7 @@ export default function SportsLanding() {
               </p>
               <h1 className="mt-2 text-[clamp(2.2rem,7vw,4.4rem)] font-black tracking-tight leading-[0.92] uppercase">
                 <span className="text-white">jackpot</span>
-                <span className="text-amber-400 [text-shadow:0_0_30px_rgba(245,158,11,0.45)]">.</span>
+                <span className="text-amber-400">.</span>
               </h1>
             </div>
             <div className="font-mono text-[9px] sm:text-[10px] tracking-[0.3em] text-slate-500 uppercase tabular-nums text-right">
@@ -139,7 +139,7 @@ export default function SportsLanding() {
             {showEdges.slice(0, 3).map((e, i) => (
               <article
                 key={e.id}
-                className="group relative border-2 border-amber-500/40 bg-slate-950/70 backdrop-blur-sm p-4 sm:p-5 transition-all duration-300 hover:border-amber-300 hover:bg-amber-500/[0.05] hover:-translate-y-0.5 hover:shadow-[0_0_60px_-15px_rgba(245,158,11,0.55)]"
+                className="group relative border-2 border-amber-500/40 bg-slate-950/70 backdrop-blur-sm p-4 sm:p-5 transition-all duration-300 hover:border-amber-300 hover:bg-amber-500/[0.05] hover:-translate-y-0.5"
               >
                 <div className="flex items-center justify-between mb-3 sm:mb-4">
                   <span className="font-mono text-[9px] sm:text-[10px] tracking-[0.3em] text-amber-400 uppercase">
@@ -162,7 +162,7 @@ export default function SportsLanding() {
                 <div className="flex items-end justify-between border-t border-amber-500/20 pt-3 sm:pt-4">
                   <div>
                     <div className="font-mono text-[9px] tracking-[0.3em] text-slate-500 uppercase">edge</div>
-                    <div className="font-mono text-3xl sm:text-4xl font-black text-amber-300 tabular-nums leading-none mt-1 [text-shadow:0_0_24px_rgba(245,158,11,0.45)]">
+                    <div className="font-mono text-3xl sm:text-4xl font-black text-amber-300 tabular-nums leading-none mt-1">
                       <SlotReel final={fmtEdge(e)} fakes={FAKE_LINES} delay={300 + i * 220} duration={1500 + i * 200} />
                     </div>
                   </div>
@@ -260,8 +260,8 @@ export default function SportsLanding() {
 function SportTile({ state, index }: { state: SeasonState; index: number }) {
   const phase = state.phase
   const tone =
-    phase === 'regular'  ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300',  dot: 'bg-amber-400',  glow: 'hover:shadow-[0_0_50px_-12px_rgba(245,158,11,0.55)]' } :
-    phase === 'playoffs' ? { border: 'border-red-500/60 hover:border-red-300',     text: 'text-red-300',    dot: 'bg-red-400',    glow: 'hover:shadow-[0_0_50px_-12px_rgba(239,68,68,0.55)]' } :
+    phase === 'regular'  ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300',  dot: 'bg-amber-400',  glow: '' } :
+    phase === 'playoffs' ? { border: 'border-red-500/60 hover:border-red-300',     text: 'text-red-300',    dot: 'bg-red-400',    glow: '' } :
                            { border: 'border-slate-700 hover:border-slate-500',     text: 'text-slate-500',  dot: 'bg-slate-600',  glow: '' }
 
   const fillPct = phase === 'regular' && state.pctRemaining != null ? state.pctRemaining : 0
@@ -273,7 +273,7 @@ function SportTile({ state, index }: { state: SeasonState; index: number }) {
     >
       <div className="flex items-center justify-between mb-3 sm:mb-4">
         <span className={`font-mono text-[9px] tracking-[0.3em] uppercase ${tone.text}`}>#{index + 1}</span>
-        <span className={`w-1.5 h-1.5 rounded-full ${tone.dot} ${phase !== 'offseason' ? 'animate-pulse' : ''} shadow-[0_0_8px_currentColor]`} />
+        <span className={`w-1.5 h-1.5 rounded-full ${tone.dot} ${phase !== 'offseason' ? 'animate-pulse' : ''}`} />
       </div>
 
       <div className="text-[clamp(2rem,5vw,3rem)] font-black tracking-tight text-white leading-[0.95]">
@@ -325,7 +325,7 @@ function SportTile({ state, index }: { state: SeasonState; index: number }) {
 
 function ArticleCard({ a }: { a: ArticleTeaser }) {
   return (
-    <article className="group border-2 border-red-500/30 bg-slate-950/70 p-4 sm:p-5 transition-all duration-300 hover:border-red-300 hover:-translate-y-0.5 hover:shadow-[0_0_50px_-15px_rgba(239,68,68,0.5)]">
+    <article className="group border-2 border-red-500/30 bg-slate-950/70 p-4 sm:p-5 transition-all duration-300 hover:border-red-300 hover:-translate-y-0.5">
       <div className="flex items-center justify-between mb-3">
         <span className="font-mono text-[9px] tracking-[0.3em] uppercase text-red-400">{a.author}</span>
         <span className="font-mono text-[9px] tracking-[0.3em] uppercase text-slate-600 tabular-nums">{fmtDate(a.created_ts)}</span>
@@ -352,7 +352,7 @@ function PlaybookSection() {
               ▌▌▌ ceelo · the playbook
             </p>
             <h2 className="mt-2 text-[clamp(1.6rem,5vw,3rem)] font-black tracking-tight uppercase text-white">
-              how to <span className="text-amber-400 [text-shadow:0_0_30px_rgba(245,158,11,0.45)]">read</span> it.
+              how to <span className="text-amber-400">read</span> it.
             </h2>
             <p className="mt-3 max-w-xl text-sm text-slate-400 leading-relaxed">
               Each sport has its own market structure and its own way to use Ceelo&rsquo;s signal.

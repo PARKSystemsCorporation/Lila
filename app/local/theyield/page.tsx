@@ -77,8 +77,8 @@ function YieldDoor({
   icons: JSX.Element[]
 }) {
   const c = tone === 'amber'
-    ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', glow: 'hover:shadow-[0_0_80px_-20px_rgba(245,158,11,0.65)]', titleGlow: '[text-shadow:0_0_40px_rgba(245,158,11,0.5)]' }
-    : { border: 'border-orange-500/60 hover:border-orange-300', text: 'text-orange-300', glow: 'hover:shadow-[0_0_80px_-20px_rgba(251,146,60,0.65)]', titleGlow: '[text-shadow:0_0_40px_rgba(251,146,60,0.5)]' }
+    ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', glow: '', titleGlow: '' }
+    : { border: 'border-orange-500/60 hover:border-orange-300', text: 'text-orange-300', glow: '', titleGlow: '' }
 
   return (
     <Link

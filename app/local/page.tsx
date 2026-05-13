@@ -22,7 +22,7 @@ export default function LocalPage() {
         </p>
         <h1 className="text-[clamp(2.8rem,11vw,7.5rem)] font-black tracking-tight leading-[0.88] uppercase">
           <span className="block text-white">make every</span>
-          <span className="block text-amber-400 [text-shadow:0_0_50px_rgba(245,158,11,0.5)]">
+          <span className="block text-amber-400">
             call count
           </span>
         </h1>
@@ -158,7 +158,7 @@ export default function LocalPage() {
 function StatPip({ icon, label }: { icon: JSX.Element; label: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-3 text-center">
-      <span className="text-amber-400 [filter:drop-shadow(0_0_8px_rgba(245,158,11,0.5))]">{icon}</span>
+      <span className="text-amber-400">{icon}</span>
       <span className="font-mono text-[9px] sm:text-[10px] tracking-[0.32em] uppercase text-slate-300 leading-tight">
         {label}
       </span>
@@ -178,8 +178,8 @@ function MarketDoor({
   soon?: boolean
 }) {
   const c = tone === 'amber'
-    ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', glow: 'hover:shadow-[0_0_80px_-20px_rgba(245,158,11,0.65)]', titleGlow: '[text-shadow:0_0_40px_rgba(245,158,11,0.5)]' }
-    : { border: 'border-orange-500/60 hover:border-orange-300', text: 'text-orange-300', glow: 'hover:shadow-[0_0_80px_-20px_rgba(251,146,60,0.65)]', titleGlow: '[text-shadow:0_0_40px_rgba(251,146,60,0.5)]' }
+    ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', glow: '', titleGlow: '' }
+    : { border: 'border-orange-500/60 hover:border-orange-300', text: 'text-orange-300', glow: '', titleGlow: '' }
 
   const inner = (
     <>
@@ -250,7 +250,7 @@ function MarketDoor({
 function Feature({ icon, title, body }: { icon: JSX.Element; title: string; body: string }) {
   return (
     <div className="flex flex-col items-center text-center gap-3">
-      <span className="text-amber-400 [filter:drop-shadow(0_0_8px_rgba(245,158,11,0.5))]">{icon}</span>
+      <span className="text-amber-400">{icon}</span>
       <h4 className="font-mono text-[11px] tracking-[0.32em] uppercase text-white">{title}</h4>
       <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-[18ch]">{body}</p>
     </div>
@@ -270,7 +270,7 @@ function LocalCard({
   return (
     <Link
       href={href}
-      className="group relative border-2 border-rose-500/40 hover:border-rose-300 bg-slate-950/70 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_0_60px_-15px_rgba(244,63,94,0.55)] overflow-hidden"
+      className="group relative border-2 border-rose-500/40 hover:border-rose-300 bg-slate-950/70 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 overflow-hidden"
     >
       <div className="relative aspect-[3/4] overflow-hidden border-b border-slate-800/80">
         <div
@@ -293,7 +293,7 @@ function LocalCard({
           </span>
         </div>
         <div className="absolute top-3 left-3 flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shadow-[0_0_10px_currentColor]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
           <span className="font-mono text-[9px] tracking-[0.3em] uppercase text-rose-300">local</span>
         </div>
         <div

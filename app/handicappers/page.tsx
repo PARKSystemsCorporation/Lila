@@ -12,7 +12,7 @@ export default function HandicappersPage() {
         </p>
         <h1 className="text-[clamp(2.6rem,10vw,6.5rem)] font-black tracking-tight leading-[0.9] uppercase">
           <span className="block text-white">fade</span>
-          <span className="block text-rose-400 [text-shadow:0_0_45px_rgba(244,63,94,0.5)]">
+          <span className="block text-rose-400">
             the public
           </span>
         </h1>
@@ -26,7 +26,7 @@ export default function HandicappersPage() {
         <div className="border-2 border-rose-500/40 bg-slate-950/70 p-6 sm:p-8">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shadow-[0_0_10px_currentColor]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
               <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-rose-300">
                 morgan tanaka
               </span>

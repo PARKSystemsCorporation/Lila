@@ -118,7 +118,7 @@ export default function Landing() {
         style={{ paddingTop: 'max(16px, env(safe-area-inset-top))' }}
       >
         <div className="flex items-center gap-2.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.9)]" />
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
           <span className="font-mono text-[10px] tracking-[0.32em] text-amber-500/80 uppercase">
             ▓ parksystems · corp
           </span>
@@ -144,7 +144,7 @@ export default function Landing() {
         <h1 className="text-[clamp(3rem,12vw,9rem)] font-black tracking-tight leading-[0.88] uppercase">
           <span className="block text-white motion-safe:animate-[slideup_0.7s_ease-out_0.15s_both]">the</span>
           <span className="block motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]">
-            <span className="text-amber-400 [text-shadow:0_0_50px_rgba(245,158,11,0.5)]">park</span>
+            <span className="text-amber-400">park</span>
             <span className="text-slate-600">.world</span>
           </span>
         </h1>
@@ -247,7 +247,7 @@ export default function Landing() {
               </p>
               <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white">
                 ten dollars.<br />
-                <span className="text-amber-400 [text-shadow:0_0_40px_rgba(245,158,11,0.5)]">fifty park gates.</span>
+                <span className="text-amber-400">fifty park gates.</span>
               </h2>
               <p className="mt-5 max-w-xl text-base sm:text-lg text-slate-400 leading-relaxed">
                 Subscribe once, get a Gumroad key. Every month your pass is active you receive 50 fresh
@@ -314,8 +314,8 @@ export default function Landing() {
 function SportTile({ state, index }: { state: SeasonState; index: number }) {
   const phase = state.phase
   const tone =
-    phase === 'regular'  ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', dot: 'bg-amber-400', glow: 'hover:shadow-[0_0_50px_-12px_rgba(245,158,11,0.55)]' } :
-    phase === 'playoffs' ? { border: 'border-red-500/60 hover:border-red-300',     text: 'text-red-300',   dot: 'bg-red-400',   glow: 'hover:shadow-[0_0_50px_-12px_rgba(239,68,68,0.55)]' } :
+    phase === 'regular'  ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', dot: 'bg-amber-400', glow: '' } :
+    phase === 'playoffs' ? { border: 'border-red-500/60 hover:border-red-300',     text: 'text-red-300',   dot: 'bg-red-400',   glow: '' } :
                            { border: 'border-slate-700 hover:border-slate-500',     text: 'text-slate-500', dot: 'bg-slate-600', glow: '' }
 
   const fillPct = phase === 'regular' && state.pctRemaining != null ? state.pctRemaining : 0
@@ -327,7 +327,7 @@ function SportTile({ state, index }: { state: SeasonState; index: number }) {
     >
       <div className="flex items-center justify-between mb-3 sm:mb-4">
         <span className={`font-mono text-[9px] tracking-[0.3em] uppercase ${tone.text}`}>#{index + 1}</span>
-        <span className={`w-1.5 h-1.5 rounded-full ${tone.dot} ${phase !== 'offseason' ? 'animate-pulse' : ''} shadow-[0_0_8px_currentColor]`} />
+        <span className={`w-1.5 h-1.5 rounded-full ${tone.dot} ${phase !== 'offseason' ? 'animate-pulse' : ''}`} />
       </div>
 
       <div className="flex items-center gap-3">
@@ -387,9 +387,9 @@ interface PropertyTileProps {
 }
 
 const PROP_TONE: Record<PropertyTileProps['accent'], { ring: string; text: string; glow: string; dot: string }> = {
-  amber:  { ring: 'border-amber-500/40 hover:border-amber-300', text: 'text-amber-300',  glow: 'hover:shadow-[0_0_60px_-15px_rgba(245,158,11,0.55)]', dot: 'bg-amber-400' },
-  orange: { ring: 'border-orange-500/40 hover:border-orange-300', text: 'text-orange-300', glow: 'hover:shadow-[0_0_60px_-15px_rgba(251,146,60,0.55)]', dot: 'bg-orange-400' },
-  red:    { ring: 'border-red-500/40 hover:border-red-300',     text: 'text-red-300',    glow: 'hover:shadow-[0_0_60px_-15px_rgba(239,68,68,0.55)]',  dot: 'bg-red-400' },
+  amber:  { ring: 'border-amber-500/40 hover:border-amber-300', text: 'text-amber-300',  glow: '', dot: 'bg-amber-400' },
+  orange: { ring: 'border-orange-500/40 hover:border-orange-300', text: 'text-orange-300', glow: '', dot: 'bg-orange-400' },
+  red:    { ring: 'border-red-500/40 hover:border-red-300',     text: 'text-red-300',    glow: '',  dot: 'bg-red-400' },
 }
 
 function PropertyTile({ href, kicker, title, body, accent }: PropertyTileProps) {
@@ -401,7 +401,7 @@ function PropertyTile({ href, kicker, title, body, accent }: PropertyTileProps) 
     >
       <div className="flex items-center justify-between mb-4">
         <span className={`font-mono text-[10px] tracking-[0.32em] uppercase ${c.text}`}>{kicker}</span>
-        <span className={`w-1.5 h-1.5 rounded-full ${c.dot} animate-pulse shadow-[0_0_8px_currentColor]`} />
+        <span className={`w-1.5 h-1.5 rounded-full ${c.dot} animate-pulse`} />
       </div>
       <div className={`text-[clamp(1.8rem,4.5vw,2.6rem)] font-black tracking-tight ${c.text} leading-[0.95] mb-3`}>
         {title}

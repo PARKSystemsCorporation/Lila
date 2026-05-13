@@ -30,7 +30,7 @@ export default function SportsArticlesStub() {
           ▌▌▌ all articles
         </p>
         <h1 className="text-[clamp(2.6rem,10vw,7rem)] font-black tracking-tight leading-[0.85] uppercase text-white">
-          the <span className="text-red-400 [text-shadow:0_0_40px_rgba(239,68,68,0.45)]">notebook</span>.
+          the <span className="text-red-400">notebook</span>.
         </h1>
         <p className="mt-5 max-w-xl text-sm sm:text-base text-slate-400 leading-relaxed">
           Ceelo&rsquo;s full archive — every noon report, every settle-day recap. Building the public
@@ -41,7 +41,7 @@ export default function SportsArticlesStub() {
       <section className="mx-auto max-w-7xl px-4 sm:px-8 pb-12">
         <div className="border-2 border-red-500/30 bg-slate-950/60 p-6 sm:p-10">
           <div className="flex items-center gap-3">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.9)]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
             <span className="font-mono text-[10px] tracking-[0.3em] text-red-300 uppercase">building · check back soon</span>
           </div>
         </div>

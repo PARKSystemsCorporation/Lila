@@ -286,10 +286,10 @@ function HeroPump() {
 
 function FuturesEdgeCard({ rank, contract, quote, icon }: { rank: number; contract: Contract; quote: MockQuote; icon: JSX.Element }) {
   const tone = contract.tone === 'amber'
-    ? { txt: 'text-amber-300',  border: 'border-amber-500/40 hover:border-amber-300',   glow: 'hover:shadow-[0_0_60px_-15px_rgba(245,158,11,0.55)]' }
+    ? { txt: 'text-amber-300',  border: 'border-amber-500/40 hover:border-amber-300',   glow: '' }
     : contract.tone === 'orange'
-      ? { txt: 'text-orange-300', border: 'border-orange-500/40 hover:border-orange-300', glow: 'hover:shadow-[0_0_60px_-15px_rgba(251,146,60,0.55)]' }
-      : { txt: 'text-red-300',    border: 'border-red-500/40 hover:border-red-300',       glow: 'hover:shadow-[0_0_60px_-15px_rgba(239,68,68,0.55)]'  }
+      ? { txt: 'text-orange-300', border: 'border-orange-500/40 hover:border-orange-300', glow: '' }
+      : { txt: 'text-red-300',    border: 'border-red-500/40 hover:border-red-300',       glow: ''  }
 
   return (
     <Link
