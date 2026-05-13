@@ -52,20 +52,20 @@ export default function LocalPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           <MarketDoor
-            kicker="locked · members soon"
-            title="VAULT1022"
-            tone="amber"
-            cta="vault opens soon"
-            icons={[<IconShield key="sh" />, <IconBolt key="bt" />, <IconTarget key="tg" />]}
-            soon
-          />
-          <MarketDoor
             href="/local/theyield"
             kicker="sports + commodities · live edges"
             title="THE YIELD"
             tone="orange"
             cta="enter the yield →"
             icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconBaseball key="bs" />, <IconDroplet key="oil" />, <IconBull key="bl" />]}
+          />
+          <MarketDoor
+            kicker="locked · members soon"
+            title="VAULT1022"
+            tone="amber"
+            cta="vault opens soon"
+            icons={[<IconShield key="sh" />, <IconBolt key="bt" />, <IconTarget key="tg" />]}
+            soon
           />
         </div>
       </section>
