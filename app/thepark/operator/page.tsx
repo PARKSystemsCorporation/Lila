@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import Link from 'next/link'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -324,17 +325,31 @@ const IconMenu = () => (
   </svg>
 )
 
+const IconMember = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6">
+    {/* door with an arrow pointing in — "step into the member view" */}
+    <path d="M14 3h5a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-5" />
+    <path d="M10 8l-4 4 4 4" />
+    <line x1="6" y1="12" x2="15" y2="12" />
+  </svg>
+)
+
 // ─── Primary Nav ──────────────────────────────────────────────────────────────
 
-const TABS: { key: Tab; label: string; Icon: () => JSX.Element }[] = [
-  { key: 'chat',     label: 'Chat',    Icon: IconChat     },
-  { key: 'dash',     label: 'Dash',    Icon: IconDash     },
-  { key: 'floor',    label: 'Floor',   Icon: IconFloor    },
-  { key: 'trading',  label: 'Trades',  Icon: IconTrading  },
-  { key: 'bounties', label: 'Board',   Icon: IconBounties },
-  { key: 'library',  label: 'Library', Icon: IconNotes    },
-  { key: 'picks',    label: 'Picks',   Icon: IconPicks    },
-  { key: 'desk',     label: 'Desk',    Icon: IconDesk     },
+type NavEntry =
+  | { kind: 'tab';  key: Tab;     label: string; Icon: () => JSX.Element }
+  | { kind: 'link'; href: string; label: string; Icon: () => JSX.Element }
+
+const TABS: NavEntry[] = [
+  { kind: 'tab',  key: 'chat',     label: 'Chat',    Icon: IconChat     },
+  { kind: 'tab',  key: 'dash',     label: 'Dash',    Icon: IconDash     },
+  { kind: 'tab',  key: 'floor',    label: 'Floor',   Icon: IconFloor    },
+  { kind: 'tab',  key: 'trading',  label: 'Trades',  Icon: IconTrading  },
+  { kind: 'tab',  key: 'bounties', label: 'Board',   Icon: IconBounties },
+  { kind: 'tab',  key: 'library',  label: 'Library', Icon: IconNotes    },
+  { kind: 'tab',  key: 'picks',    label: 'Picks',   Icon: IconPicks    },
+  { kind: 'tab',  key: 'desk',     label: 'Desk',    Icon: IconDesk     },
+  { kind: 'link', href: '/local',  label: 'Member',  Icon: IconMember   },
 ]
 
 // Unified primary nav. Off-canvas drawer at every viewport: slides in
@@ -378,13 +393,32 @@ function SideNav({ tab, onTab, badges, open, onClose }: {
           <p className="text-xs font-mono text-slate-500 mt-1">operator console</p>
         </div>
         <div className="flex-1 flex flex-col gap-1 px-3 overflow-y-auto">
-          {TABS.map(({ key, label, Icon }) => {
-            const active = tab === key
-            const count = badges?.[key] ?? 0
+          {TABS.map(entry => {
+            const { label, Icon } = entry
+            if (entry.kind === 'link') {
+              return (
+                <Link
+                  key={`link:${entry.href}`}
+                  href={entry.href}
+                  onClick={onClose}
+                  className="group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors justify-start text-slate-500 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                  title={label}
+                >
+                  <div className="relative shrink-0">
+                    <Icon />
+                  </div>
+                  <span className="text-[12px] font-mono tracking-widest uppercase">
+                    {label}
+                  </span>
+                </Link>
+              )
+            }
+            const active = tab === entry.key
+            const count = badges?.[entry.key] ?? 0
             return (
               <button
-                key={key}
-                onClick={() => handlePick(key)}
+                key={entry.key}
+                onClick={() => handlePick(entry.key)}
                 className={`group relative flex items-center gap-3 rounded-xl px-3 py-3 min-h-[48px] transition-colors justify-start ${
                   active
                     ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-900/60'
