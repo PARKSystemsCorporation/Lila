@@ -1,0 +1,14 @@
+[project]
+name = "lila-bot"
+version = "0.1.0"
+description = "Lila matrix-nio moderator bot for The Bazaar"
+requires-python = ">=3.11"
+dependencies = [
+  "matrix-nio[e2e]>=0.24.0",
+  "aiohttp>=3.9.5",
+  "python-dotenv>=1.0.1",
+  "structlog>=24.1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
