@@ -866,6 +866,19 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE ceelo_state      ADD COLUMN IF NOT EXISTS next_primary JSONB;
     ALTER TABLE lila_loop_state  ADD COLUMN IF NOT EXISTS next_primary JSONB;
 
+    -- Ceelo per-phase observability. Each c0..c5 phase persists its last
+    -- error message (NULL when the phase last succeeded); last_phase_at
+    -- is a JSONB map { c0: iso, c1: iso, ... } stamped on success. Lets
+    -- /api/ceelo/diag and the operator panel surface phase health
+    -- without a new table.
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_c0_error TEXT;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_c1_error TEXT;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_c2_error TEXT;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_c3_error TEXT;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_c4_error TEXT;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_c5_error TEXT;
+    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_phase_at  JSONB;
+
     -- AutonomyLoop's last-routed leaf (cache so we don't burn an LLM call
     -- when nothing changed). 'last_route_path' = full leaf path joined
     -- with '/'; 'last_route_at' is the timestamp.

@@ -72,16 +72,25 @@ export class CeeloLoop {
     let warned = false
     const note = (msg: string) => { if (msg) notes.push(msg) }
 
-    let gradedSummary = ''
-    let edgeSummary   = ''
+    const c0 = await this.withRetry('c0', () => this.c0_refreshCards())
+    if (c0.ok) note(c0.value); else { warned = true; note(`C0 ${c0.error}`) }
 
-    try { note(await this.c0_refreshCards()) }                       catch (e) { warned = true; note(`C0 ${err(e)}`) }
-    try { gradedSummary = await this.c1_gradeResults(); note(gradedSummary) } catch (e) { warned = true; note(`C1 ${err(e)}`) }
-    const refreshedRaces = await this.c2_snapshotOdds().catch((e) => { warned = true; note(`C2 ${err(e)}`); return [] as Race[] })
-    if (refreshedRaces.length) note(`C2 odds ${refreshedRaces.length}`)
-    try { note(await this.c3_computeYield(refreshedRaces)) }         catch (e) { warned = true; note(`C3 ${err(e)}`) }
-    try { edgeSummary = await this.c4_emitPicks(refreshedRaces); note(edgeSummary) } catch (e) { warned = true; note(`C4 ${err(e)}`) }
-    try { note(await this.c5_reconcile()) }                          catch (e) { warned = true; note(`C5 ${err(e)}`) }
+    const c1 = await this.withRetry('c1', () => this.c1_gradeResults())
+    if (c1.ok) note(c1.value); else { warned = true; note(`C1 ${c1.error}`) }
+
+    const c2 = await this.withRetry('c2', () => this.c2_snapshotOdds())
+    const refreshedRaces: Race[] = c2.ok ? c2.value : []
+    if (c2.ok && refreshedRaces.length) note(`C2 odds ${refreshedRaces.length}`)
+    else if (!c2.ok) { warned = true; note(`C2 ${c2.error}`) }
+
+    const c3 = await this.withRetry('c3', () => this.c3_computeYield(refreshedRaces))
+    if (c3.ok) note(c3.value); else { warned = true; note(`C3 ${c3.error}`) }
+
+    const c4 = await this.withRetry('c4', () => this.c4_emitPicks(refreshedRaces))
+    if (c4.ok) note(c4.value); else { warned = true; note(`C4 ${c4.error}`) }
+
+    const c5 = await this.withRetry('c5', () => this.c5_reconcile())
+    if (c5.ok) note(c5.value); else { warned = true; note(`C5 ${c5.error}`) }
 
     await this.db.query(
       `UPDATE ceelo_state SET last_run_at=NOW(), cycle=cycle+1, updated_at=NOW() WHERE id=1`
@@ -89,6 +98,10 @@ export class CeeloLoop {
 
     const msg = notes.filter(Boolean).join(' · ') || 'idle (no races on the board)'
     return { logMessage: `Ceelo — ${msg}`, logType: warned ? 'warn' : 'info' }
+  }
+
+  private withRetry<T>(phase: Phase, fn: () => Promise<T>) {
+    return phasedRetry(this.db, phase, fn)
   }
 
   // ── C0: refresh today's racecards ───────────────────────────────────────
@@ -336,17 +349,50 @@ export class CeeloLoop {
   }
 
   // ── C5: reconcile ───────────────────────────────────────────────────────
-  // Auto-skip any open pick whose race has already started — the operator
-  // missed the window. Mirrors the old CeeloLoop's reconcile semantics.
+  // 1) Auto-skip any open pick whose race has already started — the operator
+  //    missed the window.
+  // 2) Auto-settle any 'taken' pick whose race has a result in ceelo_results:
+  //    won (winner_id matches horse_id) or lost. Payout uses netProfit() on
+  //    the taken_odds the operator captured at placement.
 
   private async c5_reconcile(): Promise<string> {
-    const res = await this.db.query(
+    const skipRes = await this.db.query(
       `UPDATE ceelo_picks
        SET status='skipped', updated_at=NOW()
        WHERE status='open' AND off_dt IS NOT NULL AND off_dt < NOW()`
     )
-    const n = res.rowCount ?? 0
-    return n > 0 ? `C5 auto-skipped ${n} (went off)` : ''
+    const skipped = skipRes.rowCount ?? 0
+
+    // Settle taken picks whose race has finished. Push when the operator
+    // didn't capture taken_odds (void by convention) — keeps the math safe.
+    const settleRes = await this.db.query<{ id: number }>(
+      `WITH joined AS (
+         SELECT p.id, p.stake, p.taken_odds, p.horse_id, r.winner_id
+         FROM ceelo_picks p
+         JOIN ceelo_results r ON r.race_id = p.race_id
+         WHERE p.status = 'taken'
+       )
+       UPDATE ceelo_picks p
+       SET status     = CASE WHEN j.horse_id = j.winner_id THEN 'won' ELSE 'lost' END,
+           payout     = CASE
+                          WHEN j.horse_id = j.winner_id AND j.stake IS NOT NULL AND j.taken_odds IS NOT NULL
+                            THEN ROUND((j.stake * (j.taken_odds - 1))::numeric, 2)
+                          WHEN j.horse_id <> j.winner_id AND j.stake IS NOT NULL
+                            THEN ROUND((-j.stake)::numeric, 2)
+                          ELSE 0
+                        END,
+           settled_at = NOW(),
+           updated_at = NOW()
+       FROM joined j
+       WHERE p.id = j.id
+       RETURNING p.id`
+    )
+    const settled = settleRes.rowCount ?? 0
+
+    const parts: string[] = []
+    if (skipped > 0) parts.push(`auto-skipped ${skipped} (went off)`)
+    if (settled > 0) parts.push(`auto-settled ${settled}`)
+    return parts.length ? `C5 ${parts.join(' · ')}` : ''
   }
 
   // ── chat: operator Q&A on thread='ceelo' ────────────────────────────────
@@ -477,6 +523,52 @@ export class CeeloLoop {
 function minutesSince(ts: Date | string): number {
   const t = typeof ts === 'string' ? new Date(ts).getTime() : ts.getTime()
   return (Date.now() - t) / 60_000
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+// Exported retry helper. One attempt + one retry with 800ms backoff. On
+// final failure persists the message to ceelo_state.last_<phase>_error;
+// on success clears it and stamps last_phase_at. Extracted so it can be
+// unit-tested with a fake PoolClient.
+export type Phase = 'c0' | 'c1' | 'c2' | 'c3' | 'c4' | 'c5'
+
+interface DbLike { query: PoolClient['query'] }
+
+export async function phasedRetry<T>(
+  db: DbLike,
+  phase: Phase,
+  fn: () => Promise<T>,
+  opts: { backoffMs?: number } = {},
+): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+  const backoffMs = opts.backoffMs ?? 800
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const value = await fn()
+      await db.query(
+        `UPDATE ceelo_state
+           SET last_${phase}_error = NULL,
+               last_phase_at       = COALESCE(last_phase_at, '{}'::jsonb) || jsonb_build_object($1, NOW()::text)
+         WHERE id=1`,
+        [phase]
+      )
+      return { ok: true, value }
+    } catch (e) {
+      if (attempt === 0) {
+        await sleep(backoffMs)
+        continue
+      }
+      const message = err(e)
+      await db.query(
+        `UPDATE ceelo_state SET last_${phase}_error=$1 WHERE id=1`,
+        [message]
+      )
+      return { ok: false, error: message }
+    }
+  }
+  return { ok: false, error: 'unreachable' }
 }
 
 function err(e: unknown): string {

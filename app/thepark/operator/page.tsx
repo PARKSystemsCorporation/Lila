@@ -3866,6 +3866,7 @@ function PicksView({ visible, data, reload }: {
         {data?.bySport && data.bySport.length > 0 && <SportBreakdown rollups={data.bySport} />}
         {data?.status && <CeeloStatusCard status={data.status} />}
         {data?.picks && data.picks.length > 0 && <EdgeGraph picks={open.concat(taken)} />}
+        <CeeloHorsesCard />
 
         {!data ? (
           <div className="flex items-center gap-2 py-10 justify-center">
@@ -3918,6 +3919,159 @@ function PicksView({ visible, data, reload }: {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Ceelo Horses panel (operator dashboard inline) ───────────────────────
+//
+// Reads /api/ceelo/kpis. Renders phase health + model record + a 24h
+// hourly avg-edge sparkline so the operator can see if the loop is
+// producing signal. Polls 30s. SVG only, no chart deps.
+
+interface CeeloKpis {
+  cycle: number
+  last_run_at: string | null
+  last_phase_errors: Record<string, string | null> | null
+  last_phase_at: Record<string, string> | null
+  model_record: { wins: number; losses: number; push: number; roi_pct: number }
+  open_picks: number
+  races_24h: number
+  odds_snapshots_24h: number
+  edge_series: Array<{ t: number; avg_edge: number; picks: number }>
+}
+
+function CeeloHorsesCard() {
+  const [kpis, setKpis] = useState<CeeloKpis | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const r = await fetch('/api/ceelo/kpis', { cache: 'no-store' })
+        if (!r.ok) return
+        const body = await r.json()
+        if (cancelled) return
+        if (body?.status?.error) setErr(body.status.error)
+        else setErr(null)
+        setKpis(body?.data ?? null)
+      } catch (e) {
+        if (!cancelled) setErr(String(e).slice(0, 80))
+      }
+    }
+    load()
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      load()
+    }, 30_000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
+
+  const rec = kpis?.model_record
+  const phaseErrors = kpis?.last_phase_errors ?? null
+  const failingPhases = phaseErrors
+    ? Object.entries(phaseErrors).filter(([, v]) => v).map(([k]) => k.toUpperCase())
+    : []
+
+  return (
+    <div className="border border-amber-500/20 rounded-xl bg-slate-900 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-amber-400">▌▌▌</span>
+          <p className="text-xs font-mono text-amber-200 font-semibold uppercase tracking-widest">
+            Ceelo · Horses
+          </p>
+        </div>
+        <Link
+          href="/horse-racing"
+          className="font-mono text-[10px] tracking-widest text-amber-400 hover:text-amber-300 uppercase"
+        >
+          open card →
+        </Link>
+      </div>
+
+      {!kpis ? (
+        <div className="text-[10px] font-mono text-slate-600">
+          {err ? `error: ${err}` : 'Loading…'}
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <Kpi label="cycle" value={String(kpis.cycle)} />
+            <Kpi label="open picks" value={String(kpis.open_picks)} />
+            <Kpi
+              label="record"
+              value={rec ? `${rec.wins}-${rec.losses}` : '—'}
+              sub={rec ? `roi ${rec.roi_pct >= 0 ? '+' : ''}${rec.roi_pct}%` : ''}
+            />
+            <Kpi
+              label="snapshots 24h"
+              value={String(kpis.odds_snapshots_24h)}
+              sub={`${kpis.races_24h} races`}
+            />
+          </div>
+          {failingPhases.length > 0 && (
+            <div className="border border-rose-500/40 bg-rose-500/10 px-3 py-2">
+              <p className="font-mono text-[9px] tracking-widest text-rose-300 uppercase">
+                phase errors: {failingPhases.join(' · ')}
+              </p>
+            </div>
+          )}
+          <CeeloEdgeSparkline series={kpis.edge_series} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="border border-slate-800 bg-slate-950/40 px-2 py-2">
+      <div className="font-mono text-[9px] tracking-widest text-slate-500 uppercase">{label}</div>
+      <div className="font-mono text-sm text-white tabular-nums">{value}</div>
+      {sub && <div className="font-mono text-[9px] text-slate-500 tabular-nums">{sub}</div>}
+    </div>
+  )
+}
+
+function CeeloEdgeSparkline({ series }: { series: Array<{ t: number; avg_edge: number; picks: number }> }) {
+  if (series.length < 2) {
+    return (
+      <p className="font-mono text-[9px] tracking-widest text-slate-600 uppercase">
+        avg edge — not enough data
+      </p>
+    )
+  }
+  const W = 480
+  const H = 56
+  const PAD = 4
+  const xs = series.map(s => s.t)
+  const ys = series.map(s => s.avg_edge)
+  const xMin = xs[0]
+  const xMax = xs[xs.length - 1]
+  const yMin = Math.min(0, ...ys)
+  const yMax = Math.max(0, ...ys)
+  const xSpan = Math.max(1, xMax - xMin)
+  const ySpan = Math.max(1, yMax - yMin)
+  const px = (x: number) => PAD + ((x - xMin) / xSpan) * (W - 2 * PAD)
+  const py = (y: number) => H - PAD - ((y - yMin) / ySpan) * (H - 2 * PAD)
+  const zeroY = py(0)
+  const d = series.map((s, i) => `${i === 0 ? 'M' : 'L'} ${px(s.t).toFixed(1)} ${py(s.avg_edge).toFixed(1)}`).join(' ')
+  const last = series[series.length - 1]
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <p className="font-mono text-[9px] tracking-widest text-slate-500 uppercase">
+          avg edge — last {series.length}h
+        </p>
+        <p className="font-mono text-[10px] text-amber-300 tabular-nums">
+          {last.avg_edge >= 0 ? '+' : ''}{last.avg_edge.toFixed(2)}%
+        </p>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-14">
+        <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY} stroke="#1e293b" strokeWidth={1} strokeDasharray="2 3" />
+        <path d={d} fill="none" stroke="#fbbf24" strokeWidth={1.5} strokeLinecap="round" />
+      </svg>
     </div>
   )
 }

@@ -38,6 +38,7 @@ export async function GET() {
   }
 
   let dbState: Record<string, unknown> | null = null
+  let phaseHealth: Record<string, unknown> | null = null
   if (process.env.DATABASE_URL) {
     const pool = getPool()
     const db = await pool.connect()
@@ -53,6 +54,29 @@ export async function GET() {
             (SELECT COUNT(*) FROM ceelo_picks WHERE source='model' AND model_outcome IS NOT NULL)      AS model_graded`
       )
       dbState = rows[0] ?? null
+
+      const { rows: phaseRows } = await db.query(
+        `SELECT last_c0_error, last_c1_error, last_c2_error,
+                last_c3_error, last_c4_error, last_c5_error,
+                last_phase_at,
+                to_char(last_run_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_run_at
+         FROM ceelo_state WHERE id=1`
+      )
+      const p = phaseRows[0]
+      if (p) {
+        phaseHealth = {
+          last_run_at: p.last_run_at,
+          last_phase_at: p.last_phase_at,
+          last_phase_errors: {
+            c0: p.last_c0_error,
+            c1: p.last_c1_error,
+            c2: p.last_c2_error,
+            c3: p.last_c3_error,
+            c4: p.last_c4_error,
+            c5: p.last_c5_error,
+          },
+        }
+      }
     } finally { db.release() }
   }
 
@@ -67,6 +91,7 @@ export async function GET() {
       racing_err: racingErr,
     },
     db: dbState,
+    phase: phaseHealth,
     notes: [
       'upstream.region                = active Racing API region. NA = North America meets/entries; UK = legacy racecards.',
       'upstream.meets_today           = NA meets returned by the upstream right now (UK = 0 by design).',
@@ -75,6 +100,8 @@ export async function GET() {
       'db.upcoming_races              = races scheduled in the future and not yet final.',
       'db.odds_snapshots_recent       = per-runner odds rows inserted in the last 6h (loop heartbeat).',
       'db.last_odds_at                = timestamp of the most-recent odds snapshot. NULL = none ever.',
+      'phase.last_phase_errors        = last persisted error per c0..c5; NULL when the phase last succeeded.',
+      'phase.last_phase_at            = JSONB map { c0: iso, c1: iso, ... } of the last success timestamp.',
     ],
   })
 }
