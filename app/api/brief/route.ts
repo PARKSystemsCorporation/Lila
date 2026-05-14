@@ -62,79 +62,73 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [
-      walletRes, paidMtdRes, lastPaidRes, paidSumRes,
-      bountyCounts, paperRealizedRes, openLocalRes,
-      cipherRes, scoutRes, vegaRes, targetRes, lilaRes, ceeloRes,
-    ] = await Promise.all([
-      db.query(`SELECT total_earned, active_tasks, reconciled_paper_pnl_v2 FROM lila_state WHERE id=1`),
-      db.query(
-        `SELECT COALESCE(SUM(payout), 0) AS paid_mtd
-         FROM security_reports
-         WHERE status='paid' AND paid_at >= date_trunc('month', NOW())`
-      ),
-      db.query(
-        `SELECT title, payout, to_char(paid_at, 'YYYY-MM-DD') AS d
-         FROM security_reports
-         WHERE status='paid' ORDER BY paid_at DESC LIMIT 1`
-      ),
-      db.query(
-        `SELECT COALESCE(SUM(payout), 0) AS sum_of_paid,
-                COUNT(*) AS paid_count
-         FROM security_reports
-         WHERE status='paid' AND payout IS NOT NULL`
-      ),
-      db.query(
-        `SELECT
-            COUNT(*) FILTER (WHERE status='pending_review') AS pending_review,
-            COUNT(*) FILTER (WHERE status='approved')       AS approved,
-            COUNT(*) FILTER (WHERE status='submitted')      AS submitted,
-            COALESCE(SUM(reward) FILTER (WHERE status='submitted'), 0) AS awaiting_payout_max
-         FROM security_reports`
-      ),
-      db.query(
-        `SELECT COALESCE(SUM(pnl), 0) AS realized
-         FROM lila_positions WHERE status='closed'`
-      ),
-      db.query(
-        `SELECT symbol, direction, entry_price, target_price, stop_loss
-         FROM lila_positions WHERE status='open'
-         ORDER BY opened_at DESC LIMIT 10`
-      ),
-      db.query(
-        `SELECT step, turn_count,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
-         FROM lila_loop_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT cycle,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
-                (SELECT COUNT(*) FROM scout_findings) AS scanned,
-                (SELECT COUNT(*) FROM scout_findings WHERE status='reported') AS reported
-         FROM scout_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT step, cycle,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
-         FROM analyst_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT title, phase, cycles
-         FROM research_targets
-         WHERE status='active' ORDER BY last_worked_at DESC NULLS LAST LIMIT 1`
-      ),
-      db.query(
-        `SELECT (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint AS last_chat_ts
-         FROM chat_messages WHERE sender='lila' AND thread='main'`
-      ),
-      db.query(
-        `SELECT cycle,
-                (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS last_ts,
-                (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
-                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
-         FROM ceelo_state WHERE id=1`
-      ),
-    ])
+    const walletRes = await db.query(`SELECT total_earned, active_tasks, reconciled_paper_pnl_v2 FROM lila_state WHERE id=1`)
+    const paidMtdRes = await db.query(
+      `SELECT COALESCE(SUM(payout), 0) AS paid_mtd
+       FROM security_reports
+       WHERE status='paid' AND paid_at >= date_trunc('month', NOW())`
+    )
+    const lastPaidRes = await db.query(
+      `SELECT title, payout, to_char(paid_at, 'YYYY-MM-DD') AS d
+       FROM security_reports
+       WHERE status='paid' ORDER BY paid_at DESC LIMIT 1`
+    )
+    const paidSumRes = await db.query(
+      `SELECT COALESCE(SUM(payout), 0) AS sum_of_paid,
+              COUNT(*) AS paid_count
+       FROM security_reports
+       WHERE status='paid' AND payout IS NOT NULL`
+    )
+    const bountyCounts = await db.query(
+      `SELECT
+          COUNT(*) FILTER (WHERE status='pending_review') AS pending_review,
+          COUNT(*) FILTER (WHERE status='approved')       AS approved,
+          COUNT(*) FILTER (WHERE status='submitted')      AS submitted,
+          COALESCE(SUM(reward) FILTER (WHERE status='submitted'), 0) AS awaiting_payout_max
+       FROM security_reports`
+    )
+    const paperRealizedRes = await db.query(
+      `SELECT COALESCE(SUM(pnl), 0) AS realized
+       FROM lila_positions WHERE status='closed'`
+    )
+    const openLocalRes = await db.query(
+      `SELECT symbol, direction, entry_price, target_price, stop_loss
+       FROM lila_positions WHERE status='open'
+       ORDER BY opened_at DESC LIMIT 10`
+    )
+    const cipherRes = await db.query(
+      `SELECT step, turn_count,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
+       FROM lila_loop_state WHERE id=1`
+    )
+    const scoutRes = await db.query(
+      `SELECT cycle,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
+              (SELECT COUNT(*) FROM scout_findings) AS scanned,
+              (SELECT COUNT(*) FROM scout_findings WHERE status='reported') AS reported
+       FROM scout_state WHERE id=1`
+    )
+    const vegaRes = await db.query(
+      `SELECT step, cycle,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
+       FROM analyst_state WHERE id=1`
+    )
+    const targetRes = await db.query(
+      `SELECT title, phase, cycles
+       FROM research_targets
+       WHERE status='active' ORDER BY last_worked_at DESC NULLS LAST LIMIT 1`
+    )
+    const lilaRes = await db.query(
+      `SELECT (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint AS last_chat_ts
+       FROM chat_messages WHERE sender='lila' AND thread='main'`
+    )
+    const ceeloRes = await db.query(
+      `SELECT cycle,
+              (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS last_ts,
+              (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
+              (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
+       FROM ceelo_state WHERE id=1`
+    )
 
     // Open positions: prefer Alpaca's live view (it has live PnL) but fall
     // back to our local mirror if Alpaca isn't configured.

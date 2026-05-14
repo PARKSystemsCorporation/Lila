@@ -25,6 +25,13 @@ interface LocalShellProps {
 
 export function LocalShell({ title, subtitle, accent = 'amber', back, hero, children }: LocalShellProps) {
   const time = useClock()
+  const [isOperator, setIsOperator] = useState(false)
+  useEffect(() => {
+    fetch('/api/me', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.isOperator) setIsOperator(true) })
+      .catch(() => {})
+  }, [])
   const signOut = async () => {
     await fetch('/api/viewer/login', { method: 'DELETE' }).catch(() => {})
     window.location.href = '/'
@@ -82,14 +89,25 @@ export function LocalShell({ title, subtitle, accent = 'amber', back, hero, chil
               {time && <>pst · {time}</>}
             </span>
             <IconCrosshair />
-            <button
-              onClick={signOut}
-              className="text-amber-500/70 hover:text-amber-300 transition-colors"
-              aria-label="Sign out"
-              title="Sign out"
-            >
-              <IconUser />
-            </button>
+            {isOperator ? (
+              <Link
+                href="/thepark/operator"
+                className="text-amber-500/70 hover:text-amber-300 transition-colors"
+                aria-label="Operator backend"
+                title="Operator backend"
+              >
+                <IconUser />
+              </Link>
+            ) : (
+              <button
+                onClick={signOut}
+                className="text-amber-500/70 hover:text-amber-300 transition-colors"
+                aria-label="Sign out"
+                title="Sign out"
+              >
+                <IconUser />
+              </button>
+            )}
           </div>
         </div>
       </header>

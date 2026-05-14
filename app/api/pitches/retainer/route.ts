@@ -64,29 +64,27 @@ Rules:
 - If the track-record numbers are all zero, write a short honest line like "Newly launched service — ask us for current-cycle research examples on request." instead of fabricating stats.`
 
 async function gatherFacts(db: import('pg').PoolClient): Promise<{ facts: string; trackRecord: string }> {
-  const [earnings, reports, targets, positions] = await Promise.all([
-    db.query('SELECT total_earned FROM lila_state WHERE id=1'),
-    db.query(`
-      SELECT
-        COUNT(*)                                           AS total,
-        COUNT(*) FILTER (WHERE status='paid')              AS paid_count,
-        COALESCE(SUM(payout) FILTER (WHERE status='paid'), 0) AS paid_sum,
-        COUNT(*) FILTER (WHERE status='submitted')         AS submitted
-      FROM security_reports
-    `),
-    db.query(`
-      SELECT
-        COUNT(*)                                            AS total,
-        COUNT(*) FILTER (WHERE status='found')              AS found_count,
-        COUNT(*) FILTER (WHERE status='exhausted')          AS exhausted_count,
-        COALESCE(AVG(cycles), 0)::int                       AS avg_cycles
-      FROM research_targets
-    `),
-    db.query(`
-      SELECT COUNT(*) AS closed_count, COALESCE(SUM(pnl) FILTER (WHERE pnl > 0), 0) AS wins
-      FROM lila_positions WHERE status='closed'
-    `),
-  ])
+  const earnings = await db.query('SELECT total_earned FROM lila_state WHERE id=1')
+  const reports = await db.query(`
+    SELECT
+      COUNT(*)                                           AS total,
+      COUNT(*) FILTER (WHERE status='paid')              AS paid_count,
+      COALESCE(SUM(payout) FILTER (WHERE status='paid'), 0) AS paid_sum,
+      COUNT(*) FILTER (WHERE status='submitted')         AS submitted
+    FROM security_reports
+  `)
+  const targets = await db.query(`
+    SELECT
+      COUNT(*)                                            AS total,
+      COUNT(*) FILTER (WHERE status='found')              AS found_count,
+      COUNT(*) FILTER (WHERE status='exhausted')          AS exhausted_count,
+      COALESCE(AVG(cycles), 0)::int                       AS avg_cycles
+    FROM research_targets
+  `)
+  const positions = await db.query(`
+    SELECT COUNT(*) AS closed_count, COALESCE(SUM(pnl) FILTER (WHERE pnl > 0), 0) AS wins
+    FROM lila_positions WHERE status='closed'
+  `)
 
   const te = parseFloat(earnings.rows[0]?.total_earned ?? '0')
   const r = reports.rows[0] ?? {}

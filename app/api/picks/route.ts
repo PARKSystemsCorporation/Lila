@@ -60,59 +60,60 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [picksRes, stateRes, racesRes, runnerOddsRes, modelRollupRes] = await Promise.all([
-      db.query(
-        `SELECT id, race_label, market, horse_name,
-                model_prob, fair_decimal, book_decimal, edge_pct,
-                intensity, velocity, source,
-                reasoning, confidence, status, stake, taken_odds, payout,
-                (EXTRACT(EPOCH FROM off_dt)     * 1000)::bigint AS off_ts,
-                (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
-                (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
-                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
-         FROM ceelo_picks
-         ORDER BY
-           CASE status
-             WHEN 'open'    THEN 0
-             WHEN 'taken'   THEN 1
-             WHEN 'won'     THEN 2
-             WHEN 'lost'    THEN 2
-             WHEN 'push'    THEN 2
-             WHEN 'void'    THEN 2
-             WHEN 'skipped' THEN 3
-           END,
-           created_at DESC
-         LIMIT 200`
-      ),
-      db.query(
-        `SELECT (EXTRACT(EPOCH FROM last_run_at)      * 1000)::bigint AS last_run_ts,
-                (EXTRACT(EPOCH FROM last_schedule_at) * 1000)::bigint AS last_sched_ts,
-                (EXTRACT(EPOCH FROM last_grade_at)    * 1000)::bigint AS last_grade_ts,
-                (EXTRACT(EPOCH FROM last_odds_at)     * 1000)::bigint AS last_odds_ts,
-                cycle
-         FROM ceelo_state WHERE id=1`
-      ),
-      db.query(`SELECT COUNT(*) AS n FROM ceelo_races WHERE status='scheduled' AND off_dt > NOW()`),
-      db.query(`SELECT COUNT(*) AS n FROM ceelo_runner_odds WHERE fetched_at > NOW() - INTERVAL '30 minutes'`),
-      // Model auto-grade rollup. One row of operator + model stats.
-      db.query(
-        `SELECT
-            COUNT(*)                              FILTER (WHERE status='open')                                    AS op_open,
-            COUNT(*)                              FILTER (WHERE status='taken')                                   AS op_active,
-            COUNT(*)                              FILTER (WHERE status='won')                                     AS op_wins,
-            COUNT(*)                              FILTER (WHERE status='lost')                                    AS op_losses,
-            COUNT(*)                              FILTER (WHERE status IN ('push','void'))                        AS op_pushes,
-            COALESCE(SUM(stake)                   FILTER (WHERE status IN ('taken','won','lost','push','void')), 0) AS op_staked,
-            COALESCE(SUM(stake + COALESCE(payout, 0)) FILTER (WHERE status='won'), 0)                             AS op_won_returned,
-            COALESCE(SUM(stake)                   FILTER (WHERE status IN ('push','void')), 0)                    AS op_push_returned,
-            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='win')           AS model_wins,
-            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='loss')          AS model_losses,
-            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='push')          AS model_pushes,
-            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome IS NOT NULL)     AS model_settled,
-            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome IS NULL)         AS model_pending
-         FROM ceelo_picks`
-      ),
-    ])
+    // Sequentialized (pg 8.20 DEP_PG_QUERY_CONCURRENT on shared PoolClient —
+    // see commit b5b845b on main). pg serializes per-client anyway so the
+    // wall-time is identical to the prior Promise.all.
+    const picksRes = await db.query(
+      `SELECT id, race_label, market, horse_name,
+              model_prob, fair_decimal, book_decimal, edge_pct,
+              intensity, velocity, source,
+              reasoning, confidence, status, stake, taken_odds, payout,
+              (EXTRACT(EPOCH FROM off_dt)     * 1000)::bigint AS off_ts,
+              (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
+              (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
+              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
+       FROM ceelo_picks
+       ORDER BY
+         CASE status
+           WHEN 'open'    THEN 0
+           WHEN 'taken'   THEN 1
+           WHEN 'won'     THEN 2
+           WHEN 'lost'    THEN 2
+           WHEN 'push'    THEN 2
+           WHEN 'void'    THEN 2
+           WHEN 'skipped' THEN 3
+         END,
+         created_at DESC
+       LIMIT 200`
+    )
+    const stateRes = await db.query(
+      `SELECT (EXTRACT(EPOCH FROM last_run_at)      * 1000)::bigint AS last_run_ts,
+              (EXTRACT(EPOCH FROM last_schedule_at) * 1000)::bigint AS last_sched_ts,
+              (EXTRACT(EPOCH FROM last_grade_at)    * 1000)::bigint AS last_grade_ts,
+              (EXTRACT(EPOCH FROM last_odds_at)     * 1000)::bigint AS last_odds_ts,
+              cycle
+       FROM ceelo_state WHERE id=1`
+    )
+    const racesRes = await db.query(`SELECT COUNT(*) AS n FROM ceelo_races WHERE status='scheduled' AND off_dt > NOW()`)
+    const runnerOddsRes = await db.query(`SELECT COUNT(*) AS n FROM ceelo_runner_odds WHERE fetched_at > NOW() - INTERVAL '30 minutes'`)
+    // Model auto-grade rollup. One row of operator + model stats.
+    const modelRollupRes = await db.query(
+      `SELECT
+          COUNT(*)                              FILTER (WHERE status='open')                                    AS op_open,
+          COUNT(*)                              FILTER (WHERE status='taken')                                   AS op_active,
+          COUNT(*)                              FILTER (WHERE status='won')                                     AS op_wins,
+          COUNT(*)                              FILTER (WHERE status='lost')                                    AS op_losses,
+          COUNT(*)                              FILTER (WHERE status IN ('push','void'))                        AS op_pushes,
+          COALESCE(SUM(stake)                   FILTER (WHERE status IN ('taken','won','lost','push','void')), 0) AS op_staked,
+          COALESCE(SUM(stake + COALESCE(payout, 0)) FILTER (WHERE status='won'), 0)                             AS op_won_returned,
+          COALESCE(SUM(stake)                   FILTER (WHERE status IN ('push','void')), 0)                    AS op_push_returned,
+          COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='win')           AS model_wins,
+          COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='loss')          AS model_losses,
+          COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='push')          AS model_pushes,
+          COUNT(*)                              FILTER (WHERE source='model' AND model_outcome IS NOT NULL)     AS model_settled,
+          COUNT(*)                              FILTER (WHERE source='model' AND model_outcome IS NULL)         AS model_pending
+       FROM ceelo_picks`
+    )
 
     const rows = picksRes.rows
     const s = stateRes.rows[0] ?? {}

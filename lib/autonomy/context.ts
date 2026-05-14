@@ -60,8 +60,11 @@ export async function buildContext(db: PoolClient): Promise<AutonomyContext> {
   let unanswered: AutonomyContext['unanswered_operator'] = null
   for (let i = chatRows.length - 1; i >= 0; i--) {
     const r = chatRows[i]
-    if (r.sender === 'lila') break
-    if (r.sender !== 'lila' && r.kind === 'message') {
+    // A Lila chat-visible reply after the candidate ends the search.
+    if (r.sender === 'lila' && r.kind === 'message') break
+    // Only true operator messages count. Teammate chatter (analyst/cipher/
+    // scout/forge) must NOT route Lila to OPERATOR-MESSAGE.
+    if (r.sender === 'user' && r.kind === 'message') {
       unanswered = { ts: new Date(Number(r.ts)).toISOString(), text: String(r.content).slice(0, 240) }
       break
     }

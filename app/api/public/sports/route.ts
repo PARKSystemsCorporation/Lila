@@ -48,28 +48,27 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [edgesRes, articlesRes] = await Promise.all([
-      // Racing top picks. We map the racing columns onto the legacy TopEdge
-      // shape (game_label ← race_label, side ← horse_name, edge_points ← null)
-      // so the public landing page keeps rendering.
-      db.query(
-        `SELECT id, race_label, market, horse_name, edge_pct, model_prob,
-                fair_decimal, book_decimal, confidence,
-                (EXTRACT(EPOCH FROM off_dt) * 1000)::bigint AS off_ts
-         FROM ceelo_picks
-         WHERE status='open'
-         ORDER BY intensity DESC NULLS LAST, COALESCE(edge_pct, 0) DESC, created_at DESC
-         LIMIT 3`
-      ),
-      db.query(
-        `SELECT id, title, content, author, kind,
-                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
-         FROM articles
-         WHERE status='published' AND author='ceelo'
-         ORDER BY created_at DESC
-         LIMIT 3`
-      ),
-    ])
+    // Sequentialized (pg DEP_PG_QUERY_CONCURRENT — see b5b845b on main).
+    // Racing top picks. We map the racing columns onto the legacy TopEdge
+    // shape (game_label ← race_label, side ← horse_name, edge_points ← null)
+    // so the public landing page keeps rendering.
+    const edgesRes = await db.query(
+      `SELECT id, race_label, market, horse_name, edge_pct, model_prob,
+              fair_decimal, book_decimal, confidence,
+              (EXTRACT(EPOCH FROM off_dt) * 1000)::bigint AS off_ts
+       FROM ceelo_picks
+       WHERE status='open'
+       ORDER BY intensity DESC NULLS LAST, COALESCE(edge_pct, 0) DESC, created_at DESC
+       LIMIT 3`
+    )
+    const articlesRes = await db.query(
+      `SELECT id, title, content, author, kind,
+              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
+       FROM articles
+       WHERE status='published' AND author='ceelo'
+       ORDER BY created_at DESC
+       LIMIT 3`
+    )
 
     const top_edges: TopEdge[] = edgesRes.rows.map(r => ({
       id: Number(r.id),

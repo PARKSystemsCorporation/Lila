@@ -376,41 +376,40 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot Ceelo's world: today's races + top yield runners + open picks.
-    const [topYield, openPicks, status] = await Promise.all([
-      this.db.query(
-        `SELECT r.course, r.off_time, r.race_name, run.horse, latest.edge_pct,
-                latest.odds_decimal, latest.fair_decimal
-         FROM ceelo_races r
-         JOIN LATERAL (
-           SELECT ro.horse_id, ro.odds_decimal, ro.fair_decimal, ro.edge_pct
-           FROM ceelo_runner_odds ro
-           WHERE ro.race_id = r.race_id AND ro.edge_pct IS NOT NULL
-           ORDER BY ro.edge_pct DESC NULLS LAST, ro.fetched_at DESC
-           LIMIT 1
-         ) latest ON true
-         JOIN ceelo_runners run ON run.race_id = r.race_id AND run.horse_id = latest.horse_id
-         WHERE r.status='scheduled' AND r.off_dt BETWEEN NOW() AND NOW() + INTERVAL '8 hours'
-         ORDER BY latest.edge_pct DESC NULLS LAST
-         LIMIT 8`
-      ),
-      this.db.query(
-        `SELECT race_label, horse_name, fair_decimal, book_decimal, edge_pct, intensity, velocity
-         FROM ceelo_picks
-         WHERE status='open'
-         ORDER BY intensity DESC NULLS LAST, created_at DESC
-         LIMIT 6`
-      ),
-      this.db.query(
-        `SELECT cycle,
-                (SELECT COUNT(*) FROM ceelo_races WHERE status='scheduled' AND off_dt > NOW()) AS upcoming_races,
-                (SELECT COUNT(*) FROM ceelo_races WHERE status='final')                         AS final_races,
-                (SELECT COUNT(*) FROM ceelo_runner_odds WHERE fetched_at > NOW() - INTERVAL '30 minutes') AS recent_odds_snapshots,
-                (SELECT COUNT(*) FROM ceelo_picks WHERE status='open')                          AS open_picks,
-                (SELECT COUNT(*) FROM ceelo_picks WHERE source='model' AND model_outcome='win') AS model_wins,
-                (SELECT COUNT(*) FROM ceelo_picks WHERE source='model' AND model_outcome='loss') AS model_losses
-         FROM ceelo_state WHERE id=1`
-      ),
-    ])
+    // Sequentialized per b5b845b on main (pg DEP_PG_QUERY_CONCURRENT).
+    const topYield = await this.db.query(
+      `SELECT r.course, r.off_time, r.race_name, run.horse, latest.edge_pct,
+              latest.odds_decimal, latest.fair_decimal
+       FROM ceelo_races r
+       JOIN LATERAL (
+         SELECT ro.horse_id, ro.odds_decimal, ro.fair_decimal, ro.edge_pct
+         FROM ceelo_runner_odds ro
+         WHERE ro.race_id = r.race_id AND ro.edge_pct IS NOT NULL
+         ORDER BY ro.edge_pct DESC NULLS LAST, ro.fetched_at DESC
+         LIMIT 1
+       ) latest ON true
+       JOIN ceelo_runners run ON run.race_id = r.race_id AND run.horse_id = latest.horse_id
+       WHERE r.status='scheduled' AND r.off_dt BETWEEN NOW() AND NOW() + INTERVAL '8 hours'
+       ORDER BY latest.edge_pct DESC NULLS LAST
+       LIMIT 8`
+    )
+    const openPicks = await this.db.query(
+      `SELECT race_label, horse_name, fair_decimal, book_decimal, edge_pct, intensity, velocity
+       FROM ceelo_picks
+       WHERE status='open'
+       ORDER BY intensity DESC NULLS LAST, created_at DESC
+       LIMIT 6`
+    )
+    const status = await this.db.query(
+      `SELECT cycle,
+              (SELECT COUNT(*) FROM ceelo_races WHERE status='scheduled' AND off_dt > NOW()) AS upcoming_races,
+              (SELECT COUNT(*) FROM ceelo_races WHERE status='final')                         AS final_races,
+              (SELECT COUNT(*) FROM ceelo_runner_odds WHERE fetched_at > NOW() - INTERVAL '30 minutes') AS recent_odds_snapshots,
+              (SELECT COUNT(*) FROM ceelo_picks WHERE status='open')                          AS open_picks,
+              (SELECT COUNT(*) FROM ceelo_picks WHERE source='model' AND model_outcome='win') AS model_wins,
+              (SELECT COUNT(*) FROM ceelo_picks WHERE source='model' AND model_outcome='loss') AS model_losses
+       FROM ceelo_state WHERE id=1`
+    )
 
     const s = status.rows[0] ?? {}
     const yieldLines = topYield.rows.length
