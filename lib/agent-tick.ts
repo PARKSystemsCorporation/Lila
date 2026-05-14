@@ -10,6 +10,7 @@ import { AutonomyLoop } from './autonomy/loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
+import { HorseLoop } from './horse-racing/horse-loop'
 import { DmLoop } from './dm-loop'
 import { runGumroadReverify } from './gumroad-reverify'
 import { runNoonArticles } from './article-engine'
@@ -200,6 +201,20 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (ceeloResult) {
       await logEvent(db, ceeloResult.logMessage, ceeloResult.logType)
       logs.push(ceeloResult.logMessage)
+    }
+
+    // 5b. Horse — thoroughbred racecards via The Racing API. Self-gates
+    //     on ENABLE_HORSE_RACING + missing creds; 1 RPS upstream limit
+    //     is enforced inside lib/horse-racing/rate-limiter.ts so the
+    //     loop can run as often as HORSE_RUN_SEC permits.
+    const horse = new HorseLoop(db)
+    const horseResult = await horse.run().catch((e: unknown) => ({
+      logMessage: `Horse error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (horseResult) {
+      await logEvent(db, horseResult.logMessage, horseResult.logType)
+      logs.push(horseResult.logMessage)
     }
 
     // 6. Discovery — daily scan for new protocols / Solidity repos.

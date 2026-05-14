@@ -492,6 +492,16 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_injury_at    TIMESTAMPTZ;
     ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_seed_at      TIMESTAMPTZ;
 
+    -- Horse-racing loop time-gate ledger. Mirrors ceelo_state shape; the
+    -- loop body lives in lib/horse-racing/horse-loop.ts.
+    CREATE TABLE IF NOT EXISTS horse_state (
+      id          INTEGER     PRIMARY KEY DEFAULT 1,
+      cycle       INTEGER     NOT NULL DEFAULT 0,
+      last_run_at TIMESTAMPTZ,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO horse_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
     -- Closing lines per game from nflverse historical data. Surface for
     -- backtesting and to seed Ceelo's awareness of where the market closed.
     ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS closing_spread    NUMERIC(5,2);

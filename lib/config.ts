@@ -52,6 +52,11 @@ export const cfg = Object.freeze({
   BROADCAST_PREVIEW_WINDOW_MIN: num('BROADCAST_PREVIEW_WINDOW_MIN', 5),
   // Server autonomy ticker interval (ms).
   AUTONOMY_TICK_MS:       num('AUTONOMY_TICK_MS', 30_000),
+  // Horse-racing loop interval (seconds). Keeps the racecard / odds
+  // cache warm and emits a digest log entry. Internally rate-limited
+  // to 1 RPS by lib/horse-racing/rate-limiter.ts, so this can stay
+  // aggressive without burning the free-tier quota.
+  HORSE_RUN_SEC:          num('HORSE_RUN_SEC', 300),
 
   // ── Budget ───────────────────────────────────────────────────────────────
   // Daily USD cap on background LLM spend. 0 = no cap. Chat streaming is
@@ -65,6 +70,9 @@ export const cfg = Object.freeze({
   // ── Switches ─────────────────────────────────────────────────────────────
   ENABLE_AUTONOMY_TICKER: bool('ENABLE_AUTONOMY_TICKER', true),
   ENABLE_BROADCAST:       bool('ENABLE_BROADCAST', true),
+  // Horse-racing loop kill-switch. Default on; flip off to silence the
+  // loop without removing the upstream credentials.
+  ENABLE_HORSE_RACING:    bool('ENABLE_HORSE_RACING', true),
   // Daily DELETE of stale log / token-usage / chat / broadcast / hypothesis
   // rows so Postgres doesn't grow forever. Financial tables (security_reports,
   // lila_positions, analyst_picks, watch_targets, research_targets) are never

@@ -1,6 +1,6 @@
 // Post-login landing — the room you walk into after signing in. Two main
-// doors (vault1022 — soon — and the yield) plus supporting links. Rendered
-// at `/` for any visitor with a viewer or operator cookie.
+// doors (the yield + horse racing) plus supporting links. Rendered at `/`
+// for any visitor with a viewer or operator cookie.
 
 'use client'
 
@@ -59,12 +59,12 @@ export default function MemberLanding() {
             icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconBaseball key="bs" />, <IconDroplet key="oil" />, <IconBull key="bl" />]}
           />
           <MarketDoor
-            kicker="locked · members soon"
-            title="VAULT1022"
+            href="/horse-racing"
+            kicker="thoroughbreds · live yields"
+            title="HORSE RACING"
             tone="amber"
-            cta="vault opens soon"
-            icons={[<IconShield key="sh" />, <IconBolt key="bt" />, <IconTarget key="tg" />]}
-            soon
+            cta="enter the gates →"
+            icons={[<IconBolt key="bt" />, <IconTarget key="tg" />, <IconTrophy key="tr" />]}
           />
         </div>
       </section>
