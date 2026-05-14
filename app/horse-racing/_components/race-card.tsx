@@ -3,6 +3,7 @@
 // arrow + edge. Aesthetic matches the rest of the Park: dark slate base,
 // amber accents, monospace tracking-heavy labels.
 
+import Link from 'next/link'
 import type { Race } from '../page'
 
 export function RaceCard({ race }: { race: Race }) {
@@ -77,18 +78,15 @@ export function RaceCard({ race }: { race: Race }) {
         )}
       </div>
 
-      {/* Footer / drill-in stub */}
+      {/* Footer / drill-in link */}
       <footer className="border-t border-amber-500/10 px-4 sm:px-5 py-2 flex items-center justify-between font-mono text-[9px] sm:text-[10px] tracking-[0.32em] uppercase text-slate-600">
         <span className="truncate">{race.race_id}</span>
-        <button
-          type="button"
-          disabled
-          aria-disabled
-          title="full field coming soon"
-          className="text-slate-700 cursor-not-allowed"
+        <Link
+          href={`/horse-racing/${encodeURIComponent(race.race_id)}`}
+          className="text-amber-400 hover:text-amber-300 transition-colors"
         >
           view field →
-        </button>
+        </Link>
       </footer>
     </article>
   )

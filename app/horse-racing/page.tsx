@@ -8,7 +8,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { LocalShell, IconBolt, IconTarget, IconTrophy } from '@/app/_components/local/chrome'
 import { RaceCard } from './_components/race-card'
 
@@ -56,12 +56,23 @@ interface ApiResp {
 export default function HorseRacingPage() {
   const [resp, setResp] = useState<ApiResp | null>(null)
   const [loading, setLoading] = useState(true)
+  const etagRef = useRef<string | null>(null)
+  // Latest races kept in a ref so the polling closure can read fresh
+  // off-times without re-running the effect on every state update.
+  const racesRef = useRef<Race[]>([])
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch('/api/horse-racing', { cache: 'no-store' })
+      const headers: Record<string, string> = {}
+      if (etagRef.current) headers['If-None-Match'] = etagRef.current
+      const r = await fetch('/api/horse-racing', { cache: 'no-store', headers })
+      if (r.status === 304) return
       if (!r.ok) { setResp(null); return }
-      setResp(await r.json())
+      const etag = r.headers.get('etag')
+      if (etag) etagRef.current = etag
+      const body = await r.json() as ApiResp
+      racesRef.current = body.races ?? []
+      setResp(body)
     } catch {
       setResp(null)
     } finally {
@@ -71,8 +82,47 @@ export default function HorseRacingPage() {
 
   useEffect(() => {
     load()
-    const id = setInterval(load, 30_000)
-    return () => clearInterval(id)
+    // Visibility-aware polling: 10s when a race is imminent (< 30 min to
+    // off), 30s otherwise, paused when the tab is hidden. Recurses via
+    // setTimeout so the next interval reflects fresh data without
+    // re-running the effect itself.
+    let cancelled = false
+    let handle: ReturnType<typeof setTimeout> | null = null
+    const tick = async () => {
+      if (cancelled) return
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+      if (hidden) {
+        handle = setTimeout(tick, 60_000)
+        return
+      }
+      const now = Date.now()
+      const imminent = racesRef.current.some(r => {
+        const t = r.off_dt ? new Date(r.off_dt).getTime() : NaN
+        return Number.isFinite(t) && t - now < 30 * 60_000 && t - now > -10 * 60_000
+      })
+      const next = imminent ? 10_000 : 30_000
+      handle = setTimeout(async () => {
+        await load()
+        tick()
+      }, next)
+    }
+    tick()
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        if (handle) clearTimeout(handle)
+        load().finally(tick)
+      }
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis)
+    }
+    return () => {
+      cancelled = true
+      if (handle) clearTimeout(handle)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis)
+      }
+    }
   }, [load])
 
   const races = resp?.races ?? []
