@@ -16,6 +16,19 @@ export async function reply(db: PoolClient, args: ReplyArgs): Promise<{ logMessa
   if (cfg.LILA_DRY_RUN) {
     return { logMessage: `[dry-run] operator.reply "${text.slice(0, 60)}"` }
   }
+  // Re-entrance guard: if Lila already posted a chat-visible message in the
+  // last 60s, drop this reply. Same precedent as desk.processApprovedItems —
+  // keeps chat from feeling like Lila is firing three messages at once when
+  // routing mis-fires.
+  const { rows: recent } = await db.query(
+    `SELECT 1 FROM chat_messages
+      WHERE thread='main' AND sender='lila' AND kind='message'
+        AND created_at > NOW() - INTERVAL '60 seconds'
+      LIMIT 1`
+  )
+  if (recent.length > 0) {
+    return { logMessage: 'operator.reply: suppressed (recent lila post within 60s)' }
+  }
   await db.query(
     `INSERT INTO chat_messages (sender, content, thread, kind)
      VALUES ('lila', $1, 'main', 'message')`,

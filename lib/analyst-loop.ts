@@ -91,7 +91,7 @@ export class AnalystLoop {
 
     if (d.action) {
       if (d.task) await this.note('tasks/current.md', `# Current Task\n${new Date().toISOString()}\n\n${d.task}`)
-      if (d.response) await this.chat('analyst', d.response)
+      if (d.response) await this.chat('analyst', d.response, 'status')
       return `Responded: ${d.task ?? d.response}`
     }
     return 'Chat clear.'
