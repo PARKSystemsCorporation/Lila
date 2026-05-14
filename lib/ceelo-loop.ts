@@ -812,14 +812,12 @@ export class CeeloLoop {
     const homePR = await this.getNflPR(g.home_team)
     const awayPR = await this.getNflPR(g.away_team)
 
-    const [homeQb, awayQb, homeBc, awayBc, homeOuts, awayOuts] = await Promise.all([
-      this.resolveQbPoints(g.home_team),
-      this.resolveQbPoints(g.away_team),
-      this.resolveBlueChipPoints(g.home_team),
-      this.resolveBlueChipPoints(g.away_team),
-      this.fetchOutsByUnit(g.home_team),
-      this.fetchOutsByUnit(g.away_team),
-    ])
+    const homeQb = await this.resolveQbPoints(g.home_team)
+    const awayQb = await this.resolveQbPoints(g.away_team)
+    const homeBc = await this.resolveBlueChipPoints(g.home_team)
+    const awayBc = await this.resolveBlueChipPoints(g.away_team)
+    const homeOuts = await this.fetchOutsByUnit(g.home_team)
+    const awayOuts = await this.fetchOutsByUnit(g.away_team)
 
     const homeClusterTax = clusterTaxFromOuts(homeOuts)
     const awayClusterTax = clusterTaxFromOuts(awayOuts)
@@ -833,10 +831,8 @@ export class CeeloLoop {
     const isMnfWindow = dow === 1 || (dow === 2 && kickoff.getUTCHours() < 12)
     const awayIsMnfRoad = isMnfWindow
 
-    const [homeBb, awayBb] = await Promise.all([
-      this.didLoseBy19PlusLastGame(g.home_team, g.kickoff_at),
-      this.didLoseBy19PlusLastGame(g.away_team, g.kickoff_at),
-    ])
+    const homeBb = await this.didLoseBy19PlusLastGame(g.home_team, g.kickoff_at)
+    const awayBb = await this.didLoseBy19PlusLastGame(g.away_team, g.kickoff_at)
 
     const turfMismatch = awayTurfDiscrepancy({ homeTeam: g.home_team, awayTeam: g.away_team })
 
@@ -1135,116 +1131,114 @@ export class CeeloLoop {
       .join('\n')
 
     // Snapshot of Ceelo's current world: top-rated teams, open picks, freshness.
-    const [topRated, openPicks, status, perSport, keyInjuries, epaTop, epaBottom, epaSeasonInfo, qbGrades, blueChips] = await Promise.all([
-      // Sport-partitioned top teams. NFL rows are now on the Walters PR scale
-      // (DEFAULT_PR ≈ 17), NBA/MLB rows still on Elo (~1500). We pull both
-      // top groups so the chat can report each correctly.
-      this.db.query(
-        `(SELECT sport, team, rating, games_played FROM ceelo_team_ratings
-          WHERE sport='NFL' AND games_played > 0
-          ORDER BY rating DESC LIMIT 6)
-         UNION ALL
-         (SELECT sport, team, rating, games_played FROM ceelo_team_ratings
-          WHERE sport <> 'NFL' AND games_played > 0
-          ORDER BY rating DESC LIMIT 6)`
-      ),
-      this.db.query(
-        `SELECT game_label, market, side, model_spread, book_spread, edge_points, confidence,
-                raw_pr_diff, situational_sum, kelly_units
-         FROM ceelo_picks
-         WHERE status='open'
-         ORDER BY ABS(COALESCE(edge_points, 0)) DESC LIMIT 6`
-      ),
-      this.db.query(
-        `SELECT cycle,
-                (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
-                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming,
-                (SELECT COUNT(*) FROM ceelo_injuries WHERE status IN ('Out','Doubtful','IR')) AS hurt,
-                (SELECT COUNT(*) FROM ceelo_games WHERE status='final' AND closing_spread IS NOT NULL) AS historical_with_lines,
-                (SELECT COUNT(*) FROM ceelo_games WHERE status='final' AND graded_at IS NOT NULL) AS historical_graded,
-                (SELECT MIN(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS oldest_season,
-                (SELECT MAX(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS newest_season,
-                (SELECT COUNT(*) FROM ceelo_rosters) AS rostered_players,
-                (SELECT COUNT(DISTINCT team) FROM ceelo_rosters) AS rostered_teams,
-                (SELECT COUNT(*) FROM ceelo_lines) AS live_book_lines,
-                (SELECT COUNT(*) FROM ceelo_depth_charts) AS depth_chart_rows
-         FROM ceelo_state WHERE id=1`
-      ),
-      // Per-sport breakdown — answers Ceelo's "what's actually flowing"
-      // question by sport instead of conflating NFL offseason with NBA.
-      this.db.query(
-        `SELECT sport,
-                (SELECT COUNT(*) FROM ceelo_team_ratings r
-                 WHERE r.sport=s.sport AND r.games_played > 0) AS rated,
-                (SELECT COUNT(*) FROM ceelo_games g
-                 WHERE g.sport=s.sport AND g.status='scheduled' AND g.kickoff_at > NOW()) AS upcoming,
-                (SELECT COUNT(DISTINCT game_id) FROM ceelo_lines l
-                 WHERE l.sport=s.sport AND l.fetched_at > NOW() - INTERVAL '24 hours') AS lines_24h,
-                (SELECT MAX(fetched_at) FROM ceelo_lines l WHERE l.sport=s.sport) AS last_lines_at
-         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)`
-      ),
-      // Surface key injuries — Out / Doubtful / IR — for teams with upcoming games.
-      // Caps at 12 entries; the LLM doesn't need every depth-chart-3 sprained ankle.
-      this.db.query(
-        `SELECT i.team, i.player, i.position, i.status
-         FROM ceelo_injuries i
-         WHERE i.status IN ('Out','Doubtful','IR','PUP')
-           AND i.team IN (
-             SELECT DISTINCT t FROM (
-               SELECT home_team AS t FROM ceelo_games
-               WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
-               UNION
-               SELECT away_team AS t FROM ceelo_games
-               WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
-             ) x
-           )
-         ORDER BY
-           CASE i.position
-             WHEN 'QB' THEN 0
-             WHEN 'RB' THEN 1
-             WHEN 'WR' THEN 1
-             WHEN 'TE' THEN 2
-             ELSE 3
-           END,
-           i.team
-         LIMIT 12`
-      ),
-      // EPA top & bottom of the most recent season we have. Net EPA per
-      // play is the headline handicapping number — these are the cleanest
-      // priors for any matchup conversation.
-      this.db.query(
-        `SELECT team, season, net_epa, epa_per_play, epa_allowed
-         FROM ceelo_team_epa
-         WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
-         ORDER BY net_epa DESC LIMIT 5`
-      ),
-      this.db.query(
-        `SELECT team, season, net_epa, epa_per_play, epa_allowed
-         FROM ceelo_team_epa
-         WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
-         ORDER BY net_epa ASC LIMIT 5`
-      ),
-      this.db.query(
-        `SELECT MAX(season) AS latest_season,
-                COUNT(DISTINCT season) AS seasons,
-                COUNT(*) AS rows
-         FROM ceelo_team_epa`
-      ),
-      // Walters QB tiers — Ceelo's auto-graded starter pool per team.
-      this.db.query(
-        `SELECT team, player, qb_tier, rationale
-         FROM ceelo_player_grades
-         WHERE qb_tier IS NOT NULL
-         ORDER BY qb_tier ASC, team ASC`
-      ),
-      // Walters blue-chip players — Wirfs-tier OTs + top edge / CB.
-      this.db.query(
-        `SELECT team, player, position, blue_chip_pts, rationale
-         FROM ceelo_player_grades
-         WHERE blue_chip_pts IS NOT NULL
-         ORDER BY blue_chip_pts DESC, team ASC`
-      ),
-    ])
+    // Sport-partitioned top teams. NFL rows are now on the Walters PR scale
+    // (DEFAULT_PR ≈ 17), NBA/MLB rows still on Elo (~1500). We pull both
+    // top groups so the chat can report each correctly.
+    const topRated = await this.db.query(
+      `(SELECT sport, team, rating, games_played FROM ceelo_team_ratings
+        WHERE sport='NFL' AND games_played > 0
+        ORDER BY rating DESC LIMIT 6)
+       UNION ALL
+       (SELECT sport, team, rating, games_played FROM ceelo_team_ratings
+        WHERE sport <> 'NFL' AND games_played > 0
+        ORDER BY rating DESC LIMIT 6)`
+    )
+    const openPicks = await this.db.query(
+      `SELECT game_label, market, side, model_spread, book_spread, edge_points, confidence,
+              raw_pr_diff, situational_sum, kelly_units
+       FROM ceelo_picks
+       WHERE status='open'
+       ORDER BY ABS(COALESCE(edge_points, 0)) DESC LIMIT 6`
+    )
+    const status = await this.db.query(
+      `SELECT cycle,
+              (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
+              (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming,
+              (SELECT COUNT(*) FROM ceelo_injuries WHERE status IN ('Out','Doubtful','IR')) AS hurt,
+              (SELECT COUNT(*) FROM ceelo_games WHERE status='final' AND closing_spread IS NOT NULL) AS historical_with_lines,
+              (SELECT COUNT(*) FROM ceelo_games WHERE status='final' AND graded_at IS NOT NULL) AS historical_graded,
+              (SELECT MIN(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS oldest_season,
+              (SELECT MAX(season) FROM ceelo_games WHERE graded_at IS NOT NULL) AS newest_season,
+              (SELECT COUNT(*) FROM ceelo_rosters) AS rostered_players,
+              (SELECT COUNT(DISTINCT team) FROM ceelo_rosters) AS rostered_teams,
+              (SELECT COUNT(*) FROM ceelo_lines) AS live_book_lines,
+              (SELECT COUNT(*) FROM ceelo_depth_charts) AS depth_chart_rows
+       FROM ceelo_state WHERE id=1`
+    )
+    // Per-sport breakdown — answers Ceelo's "what's actually flowing"
+    // question by sport instead of conflating NFL offseason with NBA.
+    const perSport = await this.db.query(
+      `SELECT sport,
+              (SELECT COUNT(*) FROM ceelo_team_ratings r
+               WHERE r.sport=s.sport AND r.games_played > 0) AS rated,
+              (SELECT COUNT(*) FROM ceelo_games g
+               WHERE g.sport=s.sport AND g.status='scheduled' AND g.kickoff_at > NOW()) AS upcoming,
+              (SELECT COUNT(DISTINCT game_id) FROM ceelo_lines l
+               WHERE l.sport=s.sport AND l.fetched_at > NOW() - INTERVAL '24 hours') AS lines_24h,
+              (SELECT MAX(fetched_at) FROM ceelo_lines l WHERE l.sport=s.sport) AS last_lines_at
+       FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)`
+    )
+    // Surface key injuries — Out / Doubtful / IR — for teams with upcoming games.
+    // Caps at 12 entries; the LLM doesn't need every depth-chart-3 sprained ankle.
+    const keyInjuries = await this.db.query(
+      `SELECT i.team, i.player, i.position, i.status
+       FROM ceelo_injuries i
+       WHERE i.status IN ('Out','Doubtful','IR','PUP')
+         AND i.team IN (
+           SELECT DISTINCT t FROM (
+             SELECT home_team AS t FROM ceelo_games
+             WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+             UNION
+             SELECT away_team AS t FROM ceelo_games
+             WHERE status='scheduled' AND kickoff_at BETWEEN NOW() AND NOW() + INTERVAL '14 days'
+           ) x
+         )
+       ORDER BY
+         CASE i.position
+           WHEN 'QB' THEN 0
+           WHEN 'RB' THEN 1
+           WHEN 'WR' THEN 1
+           WHEN 'TE' THEN 2
+           ELSE 3
+         END,
+         i.team
+       LIMIT 12`
+    )
+    // EPA top & bottom of the most recent season we have. Net EPA per
+    // play is the headline handicapping number — these are the cleanest
+    // priors for any matchup conversation.
+    const epaTop = await this.db.query(
+      `SELECT team, season, net_epa, epa_per_play, epa_allowed
+       FROM ceelo_team_epa
+       WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
+       ORDER BY net_epa DESC LIMIT 5`
+    )
+    const epaBottom = await this.db.query(
+      `SELECT team, season, net_epa, epa_per_play, epa_allowed
+       FROM ceelo_team_epa
+       WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
+       ORDER BY net_epa ASC LIMIT 5`
+    )
+    const epaSeasonInfo = await this.db.query(
+      `SELECT MAX(season) AS latest_season,
+              COUNT(DISTINCT season) AS seasons,
+              COUNT(*) AS rows
+       FROM ceelo_team_epa`
+    )
+    // Walters QB tiers — Ceelo's auto-graded starter pool per team.
+    const qbGrades = await this.db.query(
+      `SELECT team, player, qb_tier, rationale
+       FROM ceelo_player_grades
+       WHERE qb_tier IS NOT NULL
+       ORDER BY qb_tier ASC, team ASC`
+    )
+    // Walters blue-chip players — Wirfs-tier OTs + top edge / CB.
+    const blueChips = await this.db.query(
+      `SELECT team, player, position, blue_chip_pts, rationale
+       FROM ceelo_player_grades
+       WHERE blue_chip_pts IS NOT NULL
+       ORDER BY blue_chip_pts DESC, team ASC`
+    )
 
     // NFL rows live on the Walters PR scale (≈ 17 baseline); NBA/MLB on Elo
     // (≈ 1500). Format each with the precision that matches its scale.

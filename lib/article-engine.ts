@@ -105,35 +105,33 @@ async function gatherContext(db: PoolClient, author: ArticleAuthor): Promise<Con
 }
 
 async function gatherLilaContext(db: PoolClient): Promise<Context> {
-  const [paid, pipeline, positions, closed, lastWeekLog] = await Promise.all([
-    db.query(
-      `SELECT title, payout, platform_label, paid_at FROM security_reports
-       WHERE status='paid' AND paid_at > NOW() - INTERVAL '7 days'
-       ORDER BY paid_at DESC LIMIT 5`
-    ),
-    db.query(
-      `SELECT
-          COUNT(*) FILTER (WHERE status='pending_review') AS reviewing,
-          COUNT(*) FILTER (WHERE status='approved')       AS approved,
-          COUNT(*) FILTER (WHERE status='submitted')      AS submitted,
-          COALESCE(SUM(reward) FILTER (WHERE status='submitted'), 0) AS submit_max
-       FROM security_reports`
-    ),
-    db.query(
-      `SELECT symbol, direction FROM lila_positions WHERE status='open' LIMIT 10`
-    ),
-    db.query(
-      `SELECT symbol, pnl FROM lila_positions
-       WHERE status='closed' AND closed_at > NOW() - INTERVAL '7 days'
-         AND COALESCE(ABS(pnl), 0) >= 1
-       ORDER BY closed_at DESC LIMIT 8`
-    ),
-    db.query(
-      `SELECT message, type FROM lila_log
-       WHERE created_at > NOW() - INTERVAL '7 days'
-       ORDER BY id DESC LIMIT 30`
-    ),
-  ])
+  const paid = await db.query(
+    `SELECT title, payout, platform_label, paid_at FROM security_reports
+     WHERE status='paid' AND paid_at > NOW() - INTERVAL '7 days'
+     ORDER BY paid_at DESC LIMIT 5`
+  )
+  const pipeline = await db.query(
+    `SELECT
+        COUNT(*) FILTER (WHERE status='pending_review') AS reviewing,
+        COUNT(*) FILTER (WHERE status='approved')       AS approved,
+        COUNT(*) FILTER (WHERE status='submitted')      AS submitted,
+        COALESCE(SUM(reward) FILTER (WHERE status='submitted'), 0) AS submit_max
+     FROM security_reports`
+  )
+  const positions = await db.query(
+    `SELECT symbol, direction FROM lila_positions WHERE status='open' LIMIT 10`
+  )
+  const closed = await db.query(
+    `SELECT symbol, pnl FROM lila_positions
+     WHERE status='closed' AND closed_at > NOW() - INTERVAL '7 days'
+       AND COALESCE(ABS(pnl), 0) >= 1
+     ORDER BY closed_at DESC LIMIT 8`
+  )
+  const lastWeekLog = await db.query(
+    `SELECT message, type FROM lila_log
+     WHERE created_at > NOW() - INTERVAL '7 days'
+     ORDER BY id DESC LIMIT 30`
+  )
 
   const lines: string[] = []
   if (paid.rows.length) {
@@ -160,29 +158,27 @@ async function gatherLilaContext(db: PoolClient): Promise<Context> {
 }
 
 async function gatherVegaContext(db: PoolClient): Promise<Context> {
-  const [notes, picks, openPos, closedTrades] = await Promise.all([
-    db.query(
-      `SELECT path, content FROM analyst_notes
-       WHERE updated_at > NOW() - INTERVAL '7 days'
-       ORDER BY updated_at DESC LIMIT 6`
-    ),
-    db.query(
-      `SELECT symbol, direction, entry_price, target_price, confidence, reason
-       FROM analyst_picks
-       WHERE created_at > NOW() - INTERVAL '14 days'
-       ORDER BY created_at DESC LIMIT 8`
-    ),
-    db.query(
-      `SELECT symbol, direction, entry_price FROM lila_positions
-       WHERE status='open' LIMIT 8`
-    ),
-    db.query(
-      `SELECT symbol, direction, pnl FROM lila_positions
-       WHERE status='closed' AND closed_at > NOW() - INTERVAL '14 days'
-         AND COALESCE(ABS(pnl), 0) >= 1
-       ORDER BY closed_at DESC LIMIT 8`
-    ),
-  ])
+  const notes = await db.query(
+    `SELECT path, content FROM analyst_notes
+     WHERE updated_at > NOW() - INTERVAL '7 days'
+     ORDER BY updated_at DESC LIMIT 6`
+  )
+  const picks = await db.query(
+    `SELECT symbol, direction, entry_price, target_price, confidence, reason
+     FROM analyst_picks
+     WHERE created_at > NOW() - INTERVAL '14 days'
+     ORDER BY created_at DESC LIMIT 8`
+  )
+  const openPos = await db.query(
+    `SELECT symbol, direction, entry_price FROM lila_positions
+     WHERE status='open' LIMIT 8`
+  )
+  const closedTrades = await db.query(
+    `SELECT symbol, direction, pnl FROM lila_positions
+     WHERE status='closed' AND closed_at > NOW() - INTERVAL '14 days'
+       AND COALESCE(ABS(pnl), 0) >= 1
+     ORDER BY closed_at DESC LIMIT 8`
+  )
 
   const lines: string[] = []
   if (notes.rows.length) {
@@ -212,44 +208,42 @@ async function gatherVegaContext(db: PoolClient): Promise<Context> {
 }
 
 async function gatherCeeloContext(db: PoolClient): Promise<Context> {
-  const [edges, finals, top, epaTop] = await Promise.all([
-    db.query(
-      `WITH latest AS (
-         SELECT DISTINCT ON (l.game_id, l.book)
-                l.game_id, l.book, l.home_line
-         FROM ceelo_lines l
-         WHERE l.market='spread' AND l.home_line IS NOT NULL
-         ORDER BY l.game_id, l.book, l.fetched_at DESC
-       )
-       SELECT g.sport, g.home_team, g.away_team, g.kickoff_at,
-              m.model_spread, l.home_line AS book_spread, l.book
-       FROM ceelo_games g
-       JOIN ceelo_model_lines m ON m.game_id = g.id
-       JOIN latest l            ON l.game_id = g.id
-       WHERE g.status='scheduled' AND g.kickoff_at > NOW()
-         AND g.kickoff_at < NOW() + INTERVAL '4 days'
-         AND ABS(l.home_line - m.model_spread) >= 1.0
-       ORDER BY ABS(l.home_line - m.model_spread) DESC
-       LIMIT 8`
-    ),
-    db.query(
-      `SELECT sport, home_team, away_team, home_score, away_score, closing_spread
-       FROM ceelo_games
-       WHERE status='final' AND graded_at > NOW() - INTERVAL '3 days'
-       ORDER BY kickoff_at DESC LIMIT 10`
-    ),
-    db.query(
-      `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
-       WHERE games_played > 0
-       ORDER BY rating DESC LIMIT 12`
-    ),
-    db.query(
-      `SELECT team, season, net_epa
-       FROM ceelo_team_epa
-       WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
-       ORDER BY net_epa DESC LIMIT 5`
-    ),
-  ])
+  const edges = await db.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (l.game_id, l.book)
+              l.game_id, l.book, l.home_line
+       FROM ceelo_lines l
+       WHERE l.market='spread' AND l.home_line IS NOT NULL
+       ORDER BY l.game_id, l.book, l.fetched_at DESC
+     )
+     SELECT g.sport, g.home_team, g.away_team, g.kickoff_at,
+            m.model_spread, l.home_line AS book_spread, l.book
+     FROM ceelo_games g
+     JOIN ceelo_model_lines m ON m.game_id = g.id
+     JOIN latest l            ON l.game_id = g.id
+     WHERE g.status='scheduled' AND g.kickoff_at > NOW()
+       AND g.kickoff_at < NOW() + INTERVAL '4 days'
+       AND ABS(l.home_line - m.model_spread) >= 1.0
+     ORDER BY ABS(l.home_line - m.model_spread) DESC
+     LIMIT 8`
+  )
+  const finals = await db.query(
+    `SELECT sport, home_team, away_team, home_score, away_score, closing_spread
+     FROM ceelo_games
+     WHERE status='final' AND graded_at > NOW() - INTERVAL '3 days'
+     ORDER BY kickoff_at DESC LIMIT 10`
+  )
+  const top = await db.query(
+    `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
+     WHERE games_played > 0
+     ORDER BY rating DESC LIMIT 12`
+  )
+  const epaTop = await db.query(
+    `SELECT team, season, net_epa
+     FROM ceelo_team_epa
+     WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
+     ORDER BY net_epa DESC LIMIT 5`
+  )
 
   const lines: string[] = []
   if (edges.rows.length) {

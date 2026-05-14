@@ -81,11 +81,9 @@ export async function GET() {
   const db = await pool.connect()
   try {
     await ensureSchema(db)
-    const [docs, security, code] = await Promise.all([
-      funnelFor(db, 'docs'),
-      funnelFor(db, 'security'),
-      funnelFor(db, 'code'),
-    ])
+    const docs = await funnelFor(db, 'docs')
+    const security = await funnelFor(db, 'security')
+    const code = await funnelFor(db, 'code')
     return NextResponse.json({ docs, security, code })
   } finally { db.release() }
 }

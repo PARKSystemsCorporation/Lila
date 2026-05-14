@@ -55,69 +55,69 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [picksRes, stateRes, ratingsRes, scheduleRes, modelRes, perSportRes] = await Promise.all([
-      db.query(
-        `SELECT id, game_label, market, side,
-                model_prob, fair_line, min_odds, edge_pct,
-                model_spread, book_spread, book_name, edge_points, source,
-                reasoning, confidence, status, stake, taken_odds, payout,
-                (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts,
-                (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
-                (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
-                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
-         FROM ceelo_picks
-         ORDER BY
-           CASE status
-             WHEN 'open'   THEN 0
-             WHEN 'taken'  THEN 1
-             WHEN 'won'    THEN 2
-             WHEN 'lost'   THEN 2
-             WHEN 'push'   THEN 2
-             WHEN 'void'   THEN 2
-             WHEN 'skipped' THEN 3
-           END,
-           created_at DESC
-         LIMIT 200`
-      ),
-      db.query(
-        `SELECT (EXTRACT(EPOCH FROM last_run_at)      * 1000)::bigint AS last_run_ts,
-                (EXTRACT(EPOCH FROM last_schedule_at) * 1000)::bigint AS last_sched_ts,
-                (EXTRACT(EPOCH FROM last_grade_at)    * 1000)::bigint AS last_grade_ts,
-                (EXTRACT(EPOCH FROM last_lines_at)    * 1000)::bigint AS last_lines_ts,
-                cycle
-         FROM ceelo_state WHERE id=1`
-      ),
-      db.query(`SELECT COUNT(*) AS n FROM ceelo_team_ratings WHERE games_played > 0`),
-      db.query(
-        `SELECT COUNT(*) AS n FROM ceelo_games
-         WHERE status='scheduled' AND kickoff_at > NOW()`
-      ),
-      db.query(`SELECT COUNT(*) AS n FROM ceelo_model_lines`),
-      // Per-sport breakdown — computed in SQL so it covers ALL picks, not
-      // just the 200-row UI list. Two streams:
-      //   op_*    — operator-marked W/L on bets they actually took
-      //   model_* — auto-graded outcomes for every flagged green pick
-      db.query(
-        `SELECT s.sport,
-                COUNT(*)                                        FILTER (WHERE p.status='open')                                    AS op_open,
-                COUNT(*)                                        FILTER (WHERE p.status='taken')                                   AS op_active,
-                COUNT(*)                                        FILTER (WHERE p.status='won')                                     AS op_wins,
-                COUNT(*)                                        FILTER (WHERE p.status='lost')                                    AS op_losses,
-                COUNT(*)                                        FILTER (WHERE p.status IN ('push','void'))                        AS op_pushes,
-                COALESCE(SUM(p.stake)                           FILTER (WHERE p.status IN ('taken','won','lost','push','void')), 0) AS op_staked,
-                COALESCE(SUM(p.stake + COALESCE(p.payout, 0))   FILTER (WHERE p.status='won'), 0)                                 AS op_won_returned,
-                COALESCE(SUM(p.stake)                           FILTER (WHERE p.status IN ('push','void')), 0)                    AS op_push_returned,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='win')         AS model_wins,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='loss')        AS model_losses,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='push')        AS model_pushes,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NOT NULL)   AS model_settled,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NULL)       AS model_pending
-         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)
-         LEFT JOIN ceelo_picks p ON p.sport = s.sport
-         GROUP BY s.sport
-         ORDER BY s.sport`
-      ),
-    ])
+    const picksRes = await db.query(
+      `SELECT id, game_label, market, side,
+              model_prob, fair_line, min_odds, edge_pct,
+              model_spread, book_spread, book_name, edge_points, source,
+              reasoning, confidence, status, stake, taken_odds, payout,
+              (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts,
+              (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
+              (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
+              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
+       FROM ceelo_picks
+       ORDER BY
+         CASE status
+           WHEN 'open'   THEN 0
+           WHEN 'taken'  THEN 1
+           WHEN 'won'    THEN 2
+           WHEN 'lost'   THEN 2
+           WHEN 'push'   THEN 2
+           WHEN 'void'   THEN 2
+           WHEN 'skipped' THEN 3
+         END,
+         created_at DESC
+       LIMIT 200`
+    )
+    const stateRes = await db.query(
+      `SELECT (EXTRACT(EPOCH FROM last_run_at)      * 1000)::bigint AS last_run_ts,
+              (EXTRACT(EPOCH FROM last_schedule_at) * 1000)::bigint AS last_sched_ts,
+              (EXTRACT(EPOCH FROM last_grade_at)    * 1000)::bigint AS last_grade_ts,
+              (EXTRACT(EPOCH FROM last_lines_at)    * 1000)::bigint AS last_lines_ts,
+              cycle
+       FROM ceelo_state WHERE id=1`
+    )
+    const ratingsRes = await db.query(
+      `SELECT COUNT(*) AS n FROM ceelo_team_ratings WHERE games_played > 0`,
+    )
+    const scheduleRes = await db.query(
+      `SELECT COUNT(*) AS n FROM ceelo_games
+       WHERE status='scheduled' AND kickoff_at > NOW()`
+    )
+    const modelRes = await db.query(`SELECT COUNT(*) AS n FROM ceelo_model_lines`)
+    // Per-sport breakdown — computed in SQL so it covers ALL picks, not
+    // just the 200-row UI list. Two streams:
+    //   op_*    — operator-marked W/L on bets they actually took
+    //   model_* — auto-graded outcomes for every flagged green pick
+    const perSportRes = await db.query(
+      `SELECT s.sport,
+              COUNT(*)                                        FILTER (WHERE p.status='open')                                    AS op_open,
+              COUNT(*)                                        FILTER (WHERE p.status='taken')                                   AS op_active,
+              COUNT(*)                                        FILTER (WHERE p.status='won')                                     AS op_wins,
+              COUNT(*)                                        FILTER (WHERE p.status='lost')                                    AS op_losses,
+              COUNT(*)                                        FILTER (WHERE p.status IN ('push','void'))                        AS op_pushes,
+              COALESCE(SUM(p.stake)                           FILTER (WHERE p.status IN ('taken','won','lost','push','void')), 0) AS op_staked,
+              COALESCE(SUM(p.stake + COALESCE(p.payout, 0))   FILTER (WHERE p.status='won'), 0)                                 AS op_won_returned,
+              COALESCE(SUM(p.stake)                           FILTER (WHERE p.status IN ('push','void')), 0)                    AS op_push_returned,
+              COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='win')         AS model_wins,
+              COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='loss')        AS model_losses,
+              COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='push')        AS model_pushes,
+              COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NOT NULL)   AS model_settled,
+              COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NULL)       AS model_pending
+       FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)
+       LEFT JOIN ceelo_picks p ON p.sport = s.sport
+       GROUP BY s.sport
+       ORDER BY s.sport`
+    )
 
     const rows = picksRes.rows
     const s = stateRes.rows[0] ?? {}
