@@ -1214,6 +1214,74 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE lila_positions   DROP COLUMN IF EXISTS tg_alerted_at;
     ALTER TABLE bounty_picks     DROP COLUMN IF EXISTS tg_alerted_at;
     DROP INDEX  IF EXISTS idx_chat_messages_mirror;
+
+    -- Sports ingestion (API-Sports + ParlayAPI + ProphetX). We persist
+    -- only our interpretations — the 1–10 scores and the small numeric
+    -- inputs that produced them. No raw upstream payloads.
+    CREATE TABLE IF NOT EXISTS sports_teams (
+      team_id     TEXT         PRIMARY KEY,
+      city        TEXT         NOT NULL,
+      name        TEXT         NOT NULL,
+      league      TEXT         NOT NULL,
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      UNIQUE (league, city, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS sports_games (
+      game_id        TEXT         PRIMARY KEY,
+      league         TEXT         NOT NULL,
+      home_team_id   TEXT         NOT NULL REFERENCES sports_teams(team_id),
+      away_team_id   TEXT         NOT NULL REFERENCES sports_teams(team_id),
+      tipoff_at      TIMESTAMPTZ  NOT NULL,
+      status         TEXT         NOT NULL,
+      pct_game_left  NUMERIC(4,3),
+      updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS sports_games_league_status_idx
+      ON sports_games (league, status, tipoff_at);
+
+    CREATE TABLE IF NOT EXISTS sports_signals (
+      id          SERIAL       PRIMARY KEY,
+      game_id     TEXT         NOT NULL REFERENCES sports_games(game_id),
+      team_id     TEXT         NOT NULL REFERENCES sports_teams(team_id),
+      metric      TEXT         NOT NULL,
+      score       SMALLINT     NOT NULL,
+      inputs      JSONB        NOT NULL,
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS sports_signals_game_idx
+      ON sports_signals (game_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS sports_signals_team_metric_idx
+      ON sports_signals (team_id, metric, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS sports_game_view (
+      game_id          TEXT         NOT NULL,
+      team_id          TEXT         NOT NULL,
+      is_lead_team     BOOLEAN      NOT NULL,
+      overround_1to10  SMALLINT,
+      consensus_1to10  SMALLINT,
+      pct_game_left    NUMERIC(4,3),
+      lead_pct         NUMERIC(4,3),
+      sma10_1to10      SMALLINT,
+      steam_1to10      SMALLINT,
+      delta_1to10      SMALLINT,
+      composite_1to10  SMALLINT     NOT NULL,
+      color_tier       TEXT         NOT NULL,
+      updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (game_id, team_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS sports_game_events (
+      id            SERIAL       PRIMARY KEY,
+      game_id       TEXT         NOT NULL,
+      team_id       TEXT         NOT NULL,
+      kind          TEXT         NOT NULL,
+      team_in_lead  BOOLEAN      NOT NULL,
+      during_pull   BOOLEAN      NOT NULL DEFAULT FALSE,
+      created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS sports_game_events_game_idx
+      ON sports_game_events (game_id, created_at);
   `)
   schemaReady = true
 }
