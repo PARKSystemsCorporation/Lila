@@ -587,6 +587,22 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     INSERT INTO ceelo_state (id) VALUES (1) ON CONFLICT DO NOTHING;
 
+    -- Phase 2 (NA): additive migrations on the racing tables. All
+    -- idempotent so re-running ensureSchema is a no-op.
+    --
+    -- country: ISO3 ('USA' | 'CAN') stamped from the meet payload so
+    -- operator-side filtering ('WHERE country=...') is one column away
+    -- without a join to a meets table.
+    ALTER TABLE ceelo_races   ADD COLUMN IF NOT EXISTS country TEXT;
+    CREATE INDEX IF NOT EXISTS idx_ceelo_races_country_off
+      ON ceelo_races(country, off_dt);
+
+    -- Program number was INTEGER under the UK-only Phase 1 (cloth
+    -- numbers are always integers); NA coupled entries arrive as "1A"
+    -- / "1B" and need to survive verbatim for display. The yield
+    -- engine never reads this field for math.
+    ALTER TABLE ceelo_runners ALTER COLUMN number TYPE TEXT USING number::TEXT;
+
     -- Operator's desk — agents push docs here for review. Workflow:
     --   pending  → agent just filed it; operator hasn't acted
     --   approved → operator hit approve; Lila will read + report on next tick

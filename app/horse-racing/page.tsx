@@ -16,7 +16,7 @@ interface RaceSignal {
   top_runner: {
     horse_id: string
     horse: string
-    number: number | null
+    number: string | null
     odds_decimal: number | null
     fair_decimal: number | null
     edge_pct: number | null

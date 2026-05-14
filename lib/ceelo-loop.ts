@@ -101,15 +101,21 @@ export class CeeloLoop {
     const races = await Racing.getTodayRacecards()
     let races_upserted = 0
     let runners_upserted = 0
+    const meet_ids = new Set<string>()
     for (const r of races) {
       if (!r.race_id) continue
+      // NA race_id is "${meet_id}:${race_number}"; UK race_id has no
+      // colon. Both shapes survive this prefix extraction.
+      const colon = r.race_id.lastIndexOf(':')
+      meet_ids.add(colon > 0 ? r.race_id.slice(0, colon) : r.race_id)
       await this.db.query(
         `INSERT INTO ceelo_races
-           (race_id, course, off_dt, off_time, race_name, distance, going, type,
+           (race_id, course, country, off_dt, off_time, race_name, distance, going, type,
             field_size, status, refreshed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'scheduled',NOW())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'scheduled',NOW())
          ON CONFLICT (race_id) DO UPDATE
            SET course      = EXCLUDED.course,
+               country     = EXCLUDED.country,
                off_dt      = EXCLUDED.off_dt,
                off_time    = EXCLUDED.off_time,
                race_name   = EXCLUDED.race_name,
@@ -118,7 +124,7 @@ export class CeeloLoop {
                type        = EXCLUDED.type,
                field_size  = EXCLUDED.field_size,
                refreshed_at = NOW()`,
-        [r.race_id, r.course, isoOrNow(r.off_dt), r.off_time, r.race_name,
+        [r.race_id, r.course, r.country ?? null, isoOrNow(r.off_dt), r.off_time, r.race_name,
          r.distance, r.going, r.type, r.runners.length]
       )
       races_upserted++
@@ -145,7 +151,11 @@ export class CeeloLoop {
       }
     }
     await this.db.query(`UPDATE ceelo_state SET last_schedule_at=NOW() WHERE id=1`)
-    return races_upserted > 0 ? `C0 cards ${races_upserted}/${runners_upserted}` : ''
+    if (races_upserted === 0) return ''
+    const meetCount = meet_ids.size
+    return meetCount > 1 || (meetCount === 1 && races_upserted > 1)
+      ? `C0 cards ${races_upserted} races / ${meetCount} meet${meetCount === 1 ? '' : 's'} (${runners_upserted} runners)`
+      : `C0 cards ${races_upserted}/${runners_upserted}`
   }
 
   // ── C1: grade finished races ────────────────────────────────────────────

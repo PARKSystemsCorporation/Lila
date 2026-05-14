@@ -14,6 +14,11 @@ function bool(key: string, fallback: boolean): boolean {
   return v.toLowerCase() !== 'false' && v !== '0'
 }
 
+function str(key: string, fallback: string): string {
+  const v = process.env[key]
+  return v === undefined || v === '' ? fallback : v
+}
+
 export const cfg = Object.freeze({
   // ── Cadence (seconds unless noted) ───────────────────────────────────────
   // Minimum spacing between Cipher step advances.
@@ -91,4 +96,10 @@ export const cfg = Object.freeze({
   // Gate code.run_tests behind an explicit opt-in so Lila never shells
   // out to npm test without operator authorization.
   LILA_RUN_TESTS:         bool('LILA_RUN_TESTS', false),
+
+  // ── Horse racing ─────────────────────────────────────────────────────────
+  // The Racing API region. 'NA' (default) uses the North America
+  // meets/entries surface; 'UK' falls back to /v1/racecards/*. Switching
+  // requires no code change — the router lives inside racing-api.ts.
+  RACING_API_REGION:      str('RACING_API_REGION', 'NA').toUpperCase(),
 })
