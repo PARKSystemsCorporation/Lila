@@ -136,75 +136,78 @@ export default function PublicLanding() {
         </div>
       </section>
 
-      {/* Two doors — yield / yard */}
+      {/* Two desks — yield / yard split panels */}
       <section className="relative z-10 border-t-2 border-amber-500/30 bg-amber-500/[0.04]">
-        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-12 sm:py-16">
-          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-500/80 uppercase mb-3 motion-safe:animate-[slideup_0.6s_ease-out_0.05s_both]">
-            ▌▌▌ two doors
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 pt-14 sm:pt-20">
+          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-400 uppercase motion-safe:animate-[slideup_0.6s_ease-out_0.05s_both]">
+            ▌▌▌ pick your floor
           </p>
-          <h2 className="text-[clamp(1.8rem,5vw,3rem)] font-black tracking-tight uppercase text-white mb-8 sm:mb-10 motion-safe:animate-[slideup_0.7s_ease-out_0.15s_both]">
-            pick your <span className="text-amber-400">door</span>.
+          <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white motion-safe:animate-[slideup_0.7s_ease-out_0.15s_both]">
+            two desks.<br />
+            <span className="text-amber-400">one park.</span>
           </h2>
+        </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-            <Link
-              href="/theyield"
-              onClick={() => track('yield_click', 'landing_doors')}
-              className="group relative block border-2 border-amber-500/60 hover:border-amber-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-8 transition-all duration-300 hover:-translate-y-0.5 motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300">live edges</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              </div>
-              <div className="text-[clamp(2rem,6vw,3.5rem)] font-black tracking-tight leading-[0.95] uppercase text-amber-300">
-                the yield
-              </div>
-              <p className="mt-3 text-sm sm:text-base text-slate-400 leading-relaxed">
-                Sportsbetting &amp; horse racing — live spreads on one side, live gates on the other.
-              </p>
-              <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
-                <li><span className="text-amber-400">▸</span> live ceelo edges + win-prob</li>
-                <li><span className="text-amber-400">▸</span> nfl · nba · mlb · cfb</li>
-                <li><span className="text-amber-400">▸</span> horse racing — live gates</li>
-                <li><span className="text-amber-400">▸</span> agent broadcasts &amp; trade log</li>
-              </ul>
-              <div className="mt-6 flex items-center justify-between font-mono text-[10px] tracking-[0.32em] uppercase">
-                <span className="text-amber-300">enter the yield</span>
-                <span className="text-amber-500/60 group-hover:text-amber-300 group-hover:translate-x-0.5 transition-all text-base">→</span>
-              </div>
-            </Link>
-
-            <Link
-              href="/theyard"
-              onClick={() => track('yard_click', 'landing_doors')}
-              className="group relative block border-2 border-orange-500/60 hover:border-orange-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-8 transition-all duration-300 hover:-translate-y-0.5 motion-safe:animate-[slideup_0.7s_ease-out_0.45s_both]"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-orange-300">the board</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-              </div>
-              <div className="text-[clamp(2rem,6vw,3.5rem)] font-black tracking-tight leading-[0.95] uppercase text-orange-300">
-                the yard
-              </div>
-              <p className="mt-3 text-sm sm:text-base text-slate-400 leading-relaxed">
-                Commodities desk &amp; agent orchestration — Vega calls the open, the floor runs the rest.
-              </p>
-              <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
-                <li><span className="text-orange-400">▸</span> vega · etf + macro board</li>
-                <li><span className="text-orange-400">▸</span> commodities daily notes</li>
-                <li><span className="text-orange-400">▸</span> agent orchestration log</li>
-                <li><span className="text-orange-400">▸</span> wipes 00:00 utc</li>
-              </ul>
-              <div className="mt-6 flex items-center justify-between font-mono text-[10px] tracking-[0.32em] uppercase">
-                <span className="text-orange-300">enter the yard</span>
-                <span className="text-orange-500/60 group-hover:text-orange-300 group-hover:translate-x-0.5 transition-all text-base">→</span>
-              </div>
-            </Link>
-          </div>
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-10 sm:py-14 grid grid-cols-1 lg:grid-cols-2 gap-0 items-stretch">
+          <Link
+            href="/theyield"
+            onClick={() => track('yield_click', 'landing_doors')}
+            className="group relative flex flex-col border-2 border-amber-500/60 hover:border-amber-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-10 lg:p-12 transition-all duration-300 hover:-translate-y-0.5 lg:border-r-0 motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300">live edges</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            </div>
+            <div className="text-[clamp(2.2rem,7vw,4rem)] font-black tracking-tight leading-[0.95] uppercase text-amber-300">
+              the yield
+            </div>
+            <p className="mt-4 text-sm sm:text-base text-slate-400 leading-relaxed">
+              Sportsbetting &amp; horse racing — live spreads on one side, live gates on the other.
+            </p>
+            <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
+              <li><span className="text-amber-400">▸</span> live ceelo edges + win-prob</li>
+              <li><span className="text-amber-400">▸</span> nfl · nba · mlb · cfb</li>
+              <li><span className="text-amber-400">▸</span> horse racing — live gates</li>
+              <li><span className="text-amber-400">▸</span> agent broadcasts &amp; trade log</li>
+            </ul>
+            <div className="mt-auto pt-8 flex items-center justify-between font-mono text-[10px] tracking-[0.32em] uppercase">
+              <span className="text-amber-300">enter the yield</span>
+              <span className="text-amber-500/60 group-hover:text-amber-300 group-hover:translate-x-0.5 transition-all text-base">→</span>
+            </div>
+          </Link>
 
           <Link
+            href="/theyard"
+            onClick={() => track('yard_click', 'landing_doors')}
+            className="group relative flex flex-col border-2 border-t-0 lg:border-t-2 border-orange-500/60 hover:border-orange-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-10 lg:p-12 transition-all duration-300 hover:-translate-y-0.5 motion-safe:animate-[slideup_0.7s_ease-out_0.45s_both]"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-orange-300">the board</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+            </div>
+            <div className="text-[clamp(2.2rem,7vw,4rem)] font-black tracking-tight leading-[0.95] uppercase text-orange-300">
+              the yard
+            </div>
+            <p className="mt-4 text-sm sm:text-base text-slate-400 leading-relaxed">
+              Commodities desk &amp; agent orchestration — Vega calls the open, the floor runs the rest.
+            </p>
+            <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
+              <li><span className="text-orange-400">▸</span> vega · etf + macro board</li>
+              <li><span className="text-orange-400">▸</span> commodities daily notes</li>
+              <li><span className="text-orange-400">▸</span> agent orchestration log</li>
+              <li><span className="text-orange-400">▸</span> wipes 00:00 utc</li>
+            </ul>
+            <div className="mt-auto pt-8 flex items-center justify-between font-mono text-[10px] tracking-[0.32em] uppercase">
+              <span className="text-orange-300">enter the yard</span>
+              <span className="text-orange-500/60 group-hover:text-orange-300 group-hover:translate-x-0.5 transition-all text-base">→</span>
+            </div>
+          </Link>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 pb-12 sm:pb-16">
+          <Link
             href="/bounty"
-            className="group mt-8 sm:mt-10 inline-flex items-center gap-2 font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase text-slate-500 hover:text-amber-300 transition-colors"
+            className="group inline-flex items-center gap-2 font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase text-slate-500 hover:text-amber-300 transition-colors"
           >
             <span className="text-amber-500/60 group-hover:text-amber-300 transition-colors">▌</span>
             <span>how the bounty pipeline works</span>
