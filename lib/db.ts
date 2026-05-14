@@ -446,96 +446,146 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE articles ADD COLUMN IF NOT EXISTS kind   TEXT NOT NULL DEFAULT 'research-deepdive';
     CREATE INDEX IF NOT EXISTS idx_articles_author_kind ON articles(author, kind, created_at DESC);
 
-    -- Ceelo: NFL handicapper. Posts picks; operator decides which to take and
+    -- Ceelo: thoroughbred-racing yield engine. Posts win-market picks based
+    -- on per-runner fair-odds edge; operator decides which to take and
     -- marks W/L. Strictly informational — no auto-execution. Bankroll lives
     -- entirely in operator-entered stake/payout amounts on each pick.
+    --
+    -- Migration: this block runs once. If we still see the old NFL-shaped
+    -- ceelo_picks (the "sport" column is the cheapest sentinel), drop the
+    -- entire pre-racing surface so the CREATE statements below land on a
+    -- clean slate. The drop wipes existing NFL/NBA/MLB picks history;
+    -- the swap to racing was authorised with that loss in mind.
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='ceelo_picks' AND column_name='sport'
+      ) OR EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name='ceelo_games'
+      ) THEN
+        DROP TABLE IF EXISTS ceelo_picks         CASCADE;
+        DROP TABLE IF EXISTS ceelo_lines         CASCADE;
+        DROP TABLE IF EXISTS ceelo_model_lines   CASCADE;
+        DROP TABLE IF EXISTS ceelo_games         CASCADE;
+        DROP TABLE IF EXISTS ceelo_team_ratings  CASCADE;
+        DROP TABLE IF EXISTS ceelo_team_epa      CASCADE;
+        DROP TABLE IF EXISTS ceelo_depth_charts  CASCADE;
+        DROP TABLE IF EXISTS ceelo_rosters       CASCADE;
+        DROP TABLE IF EXISTS ceelo_injuries      CASCADE;
+        DROP TABLE IF EXISTS ceelo_player_grades CASCADE;
+        DROP TABLE IF EXISTS ceelo_backfill      CASCADE;
+        DROP TABLE IF EXISTS ceelo_backtest      CASCADE;
+        DROP TABLE IF EXISTS ceelo_state         CASCADE;
+        DROP TABLE IF EXISTS horse_state         CASCADE;
+      END IF;
+    END $$;
+
+    -- One row per scheduled race, keyed by the Racing API's race_id.
+    CREATE TABLE IF NOT EXISTS ceelo_races (
+      race_id      TEXT        PRIMARY KEY,
+      course       TEXT        NOT NULL,
+      off_dt       TIMESTAMPTZ NOT NULL,
+      off_time     TEXT        NOT NULL,          -- 'HH:MM' local to course
+      race_name    TEXT        NOT NULL,
+      distance     TEXT,
+      going        TEXT,
+      type         TEXT,                          -- Flat / Hurdle / Chase
+      field_size   INTEGER     NOT NULL DEFAULT 0,
+      status       TEXT        NOT NULL DEFAULT 'scheduled', -- scheduled | off | final
+      finished_at  TIMESTAMPTZ,
+      refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_races_off_dt ON ceelo_races(off_dt);
+    CREATE INDEX IF NOT EXISTS idx_ceelo_races_status ON ceelo_races(status, off_dt);
+
+    -- One row per runner per race.
+    CREATE TABLE IF NOT EXISTS ceelo_runners (
+      race_id    TEXT    NOT NULL REFERENCES ceelo_races(race_id) ON DELETE CASCADE,
+      horse_id   TEXT    NOT NULL,
+      horse      TEXT    NOT NULL,
+      number     INTEGER,
+      draw       INTEGER,
+      jockey     TEXT,
+      trainer    TEXT,
+      age        INTEGER,
+      weight_lbs INTEGER,
+      form       TEXT,
+      PRIMARY KEY (race_id, horse_id)
+    );
+
+    -- Per-runner odds snapshots. One row per (race, horse, fetched_at).
+    -- Latest row drives the EdgeBoard; historical rows feed velocity.
+    CREATE TABLE IF NOT EXISTS ceelo_runner_odds (
+      id            SERIAL      PRIMARY KEY,
+      race_id       TEXT        NOT NULL REFERENCES ceelo_races(race_id) ON DELETE CASCADE,
+      horse_id      TEXT        NOT NULL,
+      odds_decimal  NUMERIC(8,2),
+      fair_decimal  NUMERIC(8,2),
+      edge_pct      NUMERIC(6,2),
+      fetched_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ceelo_runner_odds_race
+      ON ceelo_runner_odds(race_id, horse_id, fetched_at DESC);
+
+    -- Race results. One row per race once status='final'.
+    CREATE TABLE IF NOT EXISTS ceelo_results (
+      race_id       TEXT        PRIMARY KEY REFERENCES ceelo_races(race_id) ON DELETE CASCADE,
+      finished_at   TIMESTAMPTZ NOT NULL,
+      winner_id     TEXT,
+      winner_sp     NUMERIC(8,2),
+      finishers     JSONB       NOT NULL DEFAULT '[]'::jsonb
+    );
+
+    -- Picks — racing shape. Reuses the operator workflow (status enum) and
+    -- the auto-grading split (status=operator's W/L; model_outcome=Ceelo's
+    -- hypothetical W/L regardless of whether the operator took the pick).
     CREATE TABLE IF NOT EXISTS ceelo_picks (
-      id              SERIAL        PRIMARY KEY,
-      sport           TEXT          NOT NULL DEFAULT 'NFL',
-      game_label      TEXT          NOT NULL,           -- e.g. "KC @ BUF"
-      kickoff_at      TIMESTAMPTZ,                       -- best-effort
-      market          TEXT          NOT NULL,            -- 'spread' | 'moneyline' | 'total'
-      side            TEXT          NOT NULL,            -- e.g. "KC -3", "Over 47.5", "BUF ML"
-      model_prob      NUMERIC(4,3),                      -- Ceelo's modeled probability
-      fair_line       TEXT,                              -- Ceelo's fair-line estimate (string for flexibility)
-      min_odds        INTEGER,                           -- min American odds Ceelo wants
-      edge_pct        NUMERIC(5,2),                      -- edge vs implied @ min_odds (computed)
-      reasoning       TEXT          NOT NULL,            -- one-paragraph thesis
-      confidence      TEXT          NOT NULL DEFAULT 'medium',  -- low | medium | high
-      status          TEXT          NOT NULL DEFAULT 'open',
+      id              SERIAL      PRIMARY KEY,
+      race_id         TEXT        REFERENCES ceelo_races(race_id) ON DELETE SET NULL,
+      horse_id        TEXT,
+      race_label      TEXT        NOT NULL,           -- e.g. "14:30 Ascot — Soft 7f"
+      horse_name      TEXT        NOT NULL,
+      market          TEXT        NOT NULL DEFAULT 'win',
+      off_dt          TIMESTAMPTZ,
+      model_prob      NUMERIC(4,3),
+      fair_decimal    NUMERIC(8,2),
+      book_decimal    NUMERIC(8,2),
+      edge_pct        NUMERIC(6,2),
+      intensity       INTEGER,                         -- 1..10 from yield engine
+      velocity        TEXT,                            -- 'up'|'down'|'flat'
+      reasoning       TEXT        NOT NULL,
+      confidence      TEXT        NOT NULL DEFAULT 'yellow',  -- 'green'|'yellow'|'red'
+      source          TEXT        NOT NULL DEFAULT 'model',   -- 'model' | 'llm'
+      status          TEXT        NOT NULL DEFAULT 'open',
                                     -- open | skipped | taken | won | lost | push | void
-      stake           NUMERIC(10,2),                     -- operator-entered when taken
-      taken_odds      INTEGER,                           -- American odds operator actually got
-      payout          NUMERIC(10,2),                     -- net P&L (stake-relative); push/void = 0
+      stake           NUMERIC(10,2),
+      taken_odds      NUMERIC(8,2),                    -- decimal odds the operator got
+      payout          NUMERIC(10,2),                   -- net P&L (stake-relative); push/void = 0
       taken_at        TIMESTAMPTZ,
       settled_at      TIMESTAMPTZ,
-      created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
-      updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+      model_outcome   TEXT,                            -- 'win'|'loss'|'push'|NULL
+      model_graded_at TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_ceelo_picks_status ON ceelo_picks(status, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_kickoff ON ceelo_picks(kickoff_at);
+    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_off_dt ON ceelo_picks(off_dt);
+    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_race   ON ceelo_picks(race_id);
+    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_model_outcome
+      ON ceelo_picks(model_outcome) WHERE source='model';
 
     CREATE TABLE IF NOT EXISTS ceelo_state (
-      id            INTEGER     PRIMARY KEY DEFAULT 1,
-      cycle         INTEGER     NOT NULL DEFAULT 0,
-      last_run_at   TIMESTAMPTZ,
-      last_schedule_at TIMESTAMPTZ,
-      last_grade_at    TIMESTAMPTZ,
-      last_lines_at    TIMESTAMPTZ,
-      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id              INTEGER     PRIMARY KEY DEFAULT 1,
+      cycle           INTEGER     NOT NULL DEFAULT 0,
+      last_run_at     TIMESTAMPTZ,
+      last_schedule_at TIMESTAMPTZ,                    -- C0 racecard refresh
+      last_grade_at   TIMESTAMPTZ,                     -- C1 result grading
+      last_odds_at    TIMESTAMPTZ,                     -- C2 per-runner odds snapshot
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO ceelo_state (id) VALUES (1) ON CONFLICT DO NOTHING;
-    -- Migrations for fields added after the table first shipped.
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_schedule_at  TIMESTAMPTZ;
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grade_at     TIMESTAMPTZ;
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_lines_at     TIMESTAMPTZ;
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_injury_at    TIMESTAMPTZ;
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_seed_at      TIMESTAMPTZ;
-
-    -- Horse-racing loop time-gate ledger. Mirrors ceelo_state shape; the
-    -- loop body lives in lib/horse-racing/horse-loop.ts.
-    CREATE TABLE IF NOT EXISTS horse_state (
-      id          INTEGER     PRIMARY KEY DEFAULT 1,
-      cycle       INTEGER     NOT NULL DEFAULT 0,
-      last_run_at TIMESTAMPTZ,
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    INSERT INTO horse_state (id) VALUES (1) ON CONFLICT DO NOTHING;
-
-    -- Closing lines per game from nflverse historical data. Surface for
-    -- backtesting and to seed Ceelo's awareness of where the market closed.
-    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS closing_spread    NUMERIC(5,2);
-    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS closing_total     NUMERIC(5,2);
-
-    -- Backfill ledger — which seasons have been Elo-walked.
-    CREATE TABLE IF NOT EXISTS ceelo_backfill (
-      season       INTEGER     PRIMARY KEY,
-      games_in     INTEGER     NOT NULL DEFAULT 0,
-      graded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- Backtest results — per-sport historical accuracy. One row per
-    -- (sport, ran_at). UI reads the most-recent row. ATS columns only
-    -- populate for sports with closing_spread data (NFL via nflverse);
-    -- margin_mae populates for all three (model spread vs actual margin).
-    CREATE TABLE IF NOT EXISTS ceelo_backtest (
-      id              SERIAL      PRIMARY KEY,
-      sport           TEXT        NOT NULL,
-      ran_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      total_games     INTEGER     NOT NULL DEFAULT 0,
-      ats_wins        INTEGER,
-      ats_losses      INTEGER,
-      ats_pushes      INTEGER,
-      ats_accuracy    NUMERIC(5,2),
-      edge_wins       INTEGER,           -- subset where |model - close| ≥ threshold
-      edge_losses     INTEGER,
-      edge_accuracy   NUMERIC(5,2),
-      edge_threshold  NUMERIC(5,2),
-      margin_mae      NUMERIC(5,2),      -- mean abs error on predicted home-margin
-      season_range    TEXT,
-      notes           TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_backtest_sport_ran ON ceelo_backtest(sport, ran_at DESC);
 
     -- Operator's desk — agents push docs here for review. Workflow:
     --   pending  → agent just filed it; operator hasn't acted
@@ -739,228 +789,6 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_articles_publishable
       ON articles(author, kind, status, published_to)
       WHERE kind='tutorial' AND status='approved' AND published_to IS NULL;
-
-    -- Per-team-per-season EPA aggregates from nflverse play-by-play.
-    -- Raw plays are not stored (too heavy — ~50k plays × 370 cols/season).
-    -- We fetch the season pbp CSV in /api/ceelo/seed, aggregate to these
-    -- columns in memory, then upsert here. This is the gold-standard
-    -- handicapping signal — what 538 / sharp shops use.
-    CREATE TABLE IF NOT EXISTS ceelo_team_epa (
-      team               TEXT        NOT NULL,
-      season             INTEGER     NOT NULL,
-      -- Offense (team has the ball)
-      epa_per_play       NUMERIC(7,4),     -- avg EPA / play (pass + run only)
-      pass_epa           NUMERIC(7,4),
-      rush_epa           NUMERIC(7,4),
-      success_rate       NUMERIC(5,4),
-      plays_offense      INTEGER,
-      -- Defense (team is on D)
-      epa_allowed        NUMERIC(7,4),
-      pass_epa_allowed   NUMERIC(7,4),
-      rush_epa_allowed   NUMERIC(7,4),
-      success_allowed    NUMERIC(5,4),
-      plays_defense      INTEGER,
-      -- Net = offense_epa - defense_epa_allowed (higher = better team)
-      net_epa            NUMERIC(7,4),
-      computed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (team, season)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_team_epa_season ON ceelo_team_epa(season, net_epa DESC);
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_epa_at TIMESTAMPTZ;
-
-    -- Depth charts (NFL only for now — nflverse weekly depth_charts file).
-    -- Starter + immediate-backup per (team, position, formation). Refreshed
-    -- weekly via Ceelo's loop. NBA / MLB depth ranking sources aren't
-    -- ingested yet (basketball-reference / retrosheet are scrape-required).
-    CREATE TABLE IF NOT EXISTS ceelo_depth_charts (
-      id              SERIAL      PRIMARY KEY,
-      sport           TEXT        NOT NULL DEFAULT 'NFL',
-      season          INTEGER     NOT NULL,
-      week            INTEGER     NOT NULL,
-      team            TEXT        NOT NULL,
-      player          TEXT        NOT NULL,
-      position        TEXT        NOT NULL,
-      depth_position  INTEGER     NOT NULL,        -- 1 = starter, 2 = backup
-      formation       TEXT        NOT NULL,        -- 'Offense' | 'Defense' | 'Special Teams'
-      fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (sport, team, position, formation, depth_position)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_depth_team ON ceelo_depth_charts(sport, team, position);
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_depth_at TIMESTAMPTZ;
-
-    -- Current-season rosters. Refreshed weekly via ESPN's per-team endpoint.
-    -- One row per (team, player). Stale players get pruned when a fresh
-    -- fetch overwrites the team list.
-    CREATE TABLE IF NOT EXISTS ceelo_rosters (
-      id           SERIAL      PRIMARY KEY,
-      team         TEXT        NOT NULL,
-      player       TEXT        NOT NULL,
-      position     TEXT,
-      jersey       TEXT,
-      height       TEXT,
-      weight       TEXT,
-      experience   INTEGER,
-      college      TEXT,
-      fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (team, player)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_rosters_team ON ceelo_rosters(team, position);
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_roster_at TIMESTAMPTZ;
-
-    -- Injury report snapshot. Refreshed daily via ESPN's per-team endpoint.
-    -- We dedupe on (team, player) and keep the latest status; a fresh fetch
-    -- replaces older rows for that team.
-    CREATE TABLE IF NOT EXISTS ceelo_injuries (
-      id           SERIAL      PRIMARY KEY,
-      team         TEXT        NOT NULL,
-      player       TEXT        NOT NULL,
-      position     TEXT,
-      status       TEXT,                         -- 'Out' | 'Questionable' | 'Doubtful' | 'IR' | 'PUP' | 'Active'
-      description  TEXT,
-      fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (team, player)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_injuries_team ON ceelo_injuries(team, status);
-
-    -- Schedule: one row per known NFL game. ESPN's event id is the natural key.
-    CREATE TABLE IF NOT EXISTS ceelo_games (
-      id           SERIAL      PRIMARY KEY,
-      espn_id      TEXT        UNIQUE,
-      season       INTEGER     NOT NULL,
-      week         INTEGER,
-      season_type  INTEGER,                -- 1=preseason, 2=regular, 3=postseason
-      home_team    TEXT        NOT NULL,
-      away_team    TEXT        NOT NULL,
-      kickoff_at   TIMESTAMPTZ,
-      status       TEXT        NOT NULL DEFAULT 'scheduled',
-                                            -- scheduled | in_progress | final | postponed
-      home_score   INTEGER,
-      away_score   INTEGER,
-      neutral_site BOOLEAN     NOT NULL DEFAULT FALSE,
-      graded_at    TIMESTAMPTZ,
-      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_games_kickoff ON ceelo_games(kickoff_at);
-    CREATE INDEX IF NOT EXISTS idx_ceelo_games_status ON ceelo_games(status, kickoff_at);
-
-    -- Power ratings — one row per team, updated after every graded game.
-    CREATE TABLE IF NOT EXISTS ceelo_team_ratings (
-      team           TEXT        PRIMARY KEY,           -- 2-3 letter abbr (KC, BUF, etc.)
-      rating         NUMERIC(8,3) NOT NULL DEFAULT 1500,
-      games_played   INTEGER     NOT NULL DEFAULT 0,
-      last_game_at   TIMESTAMPTZ,
-      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- Model line per upcoming game. Recomputed on every cycle (cheap).
-    CREATE TABLE IF NOT EXISTS ceelo_model_lines (
-      game_id          INTEGER     PRIMARY KEY REFERENCES ceelo_games(id) ON DELETE CASCADE,
-      model_spread     NUMERIC(5,2),         -- home spread (negative = home favored)
-      model_home_prob  NUMERIC(4,3),
-      computed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    -- Book lines history — populated only when ODDS_API_KEY is set.
-    CREATE TABLE IF NOT EXISTS ceelo_lines (
-      id           SERIAL      PRIMARY KEY,
-      game_id      INTEGER     NOT NULL REFERENCES ceelo_games(id) ON DELETE CASCADE,
-      book         TEXT        NOT NULL,             -- 'draftkings' | 'fanduel' | etc.
-      market       TEXT        NOT NULL,             -- 'spread' | 'total' | 'moneyline'
-      home_line    NUMERIC(6,2),
-      total_line   NUMERIC(6,2),
-      home_odds    INTEGER,
-      away_odds    INTEGER,
-      over_odds    INTEGER,
-      under_odds   INTEGER,
-      fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_lines_game ON ceelo_lines(game_id, market, fetched_at DESC);
-
-    -- ── Multi-sport migration ─────────────────────────────────────────────
-    -- Default everything existing to 'NFL' (only sport before this change).
-    -- ceelo_team_ratings.team was the PK; with NBA + MLB, abbrs collide
-    -- (LAC = Chargers AND Clippers) so PK becomes (sport, team).
-    ALTER TABLE ceelo_games        ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
-    ALTER TABLE ceelo_team_ratings ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
-    ALTER TABLE ceelo_model_lines  ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
-    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'NFL';
-
-    -- Public betting % from a future scrape source (covers / sbr). Stored
-    -- per-line so each fetch can update; null until the scraper lands.
-    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS public_bets_pct  NUMERIC(5,2);
-    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS public_money_pct NUMERIC(5,2);
-    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS public_side      TEXT;        -- 'home' | 'away'
-    ALTER TABLE ceelo_lines        ADD COLUMN IF NOT EXISTS open_home_line   NUMERIC(6,2);
-
-    -- Rebuild the team-ratings PK as composite (sport, team).
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conname = 'ceelo_team_ratings_pkey'
-          AND conrelid = 'ceelo_team_ratings'::regclass
-      ) THEN
-        ALTER TABLE ceelo_team_ratings DROP CONSTRAINT ceelo_team_ratings_pkey;
-        ALTER TABLE ceelo_team_ratings ADD PRIMARY KEY (sport, team);
-      END IF;
-    EXCEPTION WHEN others THEN NULL;
-    END $$;
-
-    CREATE INDEX IF NOT EXISTS idx_ceelo_games_sport_kickoff
-      ON ceelo_games(sport, kickoff_at);
-
-    -- Migrations: link picks to games + carry the math behind each pick.
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS game_id        INTEGER REFERENCES ceelo_games(id) ON DELETE SET NULL;
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_spread   NUMERIC(5,2);
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS book_spread    NUMERIC(5,2);
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS book_name      TEXT;
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS edge_points    NUMERIC(5,2);
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS source         TEXT NOT NULL DEFAULT 'llm';
-    -- Auto-graded model accuracy. Separate from operator's W/L tracking
-    -- (status='won'|'lost' = operator-marked). model_outcome is the
-    -- model's hypothetical performance — graded after the game finishes
-    -- regardless of whether the operator took the pick. Lets the
-    -- operator measure Ceelo per-sport without requiring real bets.
-    --   'win'  — pick covered
-    --   'loss' — pick didn't cover
-    --   'push' — actual margin matched the spread exactly
-    --   NULL   — game not yet final OR pick not from a model source
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_outcome  TEXT;
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS model_graded_at TIMESTAMPTZ;
-    CREATE INDEX IF NOT EXISTS idx_ceelo_picks_sport_model_outcome
-      ON ceelo_picks(sport, model_outcome) WHERE source='model';
-                                                  -- 'llm' (v1) | 'model' (v2 math-driven)
-
-    -- ── Walters point-rating framework (NFL only, v3) ───────────────────
-    -- True Score: raw final score with ST TDs + late-game garbage stripped.
-    -- Used by C1 to update Power Ratings without rewarding lucky bounces.
-    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS home_true_score INTEGER;
-    ALTER TABLE ceelo_games ADD COLUMN IF NOT EXISTS away_true_score INTEGER;
-
-    -- Walters output block stamped onto each pick — surfaced to operator
-    -- alerts and the chat UI so the math is fully traceable.
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS raw_pr_diff      NUMERIC(5,2);
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS situational_sum  NUMERIC(5,2);
-    ALTER TABLE ceelo_picks ADD COLUMN IF NOT EXISTS kelly_units      NUMERIC(4,2);
-
-    -- Ceelo's self-curated player grades. Populated by C0f auto-grading
-    -- (no operator input required for v1 — operator can override later).
-    --   qb_tier: 1=Elite (7.5pt) … 5=Backup (0pt). Only QBs.
-    --   blue_chip_pts: 1.4 (Wirfs-tier OT), 0.9 (top edge / CB), or 0.
-    CREATE TABLE IF NOT EXISTS ceelo_player_grades (
-      team           TEXT        NOT NULL,
-      player         TEXT        NOT NULL,
-      position       TEXT        NOT NULL,
-      qb_tier        INTEGER,
-      blue_chip_pts  NUMERIC(3,2),
-      rationale      TEXT,
-      graded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (team, player)
-    );
-    CREATE INDEX IF NOT EXISTS idx_ceelo_player_grades_team
-      ON ceelo_player_grades(team, position);
-    ALTER TABLE ceelo_state ADD COLUMN IF NOT EXISTS last_grades_at TIMESTAMPTZ;
 
     -- ── Autonomy tree (hierarchical decision loop) ──────────────────────
     -- Lila navigates a 3-branch tree (DESK / AUTONOMY / LILA) each tick;
@@ -1210,7 +1038,6 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     ALTER TABLE chat_messages    DROP COLUMN IF EXISTS via;
     ALTER TABLE chat_messages    DROP COLUMN IF EXISTS mirrored_at;
     ALTER TABLE security_reports DROP COLUMN IF EXISTS tg_alerted_at;
-    ALTER TABLE ceelo_picks      DROP COLUMN IF EXISTS tg_alerted_at;
     ALTER TABLE lila_positions   DROP COLUMN IF EXISTS tg_alerted_at;
     ALTER TABLE bounty_picks     DROP COLUMN IF EXISTS tg_alerted_at;
     DROP INDEX  IF EXISTS idx_chat_messages_mirror;

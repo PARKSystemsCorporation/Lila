@@ -1,39 +1,44 @@
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
 import { netProfit } from '@/lib/ceelo-loop'
-import * as Odds from '@/lib/ceelo/odds'
+import * as Racing from '@/lib/horse-racing/racing-api'
 
 export const dynamic = 'force-dynamic'
 
 // GET /api/picks
-//   → { picks: PickRow[], summary: { open, active, record, bankroll } }
+//   → { picks: PickRow[], summary: { open, active, record, bankroll }, status }
 //
 // PickRow groups: status='open' (Ceelo posted, awaiting decision),
 // 'taken' (operator placed, awaiting settle), and settled (won/lost/push/void).
 // 'skipped' is hidden from the main list but counted.
+//
+// After the racing swap, Ceelo emits one 'win'-market pick per race. We keep
+// the legacy field names (game_label, model_spread, etc.) populated from
+// racing columns so the existing operator UI keeps rendering — see field
+// map below.
 
 type Status = 'open' | 'skipped' | 'taken' | 'won' | 'lost' | 'push' | 'void'
 
 interface PickRow {
   id: number
-  game_label: string
-  kickoff_at: number | null
-  market: string
-  side: string
+  game_label: string             // ← race_label
+  kickoff_at: number | null      // ← off_dt
+  market: string                 // 'win'
+  side: string                   // horse_name
   model_prob: number | null
-  fair_line: string | null
+  fair_line: string | null       // formatted fair_decimal
   min_odds: number | null
   edge_pct: number | null
-  model_spread: number | null
-  book_spread: number | null
-  book_name: string | null
-  edge_points: number | null
+  model_spread: number | null    // always null (no spread market in racing)
+  book_spread: number | null     // always null
+  book_name: string | null       // always null
+  edge_points: number | null     // always null
   source: 'llm' | 'model'
   reasoning: string
   confidence: string
   status: Status
   stake: number | null
-  taken_odds: number | null
+  taken_odds: number | null      // decimal odds
   payout: number | null
   taken_at: number | null
   settled_at: number | null
@@ -55,25 +60,25 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [picksRes, stateRes, ratingsRes, scheduleRes, modelRes, perSportRes] = await Promise.all([
+    const [picksRes, stateRes, racesRes, runnerOddsRes, modelRollupRes] = await Promise.all([
       db.query(
-        `SELECT id, game_label, market, side,
-                model_prob, fair_line, min_odds, edge_pct,
-                model_spread, book_spread, book_name, edge_points, source,
+        `SELECT id, race_label, market, horse_name,
+                model_prob, fair_decimal, book_decimal, edge_pct,
+                intensity, velocity, source,
                 reasoning, confidence, status, stake, taken_odds, payout,
-                (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts,
+                (EXTRACT(EPOCH FROM off_dt)     * 1000)::bigint AS off_ts,
                 (EXTRACT(EPOCH FROM taken_at)   * 1000)::bigint AS taken_ts,
                 (EXTRACT(EPOCH FROM settled_at) * 1000)::bigint AS settled_ts,
                 (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
          FROM ceelo_picks
          ORDER BY
            CASE status
-             WHEN 'open'   THEN 0
-             WHEN 'taken'  THEN 1
-             WHEN 'won'    THEN 2
-             WHEN 'lost'   THEN 2
-             WHEN 'push'   THEN 2
-             WHEN 'void'   THEN 2
+             WHEN 'open'    THEN 0
+             WHEN 'taken'   THEN 1
+             WHEN 'won'     THEN 2
+             WHEN 'lost'    THEN 2
+             WHEN 'push'    THEN 2
+             WHEN 'void'    THEN 2
              WHEN 'skipped' THEN 3
            END,
            created_at DESC
@@ -83,63 +88,52 @@ export async function GET() {
         `SELECT (EXTRACT(EPOCH FROM last_run_at)      * 1000)::bigint AS last_run_ts,
                 (EXTRACT(EPOCH FROM last_schedule_at) * 1000)::bigint AS last_sched_ts,
                 (EXTRACT(EPOCH FROM last_grade_at)    * 1000)::bigint AS last_grade_ts,
-                (EXTRACT(EPOCH FROM last_lines_at)    * 1000)::bigint AS last_lines_ts,
+                (EXTRACT(EPOCH FROM last_odds_at)     * 1000)::bigint AS last_odds_ts,
                 cycle
          FROM ceelo_state WHERE id=1`
       ),
-      db.query(`SELECT COUNT(*) AS n FROM ceelo_team_ratings WHERE games_played > 0`),
+      db.query(`SELECT COUNT(*) AS n FROM ceelo_races WHERE status='scheduled' AND off_dt > NOW()`),
+      db.query(`SELECT COUNT(*) AS n FROM ceelo_runner_odds WHERE fetched_at > NOW() - INTERVAL '30 minutes'`),
+      // Model auto-grade rollup. One row of operator + model stats.
       db.query(
-        `SELECT COUNT(*) AS n FROM ceelo_games
-         WHERE status='scheduled' AND kickoff_at > NOW()`
-      ),
-      db.query(`SELECT COUNT(*) AS n FROM ceelo_model_lines`),
-      // Per-sport breakdown — computed in SQL so it covers ALL picks, not
-      // just the 200-row UI list. Two streams:
-      //   op_*    — operator-marked W/L on bets they actually took
-      //   model_* — auto-graded outcomes for every flagged green pick
-      db.query(
-        `SELECT s.sport,
-                COUNT(*)                                        FILTER (WHERE p.status='open')                                    AS op_open,
-                COUNT(*)                                        FILTER (WHERE p.status='taken')                                   AS op_active,
-                COUNT(*)                                        FILTER (WHERE p.status='won')                                     AS op_wins,
-                COUNT(*)                                        FILTER (WHERE p.status='lost')                                    AS op_losses,
-                COUNT(*)                                        FILTER (WHERE p.status IN ('push','void'))                        AS op_pushes,
-                COALESCE(SUM(p.stake)                           FILTER (WHERE p.status IN ('taken','won','lost','push','void')), 0) AS op_staked,
-                COALESCE(SUM(p.stake + COALESCE(p.payout, 0))   FILTER (WHERE p.status='won'), 0)                                 AS op_won_returned,
-                COALESCE(SUM(p.stake)                           FILTER (WHERE p.status IN ('push','void')), 0)                    AS op_push_returned,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='win')         AS model_wins,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='loss')        AS model_losses,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome='push')        AS model_pushes,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NOT NULL)   AS model_settled,
-                COUNT(*)                                        FILTER (WHERE p.source='model' AND p.model_outcome IS NULL)       AS model_pending
-         FROM (VALUES ('NFL'),('NBA'),('MLB')) AS s(sport)
-         LEFT JOIN ceelo_picks p ON p.sport = s.sport
-         GROUP BY s.sport
-         ORDER BY s.sport`
+        `SELECT
+            COUNT(*)                              FILTER (WHERE status='open')                                    AS op_open,
+            COUNT(*)                              FILTER (WHERE status='taken')                                   AS op_active,
+            COUNT(*)                              FILTER (WHERE status='won')                                     AS op_wins,
+            COUNT(*)                              FILTER (WHERE status='lost')                                    AS op_losses,
+            COUNT(*)                              FILTER (WHERE status IN ('push','void'))                        AS op_pushes,
+            COALESCE(SUM(stake)                   FILTER (WHERE status IN ('taken','won','lost','push','void')), 0) AS op_staked,
+            COALESCE(SUM(stake + COALESCE(payout, 0)) FILTER (WHERE status='won'), 0)                             AS op_won_returned,
+            COALESCE(SUM(stake)                   FILTER (WHERE status IN ('push','void')), 0)                    AS op_push_returned,
+            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='win')           AS model_wins,
+            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='loss')          AS model_losses,
+            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome='push')          AS model_pushes,
+            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome IS NOT NULL)     AS model_settled,
+            COUNT(*)                              FILTER (WHERE source='model' AND model_outcome IS NULL)         AS model_pending
+         FROM ceelo_picks`
       ),
     ])
 
     const rows = picksRes.rows
     const s = stateRes.rows[0] ?? {}
-    const ratedTeams      = Number(ratingsRes.rows[0]?.n ?? 0)
-    const upcomingGames   = Number(scheduleRes.rows[0]?.n ?? 0)
-    const modelLineCount  = Number(modelRes.rows[0]?.n ?? 0)
+    const upcomingRaces      = Number(racesRes.rows[0]?.n ?? 0)
+    const recentSnapshots    = Number(runnerOddsRes.rows[0]?.n ?? 0)
 
     const picks: PickRow[] = rows.map(r => ({
       id: Number(r.id),
-      game_label: r.game_label,
-      kickoff_at: r.kickoff_ts != null ? Number(r.kickoff_ts) : null,
-      market: r.market,
-      side: r.side,
+      game_label: r.race_label,
+      kickoff_at: r.off_ts != null ? Number(r.off_ts) : null,
+      market: r.market ?? 'win',
+      side: r.horse_name,
       model_prob: r.model_prob != null ? Number(r.model_prob) : null,
-      fair_line: r.fair_line ?? null,
-      min_odds: r.min_odds != null ? Number(r.min_odds) : null,
+      fair_line: r.fair_decimal != null ? Number(r.fair_decimal).toFixed(2) : null,
+      min_odds: null,
       edge_pct: r.edge_pct != null ? Number(r.edge_pct) : null,
-      model_spread: r.model_spread != null ? Number(r.model_spread) : null,
-      book_spread:  r.book_spread  != null ? Number(r.book_spread)  : null,
-      book_name:    r.book_name ?? null,
-      edge_points:  r.edge_points  != null ? Number(r.edge_points)  : null,
-      source: (r.source ?? 'llm') as 'llm' | 'model',
+      model_spread: null,
+      book_spread:  null,
+      book_name:    null,
+      edge_points:  null,
+      source: (r.source ?? 'model') as 'llm' | 'model',
       reasoning: r.reasoning,
       confidence: r.confidence,
       status: r.status as Status,
@@ -162,12 +156,10 @@ export async function GET() {
       else if (p.status === 'won') {
         wins++
         staked += p.stake ?? 0
-        // returned = stake + net profit (= stake + payout)
         returned += (p.stake ?? 0) + (p.payout ?? 0)
       } else if (p.status === 'lost') {
         losses++
         staked += p.stake ?? 0
-        // returned 0 of the stake
       } else if (p.status === 'push' || p.status === 'void') {
         pushes++
         staked += p.stake ?? 0
@@ -177,49 +169,42 @@ export async function GET() {
     const pnl = +(returned - staked).toFixed(2)
     const roi = staked > 0 ? +((pnl / staked) * 100).toFixed(2) : 0
 
-    // Per-sport rollup — operator (real bet) record + model (auto-graded)
-    // accuracy. Both come from the same picks table; the operator path
-    // counts where status moved through 'taken' → 'won'/'lost', the
-    // model path counts where source='model' AND model_outcome got
-    // stamped by C5's auto-grader.
-    const bySport = perSportRes.rows.map((r: {
-      sport: string
-      op_open: number; op_active: number; op_wins: number; op_losses: number; op_pushes: number
-      op_staked: string; op_won_returned: string; op_push_returned: string
-      model_wins: number; model_losses: number; model_pushes: number; model_settled: number; model_pending: number
-    }) => {
-      const opStaked   = parseFloat(r.op_staked   ?? '0')
-      const opReturned = parseFloat(r.op_won_returned ?? '0') + parseFloat(r.op_push_returned ?? '0')
-      const opPnl      = +(opReturned - opStaked).toFixed(2)
-      const opRoi      = opStaked > 0 ? +((opPnl / opStaked) * 100).toFixed(2) : 0
-      const opSettled  = Number(r.op_wins) + Number(r.op_losses)
-      const opWinPct   = opSettled > 0 ? +((Number(r.op_wins) / opSettled) * 100).toFixed(1) : null
-      const modelSettled = Number(r.model_settled)
-      const modelDecided = Number(r.model_wins) + Number(r.model_losses)
-      const modelAcc = modelDecided > 0 ? +((Number(r.model_wins) / modelDecided) * 100).toFixed(1) : null
-      return {
-        sport: r.sport,
+    // Single-sport (RACING) rollup, returned in the same `bySport` shape so
+    // the existing operator UI tab strip keeps rendering.
+    const m = modelRollupRes.rows[0] ?? {}
+    const opStaked   = parseFloat(m.op_staked   ?? '0')
+    const opReturned = parseFloat(m.op_won_returned ?? '0') + parseFloat(m.op_push_returned ?? '0')
+    const opPnl      = +(opReturned - opStaked).toFixed(2)
+    const opRoi      = opStaked > 0 ? +((opPnl / opStaked) * 100).toFixed(2) : 0
+    const opSettled  = Number(m.op_wins ?? 0) + Number(m.op_losses ?? 0)
+    const opWinPct   = opSettled > 0 ? +((Number(m.op_wins) / opSettled) * 100).toFixed(1) : null
+    const modelDecided = Number(m.model_wins ?? 0) + Number(m.model_losses ?? 0)
+    const modelAcc   = modelDecided > 0 ? +((Number(m.model_wins) / modelDecided) * 100).toFixed(1) : null
+
+    const bySport = [
+      {
+        sport: 'RACING',
         operator: {
-          open: Number(r.op_open),
-          active: Number(r.op_active),
-          wins: Number(r.op_wins),
-          losses: Number(r.op_losses),
-          pushes: Number(r.op_pushes),
+          open:   Number(m.op_open    ?? 0),
+          active: Number(m.op_active  ?? 0),
+          wins:   Number(m.op_wins    ?? 0),
+          losses: Number(m.op_losses  ?? 0),
+          pushes: Number(m.op_pushes  ?? 0),
           staked: +opStaked.toFixed(2),
           pnl: opPnl,
           roi: opRoi,
           win_pct: opWinPct,
         },
         model: {
-          wins: Number(r.model_wins),
-          losses: Number(r.model_losses),
-          pushes: Number(r.model_pushes),
-          settled: modelSettled,
-          pending: Number(r.model_pending),
+          wins:    Number(m.model_wins    ?? 0),
+          losses:  Number(m.model_losses  ?? 0),
+          pushes:  Number(m.model_pushes  ?? 0),
+          settled: Number(m.model_settled ?? 0),
+          pending: Number(m.model_pending ?? 0),
           accuracy: modelAcc,
         },
-      }
-    })
+      },
+    ]
 
     return NextResponse.json({
       picks,
@@ -231,14 +216,14 @@ export async function GET() {
       },
       bySport,
       status: {
-        odds_key:        Odds.isConfigured(),
-        rated_teams:     ratedTeams,
-        upcoming_games:  upcomingGames,
-        model_lines:     modelLineCount,
+        odds_key:        Racing.isConfigured(),
+        rated_teams:     0,                 // no team ratings in racing
+        upcoming_games:  upcomingRaces,
+        model_lines:     recentSnapshots,
         last_run_ts:      s.last_run_ts      != null ? Number(s.last_run_ts)      : null,
         last_schedule_ts: s.last_sched_ts    != null ? Number(s.last_sched_ts)    : null,
         last_grade_ts:    s.last_grade_ts    != null ? Number(s.last_grade_ts)    : null,
-        last_lines_ts:    s.last_lines_ts    != null ? Number(s.last_lines_ts)    : null,
+        last_lines_ts:    s.last_odds_ts     != null ? Number(s.last_odds_ts)     : null,
         cycle:            s.cycle            != null ? Number(s.cycle)            : 0,
       },
     })
@@ -246,10 +231,10 @@ export async function GET() {
 }
 
 // POST /api/picks
-//   { action: 'take',   id, stake, taken_odds }
+//   { action: 'take',   id, stake, taken_odds }   ← taken_odds is now decimal
 //   { action: 'skip',   id }
 //   { action: 'settle', id, result: 'won'|'lost'|'push'|'void' }
-//   { action: 'reopen', id }   ← undo accidental skip/settle
+//   { action: 'reopen', id }
 //   { action: 'delete', id }
 export async function POST(req: Request) {
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'no db' }, { status: 503 })
@@ -265,12 +250,12 @@ export async function POST(req: Request) {
 
     if (action === 'take') {
       const stake = Number(body.stake)
-      const odds = Math.trunc(Number(body.taken_odds))
+      const odds = Number(body.taken_odds)
       if (!Number.isFinite(stake) || stake <= 0) {
         return NextResponse.json({ error: 'stake must be > 0' }, { status: 400 })
       }
-      if (!Number.isFinite(odds) || odds === 0) {
-        return NextResponse.json({ error: 'taken_odds required' }, { status: 400 })
+      if (!Number.isFinite(odds) || odds <= 1) {
+        return NextResponse.json({ error: 'taken_odds (decimal) must be > 1' }, { status: 400 })
       }
       await db.query(
         `UPDATE ceelo_picks
@@ -307,7 +292,6 @@ export async function POST(req: Request) {
       } else if (result === 'lost') {
         payout = -Number(row.stake)
       }
-      // push / void: payout = 0 (stake refunded; bankroll unchanged)
 
       await db.query(
         `UPDATE ceelo_picks

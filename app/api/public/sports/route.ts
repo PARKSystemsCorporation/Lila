@@ -49,16 +49,16 @@ export async function GET() {
     await ensureSchema(db)
 
     const [edgesRes, articlesRes] = await Promise.all([
+      // Racing top picks. We map the racing columns onto the legacy TopEdge
+      // shape (game_label ← race_label, side ← horse_name, edge_points ← null)
+      // so the public landing page keeps rendering.
       db.query(
-        `SELECT id, sport, game_label, market, side, edge_pct, edge_points,
-                model_prob, book_spread, model_spread, confidence,
-                (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts
+        `SELECT id, race_label, market, horse_name, edge_pct, model_prob,
+                fair_decimal, book_decimal, confidence,
+                (EXTRACT(EPOCH FROM off_dt) * 1000)::bigint AS off_ts
          FROM ceelo_picks
          WHERE status='open'
-         ORDER BY
-           CASE WHEN edge_points IS NOT NULL THEN ABS(edge_points) ELSE 0 END DESC,
-           COALESCE(edge_pct, 0) DESC,
-           created_at DESC
+         ORDER BY intensity DESC NULLS LAST, COALESCE(edge_pct, 0) DESC, created_at DESC
          LIMIT 3`
       ),
       db.query(
@@ -73,16 +73,16 @@ export async function GET() {
 
     const top_edges: TopEdge[] = edgesRes.rows.map(r => ({
       id: Number(r.id),
-      sport: String(r.sport ?? 'NFL'),
-      game_label: r.game_label,
-      market: r.market,
-      side: r.side,
+      sport: 'RACING',
+      game_label: r.race_label,
+      market: r.market ?? 'win',
+      side: r.horse_name,
       edge_pct: r.edge_pct != null ? Number(r.edge_pct) : null,
-      edge_points: r.edge_points != null ? Number(r.edge_points) : null,
+      edge_points: null,
       model_prob: r.model_prob != null ? Number(r.model_prob) : null,
-      book_spread: r.book_spread != null ? Number(r.book_spread) : null,
-      model_spread: r.model_spread != null ? Number(r.model_spread) : null,
-      kickoff_ts: r.kickoff_ts != null ? Number(r.kickoff_ts) : null,
+      book_spread: null,
+      model_spread: null,
+      kickoff_ts: r.off_ts != null ? Number(r.off_ts) : null,
       confidence: r.confidence,
     }))
 

@@ -212,75 +212,70 @@ async function gatherVegaContext(db: PoolClient): Promise<Context> {
 }
 
 async function gatherCeeloContext(db: PoolClient): Promise<Context> {
-  const [edges, finals, top, epaTop] = await Promise.all([
+  // Racing-shaped context: top yield runners on today's card, recent
+  // finals, model record. Replaces the NFL/NBA/MLB EDGES + FINALS +
+  // TOP-RATED + TOP NET-EPA blocks.
+  const [topYield, recentResults, modelRecord] = await Promise.all([
     db.query(
-      `WITH latest AS (
-         SELECT DISTINCT ON (l.game_id, l.book)
-                l.game_id, l.book, l.home_line
-         FROM ceelo_lines l
-         WHERE l.market='spread' AND l.home_line IS NOT NULL
-         ORDER BY l.game_id, l.book, l.fetched_at DESC
-       )
-       SELECT g.sport, g.home_team, g.away_team, g.kickoff_at,
-              m.model_spread, l.home_line AS book_spread, l.book
-       FROM ceelo_games g
-       JOIN ceelo_model_lines m ON m.game_id = g.id
-       JOIN latest l            ON l.game_id = g.id
-       WHERE g.status='scheduled' AND g.kickoff_at > NOW()
-         AND g.kickoff_at < NOW() + INTERVAL '4 days'
-         AND ABS(l.home_line - m.model_spread) >= 1.0
-       ORDER BY ABS(l.home_line - m.model_spread) DESC
+      `SELECT r.course, r.off_time, r.race_name, run.horse,
+              latest.odds_decimal, latest.fair_decimal, latest.edge_pct
+       FROM ceelo_races r
+       JOIN LATERAL (
+         SELECT ro.horse_id, ro.odds_decimal, ro.fair_decimal, ro.edge_pct
+         FROM ceelo_runner_odds ro
+         WHERE ro.race_id = r.race_id AND ro.edge_pct IS NOT NULL
+         ORDER BY ro.edge_pct DESC NULLS LAST, ro.fetched_at DESC
+         LIMIT 1
+       ) latest ON true
+       JOIN ceelo_runners run ON run.race_id = r.race_id AND run.horse_id = latest.horse_id
+       WHERE r.status='scheduled' AND r.off_dt BETWEEN NOW() AND NOW() + INTERVAL '24 hours'
+       ORDER BY latest.edge_pct DESC NULLS LAST
        LIMIT 8`
     ),
     db.query(
-      `SELECT sport, home_team, away_team, home_score, away_score, closing_spread
-       FROM ceelo_games
-       WHERE status='final' AND graded_at > NOW() - INTERVAL '3 days'
-       ORDER BY kickoff_at DESC LIMIT 10`
+      `SELECT r.course, r.off_time, r.race_name,
+              res.finishers
+       FROM ceelo_races r
+       JOIN ceelo_results res ON res.race_id = r.race_id
+       WHERE r.finished_at > NOW() - INTERVAL '3 days'
+       ORDER BY r.finished_at DESC LIMIT 8`
     ),
     db.query(
-      `SELECT sport, team, rating, games_played FROM ceelo_team_ratings
-       WHERE games_played > 0
-       ORDER BY rating DESC LIMIT 12`
-    ),
-    db.query(
-      `SELECT team, season, net_epa
-       FROM ceelo_team_epa
-       WHERE season = (SELECT MAX(season) FROM ceelo_team_epa)
-       ORDER BY net_epa DESC LIMIT 5`
+      `SELECT
+          COUNT(*) FILTER (WHERE source='model' AND model_outcome='win')  AS model_wins,
+          COUNT(*) FILTER (WHERE source='model' AND model_outcome='loss') AS model_losses,
+          COUNT(*) FILTER (WHERE status='open')                           AS open_picks
+       FROM ceelo_picks`
     ),
   ])
 
   const lines: string[] = []
-  if (edges.rows.length) {
-    lines.push('TOP EDGES THIS WEEK:')
-    for (const e of edges.rows) {
-      const m = Number(e.model_spread).toFixed(1)
-      const b = Number(e.book_spread).toFixed(1)
-      const edge = (Number(e.book_spread) - Number(e.model_spread)).toFixed(1)
-      const takeHome = Number(edge) > 0
-      const sign = Number(edge) >= 0 ? '+' : ''
-      lines.push(`  ${e.sport} ${e.away_team}@${e.home_team} — model ${m}, ${e.book} ${b}, edge ${sign}${edge} (take ${takeHome ? e.home_team : e.away_team})`)
+  if (topYield.rows.length) {
+    lines.push('TOP YIELD RUNNERS (next 24h):')
+    for (const e of topYield.rows) {
+      const book = Number(e.odds_decimal ?? 0).toFixed(2)
+      const fair = Number(e.fair_decimal ?? 0).toFixed(2)
+      const edge = Number(e.edge_pct ?? 0).toFixed(1)
+      const sign = Number(e.edge_pct) >= 0 ? '+' : ''
+      lines.push(`  ${e.off_time} ${e.course} — ${e.horse} (book ${book} / fair ${fair} / edge ${sign}${edge}%)`)
     }
   }
-  if (finals.rows.length) {
+  if (recentResults.rows.length) {
     lines.push('RECENT FINALS:')
-    for (const f of finals.rows) {
-      const cs = f.closing_spread != null ? ` (closed ${Number(f.closing_spread).toFixed(1)})` : ''
-      lines.push(`  ${f.sport} ${f.away_team} ${f.away_score} @ ${f.home_team} ${f.home_score}${cs}`)
+    for (const f of recentResults.rows) {
+      const fin = Array.isArray(f.finishers) ? f.finishers.slice(0, 3) : []
+      const top3 = fin
+        .map((x: { position?: number; horse?: string }) => `${x.position ?? '?'}. ${x.horse ?? '?'}`)
+        .join(', ')
+      lines.push(`  ${f.off_time} ${f.course} ${f.race_name} — ${top3 || 'no finishers parsed'}`)
     }
   }
-  if (top.rows.length) {
-    lines.push('TOP-RATED TEAMS:')
-    lines.push('  ' + top.rows.map((r: { sport: string; team: string; rating: string }) =>
-      `${r.sport}/${r.team} ${Number(r.rating).toFixed(0)}`
-    ).join(', '))
-  }
-  if (epaTop.rows.length) {
-    lines.push('TOP NET-EPA (NFL):')
-    lines.push('  ' + epaTop.rows.map((r: { team: string; net_epa: string }) =>
-      `${r.team} ${Number(r.net_epa) >= 0 ? '+' : ''}${Number(r.net_epa).toFixed(3)}`
-    ).join(', '))
+  const m = modelRecord.rows[0] ?? {}
+  const wins = Number(m.model_wins ?? 0)
+  const losses = Number(m.model_losses ?? 0)
+  const open = Number(m.open_picks ?? 0)
+  if (wins + losses + open > 0) {
+    lines.push(`MODEL RECORD: ${wins}W-${losses}L · ${open} open picks`)
   }
   return { hasSubstance: lines.length > 0, body: lines.join('\n') }
 }

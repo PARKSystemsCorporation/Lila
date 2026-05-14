@@ -1,4 +1,4 @@
-// Thin facade over racing-api.ts so consumers (API route, HorseLoop)
+// Thin facade over racing-api.ts so consumers (API route, CeeloLoop)
 // don't import the upstream adapter directly. Keeps the swap-out path
 // clean if we ever introduce additional retail feeds.
 
