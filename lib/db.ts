@@ -1125,6 +1125,163 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS sports_game_events_game_idx
       ON sports_game_events (game_id, created_at);
+
+    -- ─────────────────────────────────────────────────────────────────────
+    -- The Bazaar — encrypted agent-labor market settled in $LDGR on Solana.
+    -- viewer_dms + park_gates_ledger stay read-only as legacy history.
+    -- ─────────────────────────────────────────────────────────────────────
+
+    CREATE TABLE IF NOT EXISTS bazaar_agents (
+      id                   BIGSERIAL    PRIMARY KEY,
+      viewer_id            INTEGER      REFERENCES viewers(id) ON DELETE SET NULL,
+      matrix_user_id       TEXT         UNIQUE NOT NULL,
+      display_name         TEXT         NOT NULL,
+      bio                  TEXT,
+      phantom_wallet       TEXT,
+      api_token_hash       TEXT,
+      status               TEXT         NOT NULL DEFAULT 'pending',
+      device_verified_at   TIMESTAMPTZ,
+      approved_at          TIMESTAMPTZ,
+      banned_at            TIMESTAMPTZ,
+      created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_bazaar_agents_status
+      ON bazaar_agents (status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bazaar_agents_wallet
+      ON bazaar_agents (phantom_wallet) WHERE phantom_wallet IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS bazaar_skills (
+      id                BIGSERIAL    PRIMARY KEY,
+      agent_id          BIGINT       NOT NULL REFERENCES bazaar_agents(id) ON DELETE CASCADE,
+      title             TEXT         NOT NULL,
+      body              TEXT         NOT NULL,
+      price_ldgr_min    NUMERIC(20,9) NOT NULL,
+      currency          TEXT         NOT NULL DEFAULT 'LDGR',
+      room_event_id     TEXT,
+      posted_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      retired_at        TIMESTAMPTZ,
+      created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_bazaar_skills_agent
+      ON bazaar_skills (agent_id, posted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bazaar_skills_live
+      ON bazaar_skills (posted_at DESC) WHERE retired_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS bazaar_rooms (
+      id                BIGSERIAL    PRIMARY KEY,
+      matrix_room_id    TEXT         UNIQUE NOT NULL,
+      kind              TEXT         NOT NULL,
+      hirer_agent_id    BIGINT       REFERENCES bazaar_agents(id),
+      worker_agent_id   BIGINT       REFERENCES bazaar_agents(id),
+      gig_id            BIGINT,
+      state             TEXT         NOT NULL DEFAULT 'open',
+      created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      archived_at       TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_bazaar_rooms_kind
+      ON bazaar_rooms (kind, state, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bazaar_rooms_gig
+      ON bazaar_rooms (gig_id) WHERE gig_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS bazaar_gigs (
+      id                BIGSERIAL    PRIMARY KEY,
+      hirer_agent_id    BIGINT       NOT NULL REFERENCES bazaar_agents(id),
+      worker_agent_id   BIGINT       NOT NULL REFERENCES bazaar_agents(id),
+      skill_id          BIGINT       REFERENCES bazaar_skills(id),
+      room_id           BIGINT       REFERENCES bazaar_rooms(id),
+      brief_md          TEXT         NOT NULL,
+      milestones        JSONB        NOT NULL DEFAULT '[]'::jsonb,
+      total_ldgr        NUMERIC(20,9) NOT NULL DEFAULT 0,
+      escrow_pda        TEXT,
+      state             TEXT         NOT NULL DEFAULT 'negotiating',
+      disputed_reason   TEXT,
+      created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      funded_at         TIMESTAMPTZ,
+      released_at       TIMESTAMPTZ,
+      refunded_at       TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_bazaar_gigs_hirer
+      ON bazaar_gigs (hirer_agent_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bazaar_gigs_worker
+      ON bazaar_gigs (worker_agent_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bazaar_gigs_state
+      ON bazaar_gigs (state, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS bazaar_milestones (
+      id                BIGSERIAL    PRIMARY KEY,
+      gig_id            BIGINT       NOT NULL REFERENCES bazaar_gigs(id) ON DELETE CASCADE,
+      idx               SMALLINT     NOT NULL,
+      description       TEXT         NOT NULL,
+      amount_ldgr       NUMERIC(20,9) NOT NULL,
+      state             TEXT         NOT NULL DEFAULT 'pending',
+      proof_event_id    TEXT,
+      submitted_at      TIMESTAMPTZ,
+      verified_at       TIMESTAMPTZ,
+      released_at       TIMESTAMPTZ,
+      release_tx_sig    TEXT,
+      created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      UNIQUE (gig_id, idx)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bazaar_milestones_state
+      ON bazaar_milestones (state, submitted_at DESC NULLS LAST);
+
+    CREATE TABLE IF NOT EXISTS bazaar_escrows (
+      id                BIGSERIAL    PRIMARY KEY,
+      gig_id            BIGINT       NOT NULL UNIQUE REFERENCES bazaar_gigs(id) ON DELETE CASCADE,
+      program_id        TEXT         NOT NULL,
+      escrow_pda        TEXT         NOT NULL,
+      vault_ata         TEXT         NOT NULL,
+      mint              TEXT         NOT NULL,
+      moderator_pubkey  TEXT         NOT NULL,
+      amount_total      NUMERIC(20,9) NOT NULL,
+      tx_sig_init       TEXT,
+      tx_sig_release    TEXT,
+      tx_sig_refund     TEXT,
+      state             TEXT         NOT NULL DEFAULT 'pending_init',
+      created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS bazaar_ledger (
+      id            BIGSERIAL    PRIMARY KEY,
+      actor         TEXT         NOT NULL,
+      action        TEXT         NOT NULL,
+      gig_id        BIGINT       REFERENCES bazaar_gigs(id) ON DELETE SET NULL,
+      agent_id      BIGINT       REFERENCES bazaar_agents(id) ON DELETE SET NULL,
+      room_id       BIGINT       REFERENCES bazaar_rooms(id) ON DELETE SET NULL,
+      refs          JSONB        NOT NULL DEFAULT '{}'::jsonb,
+      tx_sig        TEXT,
+      created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_bazaar_ledger_recent
+      ON bazaar_ledger (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bazaar_ledger_gig
+      ON bazaar_ledger (gig_id, created_at DESC) WHERE gig_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_bazaar_ledger_action
+      ON bazaar_ledger (action, created_at DESC);
+
+    -- One-shot Park Gates → $LDGR bridge. UNIQUE on viewer_id guards against
+    -- double-mint races; the bridge route inserts this row before sending the
+    -- mint tx and rolls back if the chain call fails.
+    CREATE TABLE IF NOT EXISTS pg_to_ldgr_bridge (
+      id              BIGSERIAL    PRIMARY KEY,
+      viewer_id       INTEGER      NOT NULL UNIQUE REFERENCES viewers(id) ON DELETE CASCADE,
+      pg_burned       INTEGER      NOT NULL,
+      ldgr_minted     NUMERIC(20,9) NOT NULL,
+      phantom_wallet  TEXT         NOT NULL,
+      tx_sig          TEXT,
+      bridged_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+
+    -- Cross-table FK back-patched once both tables exist.
+    DO $bazaar_fk$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'bazaar_rooms_gig_fk'
+      ) THEN
+        ALTER TABLE bazaar_rooms
+          ADD CONSTRAINT bazaar_rooms_gig_fk
+          FOREIGN KEY (gig_id) REFERENCES bazaar_gigs(id) ON DELETE SET NULL;
+      END IF;
+    END $bazaar_fk$;
   `)
   schemaReady = true
 }

@@ -1,0 +1,31 @@
+{
+  "default_server_config": {
+    "m.homeserver": {
+      "base_url": "https://bazaar.parksystems.app",
+      "server_name": "bazaar.parksystems.app"
+    }
+  },
+  "brand": "The Bazaar",
+  "default_federate": false,
+  "default_country_code": "US",
+  "disable_custom_urls": true,
+  "disable_guests": true,
+  "disable_login_language_selector": true,
+  "disable_3pid_login": true,
+  "permalink_prefix": "https://bazaar.parksystems.app",
+  "force_verification": true,
+  "feature_video_rooms": false,
+  "feature_pinning": true,
+  "default_theme": "dark",
+  "show_labs_settings": false,
+  "room_directory": { "servers": [] },
+  "setting_defaults": {
+    "breadcrumbs": true,
+    "MessageComposerInput.suggestEmoji": false,
+    "useSystemTheme": false
+  },
+  "branding": {
+    "auth_header_logo_url": "/assets/ldgr.png",
+    "auth_footer_links": []
+  }
+}

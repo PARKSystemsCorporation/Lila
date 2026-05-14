@@ -32,12 +32,25 @@ function isViewerPath(pathname: string): boolean {
     pathname.startsWith('/viewer/') ||
     pathname === '/marketplace' ||
     pathname.startsWith('/marketplace/') ||
+    pathname === '/bazaar' ||
+    pathname.startsWith('/bazaar/') ||
     pathname === '/api/viewer/edges' ||
     pathname === '/api/viewer/scoreboard' ||
     pathname === '/api/viewer/articles' ||
     pathname === '/api/viewer/wallet' ||
     pathname === '/api/viewer/dms' ||
     pathname.startsWith('/api/marketplace/') ||
+    // Viewer-scoped Bazaar API routes. The HMAC-only bot endpoints
+    // (events/*, milestones/submit, escrow/release, disputes, ledger)
+    // are listed in the always-public block below; they reject any
+    // request lacking a valid X-Bazaar-Sig header.
+    pathname === '/api/bazaar/skills' ||
+    pathname === '/api/bazaar/gigs' ||
+    pathname.startsWith('/api/bazaar/gigs/') ||
+    pathname === '/api/bazaar/wallet' ||
+    pathname === '/api/bazaar/wallet/link' ||
+    pathname === '/api/bazaar/bridge' ||
+    pathname === '/api/bazaar/escrow/init' ||
     pathname === '/api/viewer/login' // POST allowed; GET is harmless
   )
 }
@@ -81,6 +94,14 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/public/') ||
     // Gumroad webhook is gated by GUMROAD_WEBHOOK_SECRET in the URL.
     pathname.startsWith('/api/gumroad/webhook') ||
+    // Bot-only Bazaar endpoints — gated by X-Bazaar-Sig HMAC at the route.
+    // /api/bazaar/events/* covers skill_posted + well_known_room.
+    pathname.startsWith('/api/bazaar/events/') ||
+    pathname === '/api/bazaar/milestones/submit' ||
+    pathname === '/api/bazaar/escrow/release' ||
+    pathname === '/api/bazaar/disputes' ||
+    pathname === '/api/bazaar/ledger' ||
+    pathname === '/api/bazaar/rooms/negotiation' ||
     // Viewer login is the only way an unauthenticated viewer can hit the
     // server (to redeem their license key). Always allow POST through.
     pathname === '/api/viewer/login' ||

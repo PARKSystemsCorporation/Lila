@@ -7,3 +7,17 @@ healthcheckPath = "/api/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+
+# The Bazaar runs as additional Railway services in the same project.
+# Each has its own Dockerfile under services/<name>/. Create them via the
+# Railway UI (or the railway CLI) with the corresponding dockerfilePath:
+#
+#   service: bazaar-synapse   dockerfilePath: services/synapse/Dockerfile
+#                             needs volume mounted at /data
+#   service: bazaar-element   dockerfilePath: services/element/Dockerfile
+#   service: bazaar-lila-bot  dockerfilePath: services/lila-bot/Dockerfile
+#                             needs volume mounted at /data (E2EE store)
+#   service: bazaar-mcp       custom (services/mcp); stdio servers
+#
+# The Postgres plugin attached to the main app is shared via DATABASE_URL —
+# Synapse uses a separate logical database (PGDATABASE=synapse).
