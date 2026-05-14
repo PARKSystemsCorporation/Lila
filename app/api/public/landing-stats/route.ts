@@ -63,18 +63,16 @@ async function computeStats(): Promise<LandingStats> {
   try {
     await ensureSchema(db)
 
-    const [articles, edgesOpen, picksSettled, tradesClosed, bountiesPaid] = await Promise.all([
-      db.query(`SELECT COUNT(*)::int AS n FROM articles WHERE status='published'`),
-      db.query(`SELECT COUNT(*)::int AS n FROM ceelo_picks WHERE status='open'`),
-      db.query(`SELECT COUNT(*)::int AS n FROM ceelo_picks WHERE status IN ('won','lost','push','void')`),
-      db.query(`SELECT COUNT(*)::int AS n FROM lila_positions WHERE status='closed'`),
-      db.query(
-        `SELECT COUNT(*)::int        AS n,
-                COALESCE(SUM(payout),0)::float AS usd
-           FROM security_reports
-          WHERE status='paid'`,
-      ),
-    ])
+    const articles = await db.query(`SELECT COUNT(*)::int AS n FROM articles WHERE status='published'`)
+    const edgesOpen = await db.query(`SELECT COUNT(*)::int AS n FROM ceelo_picks WHERE status='open'`)
+    const picksSettled = await db.query(`SELECT COUNT(*)::int AS n FROM ceelo_picks WHERE status IN ('won','lost','push','void')`)
+    const tradesClosed = await db.query(`SELECT COUNT(*)::int AS n FROM lila_positions WHERE status='closed'`)
+    const bountiesPaid = await db.query(
+      `SELECT COUNT(*)::int        AS n,
+              COALESCE(SUM(payout),0)::float AS usd
+         FROM security_reports
+        WHERE status='paid'`,
+    )
 
     const stats: LandingStats = {
       articles:            articles.rows[0]?.n ?? 0,

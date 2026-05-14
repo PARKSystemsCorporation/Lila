@@ -367,29 +367,27 @@ export class BroadcastLoop {
     )
     const since: string = state?.last_broadcast_at ?? new Date(Date.now() - 86_400_000).toISOString()
 
-    const [notes, picks, openPositions, closedTrades] = await Promise.all([
-      this.db.query(
-        `SELECT path, content FROM analyst_notes
-         ORDER BY updated_at DESC LIMIT 4`
-      ),
-      this.db.query(
-        `SELECT symbol, direction, entry_price, target_price, stop_loss, confidence, risk_level, reason, asset_class
-         FROM analyst_picks
-         WHERE status='pending' OR (status='executed' AND created_at > $1)
-         ORDER BY created_at DESC LIMIT 5`, [since]
-      ),
-      this.db.query(
-        `SELECT symbol, direction, entry_price, target_price, stop_loss
-         FROM lila_positions
-         WHERE status='open' ORDER BY opened_at DESC LIMIT 5`
-      ),
-      this.db.query(
-        `SELECT symbol, direction, pnl, entry_price FROM lila_positions
-         WHERE status='closed' AND closed_at IS NOT NULL AND closed_at > $1
-           AND COALESCE(ABS(pnl), 0) >= 1
-         ORDER BY closed_at DESC LIMIT 3`, [since]
-      ),
-    ])
+    const notes = await this.db.query(
+      `SELECT path, content FROM analyst_notes
+       ORDER BY updated_at DESC LIMIT 4`
+    )
+    const picks = await this.db.query(
+      `SELECT symbol, direction, entry_price, target_price, stop_loss, confidence, risk_level, reason, asset_class
+       FROM analyst_picks
+       WHERE status='pending' OR (status='executed' AND created_at > $1)
+       ORDER BY created_at DESC LIMIT 5`, [since]
+    )
+    const openPositions = await this.db.query(
+      `SELECT symbol, direction, entry_price, target_price, stop_loss
+       FROM lila_positions
+       WHERE status='open' ORDER BY opened_at DESC LIMIT 5`
+    )
+    const closedTrades = await this.db.query(
+      `SELECT symbol, direction, pnl, entry_price FROM lila_positions
+       WHERE status='closed' AND closed_at IS NOT NULL AND closed_at > $1
+         AND COALESCE(ABS(pnl), 0) >= 1
+       ORDER BY closed_at DESC LIMIT 3`, [since]
+    )
 
     // Live quant data on the watchlist tickers. Free via Alpaca's bars API
     // and gives the LLM something concrete to riff on even when Vega has

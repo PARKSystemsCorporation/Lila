@@ -48,28 +48,26 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [edgesRes, articlesRes] = await Promise.all([
-      db.query(
-        `SELECT id, sport, game_label, market, side, edge_pct, edge_points,
-                model_prob, book_spread, model_spread, confidence,
-                (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts
-         FROM ceelo_picks
-         WHERE status='open'
-         ORDER BY
-           CASE WHEN edge_points IS NOT NULL THEN ABS(edge_points) ELSE 0 END DESC,
-           COALESCE(edge_pct, 0) DESC,
-           created_at DESC
-         LIMIT 3`
-      ),
-      db.query(
-        `SELECT id, title, content, author, kind,
-                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
-         FROM articles
-         WHERE status='published' AND author='ceelo'
-         ORDER BY created_at DESC
-         LIMIT 3`
-      ),
-    ])
+    const edgesRes = await db.query(
+      `SELECT id, sport, game_label, market, side, edge_pct, edge_points,
+              model_prob, book_spread, model_spread, confidence,
+              (EXTRACT(EPOCH FROM kickoff_at) * 1000)::bigint AS kickoff_ts
+       FROM ceelo_picks
+       WHERE status='open'
+       ORDER BY
+         CASE WHEN edge_points IS NOT NULL THEN ABS(edge_points) ELSE 0 END DESC,
+         COALESCE(edge_pct, 0) DESC,
+         created_at DESC
+       LIMIT 3`
+    )
+    const articlesRes = await db.query(
+      `SELECT id, title, content, author, kind,
+              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts
+       FROM articles
+       WHERE status='published' AND author='ceelo'
+       ORDER BY created_at DESC
+       LIMIT 3`
+    )
 
     const top_edges: TopEdge[] = edgesRes.rows.map(r => ({
       id: Number(r.id),

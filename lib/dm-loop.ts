@@ -146,20 +146,18 @@ export class DmLoop {
   }
 
   private async vegaContext(): Promise<string> {
-    const [picks, positions] = await Promise.all([
-      this.db.query(
-        `SELECT symbol, direction, entry_price, target_price, stop_loss, confidence, status, asset_class
-           FROM analyst_picks
-          ORDER BY created_at DESC
-          LIMIT 5`,
-      ),
-      this.db.query(
-        `SELECT symbol, direction, entry_price, status
-           FROM lila_positions
-          ORDER BY id DESC
-          LIMIT 3`,
-      ),
-    ])
+    const picks = await this.db.query(
+      `SELECT symbol, direction, entry_price, target_price, stop_loss, confidence, status, asset_class
+         FROM analyst_picks
+        ORDER BY created_at DESC
+        LIMIT 5`,
+    )
+    const positions = await this.db.query(
+      `SELECT symbol, direction, entry_price, status
+         FROM lila_positions
+        ORDER BY id DESC
+        LIMIT 3`,
+    )
     const pickLines = picks.rows.map((p) =>
       `- ${p.symbol} ${p.direction} · entry ${p.entry_price ?? '—'} · target ${p.target_price ?? '—'} · stop ${p.stop_loss ?? '—'} · ${p.status}`,
     )
@@ -173,27 +171,25 @@ export class DmLoop {
   }
 
   private async lilaContext(): Promise<string> {
-    const [trades, reports, articles] = await Promise.all([
-      this.db.query(
-        `SELECT symbol, direction, entry_price, status
-           FROM lila_positions
-          ORDER BY id DESC
-          LIMIT 3`,
-      ),
-      this.db.query(
-        `SELECT title, status, payout
-           FROM security_reports
-          ORDER BY updated_at DESC
-          LIMIT 3`,
-      ),
-      this.db.query(
-        `SELECT title, author, kind, created_at
-           FROM articles
-          WHERE status = 'published'
-          ORDER BY created_at DESC
-          LIMIT 3`,
-      ),
-    ])
+    const trades = await this.db.query(
+      `SELECT symbol, direction, entry_price, status
+         FROM lila_positions
+        ORDER BY id DESC
+        LIMIT 3`,
+    )
+    const reports = await this.db.query(
+      `SELECT title, status, payout
+         FROM security_reports
+        ORDER BY updated_at DESC
+        LIMIT 3`,
+    )
+    const articles = await this.db.query(
+      `SELECT title, author, kind, created_at
+         FROM articles
+        WHERE status = 'published'
+        ORDER BY created_at DESC
+        LIMIT 3`,
+    )
     const out: string[] = []
     if (trades.rows.length) {
       out.push(

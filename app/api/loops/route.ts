@@ -26,16 +26,16 @@ export async function GET() {
   try {
     await ensureSchema(db)
 
-    const [tasker, analyst, autonomy, broadcast, discovery, research] = await Promise.all([
-      db.query(`SELECT (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS ts FROM lila_loop_state WHERE id=1`),
-      db.query(`SELECT (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS ts FROM analyst_state   WHERE id=1`),
-      db.query(`SELECT (EXTRACT(EPOCH FROM last_route_at) * 1000)::bigint AS ts FROM management_state WHERE id=1`),
-      db.query(`SELECT (EXTRACT(EPOCH FROM last_broadcast_at) * 1000)::bigint AS ts FROM broadcast_state WHERE id=1`),
-      db.query(`SELECT (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS ts FROM discovery_state WHERE id=1`),
-      db.query(`SELECT title, phase, (EXTRACT(EPOCH FROM last_worked_at) * 1000)::bigint AS ts
-                FROM research_targets WHERE status='active'
-                ORDER BY last_worked_at DESC NULLS LAST LIMIT 1`),
-    ])
+    const tasker = await db.query(`SELECT (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS ts FROM lila_loop_state WHERE id=1`)
+    const analyst = await db.query(`SELECT (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS ts FROM analyst_state   WHERE id=1`)
+    const autonomy = await db.query(`SELECT (EXTRACT(EPOCH FROM last_route_at) * 1000)::bigint AS ts FROM management_state WHERE id=1`)
+    const broadcast = await db.query(`SELECT (EXTRACT(EPOCH FROM last_broadcast_at) * 1000)::bigint AS ts FROM broadcast_state WHERE id=1`)
+    const discovery = await db.query(`SELECT (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS ts FROM discovery_state WHERE id=1`)
+    const research = await db.query(
+      `SELECT title, phase, (EXTRACT(EPOCH FROM last_worked_at) * 1000)::bigint AS ts
+       FROM research_targets WHERE status='active'
+       ORDER BY last_worked_at DESC NULLS LAST LIMIT 1`,
+    )
 
     const loops: LoopRow[] = [
       {

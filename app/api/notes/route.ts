@@ -51,62 +51,60 @@ export async function GET(req: Request) {
       })
     }
 
-    // List + activity snapshot in parallel.
-    const [notesRes, vegaRes, cipherRes, targetRes, lilaChatRes, ceeloRes, scoutRes, artistRes] = await Promise.all([
-      db.query(
-        `SELECT id, path,
-                LEFT(content, 280) AS preview,
-                LENGTH(content)    AS size,
-                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts,
-                (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ts
-         FROM analyst_notes
-         ORDER BY updated_at DESC
-         LIMIT 500`
-      ),
-      db.query(
-        `SELECT step, cycle,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
-         FROM analyst_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT step, turn_count,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
-         FROM lila_loop_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT title, phase, cycles,
-                (EXTRACT(EPOCH FROM last_worked_at) * 1000)::bigint AS last_ts
-         FROM research_targets
-         WHERE status='active'
-         ORDER BY last_worked_at DESC NULLS LAST
-         LIMIT 1`
-      ),
-      db.query(
-        `SELECT (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint AS last_ts
-         FROM chat_messages WHERE sender='lila' AND thread='main'`
-      ),
-      db.query(
-        `SELECT cycle,
-                (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS last_ts,
-                (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
-                (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
-         FROM ceelo_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT cycle,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
-                (SELECT COUNT(*) FROM scout_findings) AS scanned,
-                (SELECT COUNT(*) FROM scout_findings WHERE status='reported') AS reported
-         FROM scout_state WHERE id=1`
-      ),
-      db.query(
-        `SELECT cycle,
-                (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
-                (SELECT COUNT(*)::int FROM artist_gallery)            AS total_pieces,
-                (SELECT MAX(id) FROM artist_gallery)                  AS latest_id
-         FROM artist_state WHERE id=1`
-      ),
-    ])
+    // List + activity snapshot, sequential on the shared client.
+    const notesRes = await db.query(
+      `SELECT id, path,
+              LEFT(content, 280) AS preview,
+              LENGTH(content)    AS size,
+              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_ts,
+              (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_ts
+       FROM analyst_notes
+       ORDER BY updated_at DESC
+       LIMIT 500`
+    )
+    const vegaRes = await db.query(
+      `SELECT step, cycle,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
+       FROM analyst_state WHERE id=1`
+    )
+    const cipherRes = await db.query(
+      `SELECT step, turn_count,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts
+       FROM lila_loop_state WHERE id=1`
+    )
+    const targetRes = await db.query(
+      `SELECT title, phase, cycles,
+              (EXTRACT(EPOCH FROM last_worked_at) * 1000)::bigint AS last_ts
+       FROM research_targets
+       WHERE status='active'
+       ORDER BY last_worked_at DESC NULLS LAST
+       LIMIT 1`
+    )
+    const lilaChatRes = await db.query(
+      `SELECT (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint AS last_ts
+       FROM chat_messages WHERE sender='lila' AND thread='main'`
+    )
+    const ceeloRes = await db.query(
+      `SELECT cycle,
+              (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS last_ts,
+              (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
+              (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
+       FROM ceelo_state WHERE id=1`
+    )
+    const scoutRes = await db.query(
+      `SELECT cycle,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
+              (SELECT COUNT(*) FROM scout_findings) AS scanned,
+              (SELECT COUNT(*) FROM scout_findings WHERE status='reported') AS reported
+       FROM scout_state WHERE id=1`
+    )
+    const artistRes = await db.query(
+      `SELECT cycle,
+              (EXTRACT(EPOCH FROM last_step_at) * 1000)::bigint AS last_ts,
+              (SELECT COUNT(*)::int FROM artist_gallery)            AS total_pieces,
+              (SELECT MAX(id) FROM artist_gallery)                  AS latest_id
+       FROM artist_state WHERE id=1`
+    )
 
     const notes = notesRes.rows.map(r => ({
       id: Number(r.id),
