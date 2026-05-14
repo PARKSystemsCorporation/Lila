@@ -57,6 +57,9 @@ export const cfg = Object.freeze({
   // to 1 RPS by lib/horse-racing/rate-limiter.ts, so this can stay
   // aggressive without burning the free-tier quota.
   HORSE_RUN_SEC:          num('HORSE_RUN_SEC', 300),
+  // Sports ingestion (API-Sports / ParlayAPI / ProphetX) tick interval
+  // in ms. Gated by ENABLE_SPORTS_LOOP=true; otherwise the loop no-ops.
+  SPORTS_TICK_MS:         num('SPORTS_TICK_MS', 60_000),
 
   // ── Budget ───────────────────────────────────────────────────────────────
   // Daily USD cap on background LLM spend. 0 = no cap. Chat streaming is

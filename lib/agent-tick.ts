@@ -10,6 +10,7 @@ import { AutonomyLoop } from './autonomy/loop'
 import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
+import { SportsLoop } from './sports/sports-loop'
 import { HorseLoop } from './horse-racing/horse-loop'
 import { DmLoop } from './dm-loop'
 import { runGumroadReverify } from './gumroad-reverify'
@@ -201,6 +202,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (ceeloResult) {
       await logEvent(db, ceeloResult.logMessage, ceeloResult.logType)
       logs.push(ceeloResult.logMessage)
+    }
+
+    // 5a. Sports ingestion — API-Sports + ParlayAPI + ProphetX → 1-10
+    //     scores per NBA game side, feeding the /theyield/sports/nba
+    //     portal. Self-gates on ENABLE_SPORTS_LOOP=true.
+    const sports = new SportsLoop(db)
+    const sportsResult = await sports.run().catch((e: unknown) => ({
+      logMessage: `Sports error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (sportsResult) {
+      await logEvent(db, sportsResult.logMessage, sportsResult.logType)
+      logs.push(sportsResult.logMessage)
     }
 
     // 5b. Horse — thoroughbred racecards via The Racing API. Self-gates
