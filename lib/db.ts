@@ -694,13 +694,13 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     UPDATE bounty_picks SET created_by='scout' WHERE created_by IS NULL;
     CREATE INDEX IF NOT EXISTS idx_bounty_picks_created_by ON bounty_picks(created_by, status, created_at DESC);
 
-    -- ── Scout's gig pipeline (Contra / Wellfound) ────────────────────────
-    -- Parallel to bounty_picks but Upwork/Contra-shaped: deliverable is a
-    -- short proposal pitch, not a PR diff. No autosubmit — operator sends
+    -- ── Scout's gig pipeline (RemoteOK / WeWorkRemotely) ───────────────
+    -- Parallel to bounty_picks but gig-shaped: deliverable is a short
+    -- proposal pitch, not a PR diff. No autosubmit — operator sends
     -- proposals manually on the platform.
     CREATE TABLE IF NOT EXISTS gig_picks (
       id              SERIAL      PRIMARY KEY,
-      source          TEXT        NOT NULL,                 -- 'contra' | 'wellfound'
+      source          TEXT        NOT NULL,                 -- 'remoteok' | 'weworkremotely'
       external_id     TEXT        NOT NULL,
       url             TEXT        NOT NULL,
       title           TEXT        NOT NULL,

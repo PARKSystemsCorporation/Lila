@@ -134,7 +134,7 @@ async function runAgentTickInner(): Promise<TickOutcome> {
       logs.push(artistResult.logMessage)
     }
 
-    // 3b. Scout — gig hunter (Contra → Wellfound fallback) + tutorial
+    // 3b. Scout — gig hunter (RemoteOK → WWR fallback) + tutorial
     //     fallback when both gig sources are dry. Tutorials file into
     //     `articles` with kind='tutorial'; runDevtoPublisher posts the
     //     approved ones to dev.to.

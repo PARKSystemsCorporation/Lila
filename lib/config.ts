@@ -27,10 +27,10 @@ export const cfg = Object.freeze({
   // internally rate-limited so this can be aggressive without spamming
   // upstream sources.
   CEELO_RUN_MIN:          num('CEELO_RUN_MIN', 30),
-  // Scout step interval (seconds). Gig hunter (Contra/Wellfound) +
+  // Scout step interval (seconds). Gig hunter (RemoteOK/WWR) +
   // tutorial fallback. One target per cycle.
   SCOUT_RUN_SEC:          num('SCOUT_RUN_SEC', 300),
-  // Hours of empty Contra/Wellfound fetches before Scout switches to
+  // Hours of empty RemoteOK/WWR fetches before Scout switches to
   // tutorial-drafting mode. Set to 0 to force tutorial drafting on the
   // next cycle (used in tests / verification).
   SCOUT_DRY_HOURS:        num('SCOUT_DRY_HOURS', 24),
