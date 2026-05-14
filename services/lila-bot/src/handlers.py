@@ -68,10 +68,14 @@ class Handlers:
             await self._on_dispute(room, sender, event_id, intent)
 
     async def _on_skill(self, room, sender, event_id, intent: SkillPostIntent) -> None:
+        # Authorization (matrix-room scope) is enforced server-side by the
+        # /api/bazaar/events/skill_posted route, which rejects posts whose
+        # matrix_room_id is not a registered skills-board room.
         try:
             out = await self.bazaar.post_skill_event(
                 matrix_user_id=sender, title=intent.title, body=intent.body,
                 price_ldgr_min=intent.price_ldgr_min, room_event_id=event_id,
+                matrix_room_id=room.room_id,
             )
             await self._reply(room, f"skill logged. id={out.get('skill_id')}")
         except Exception as e:
@@ -79,17 +83,20 @@ class Handlers:
             await self._reply(room, f"couldn't log that skill — {str(e)[:140]}")
 
     async def _on_submit(self, room, sender, event_id, intent: MilestoneSubmitIntent) -> None:
+        # API verifies sender is the worker on this gig.
         try:
-            await self.bazaar.submit_milestone(intent.gig_id, intent.idx, event_id)
+            await self.bazaar.submit_milestone(intent.gig_id, intent.idx, event_id, sender)
             await self._reply(room, f"milestone {intent.idx} on gig {intent.gig_id} marked submitted. awaiting verify.")
         except Exception as e:
             log.warning("submit_failed", err=str(e), gig=intent.gig_id)
             await self._reply(room, f"submit failed — {str(e)[:140]}")
 
     async def _on_verify(self, room, sender, event_id, intent: MilestoneVerifyIntent) -> None:
-        # Verify = release. Lila bot acts as moderator signer on Solana.
+        # Sender-auth: only the gig hirer (or operator via cookie path) can
+        # trigger an on-chain release. API enforces this — bot must forward
+        # `sender` so the API can join bazaar_agents and check.
         try:
-            out = await self.bazaar.release_milestone(intent.gig_id, intent.idx)
+            out = await self.bazaar.release_milestone(intent.gig_id, intent.idx, sender)
             await self._reply(room, f"milestone {intent.idx} released. tx {out.get('tx_sig', 'pending')}.")
         except Exception as e:
             log.warning("release_failed", err=str(e), gig=intent.gig_id)
@@ -104,8 +111,14 @@ class Handlers:
             await self._reply(room, f"dispute failed — {str(e)[:140]}")
 
     async def _reply(self, room: MatrixRoom, text: str) -> None:
+        # Moderator notices are metadata-only (no value secret carried in
+        # the body). Sending with ignore_unverified_devices=True lets the
+        # notice land even when a member has a fresh, unverified device —
+        # otherwise the bot fails closed on every room with new joiners
+        # and the operator loses visibility. The SAS-verification gap
+        # tracked in the plan addendum is the proper long-term fix.
         await self.client.room_send(
             room.room_id, "m.room.message",
             {"msgtype": "m.notice", "body": text},
-            ignore_unverified_devices=False,
+            ignore_unverified_devices=True,
         )

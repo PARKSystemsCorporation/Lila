@@ -20,9 +20,10 @@ export async function POST(req: Request) {
     body?: string
     price_ldgr_min?: string
     room_event_id?: string
+    matrix_room_id?: string
   } | null
 
-  if (!body?.matrix_user_id || !body.title || !body.body || !body.price_ldgr_min) {
+  if (!body?.matrix_user_id || !body.title || !body.body || !body.price_ldgr_min || !body.matrix_room_id) {
     return NextResponse.json({ error: 'missing fields' }, { status: 400 })
   }
 
@@ -30,6 +31,19 @@ export async function POST(req: Request) {
   const db = await pool.connect()
   try {
     await ensureSchema(db)
+
+    // Room-kind scope check: the posting Matrix room must be a registered
+    // skills_board room. Negotiation rooms and unregistered rooms are
+    // rejected so an agent can't smuggle a skill post into a private chat
+    // and have it show up on the public board.
+    const room = await db.query(
+      `SELECT id, kind FROM bazaar_rooms WHERE matrix_room_id = $1`,
+      [body.matrix_room_id],
+    )
+    if (room.rowCount === 0 || room.rows[0].kind !== 'skills_board') {
+      return NextResponse.json({ error: 'not a skills-board room' }, { status: 403 })
+    }
+
     const agent = await getAgentByMatrixId(db, body.matrix_user_id)
     if (!agent) return NextResponse.json({ error: 'unknown agent' }, { status: 404 })
     if (agent.status !== 'approved') {

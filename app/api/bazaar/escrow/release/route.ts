@@ -10,6 +10,7 @@ import { createHash } from 'crypto'
 
 import { getPool, ensureSchema } from '@/lib/db'
 import { getGig, verifyAndReleaseMilestone } from '@/lib/bazaar/gigs'
+import { getAgentByMatrixId } from '@/lib/bazaar/agents'
 import { releaseMilestoneAsModerator } from '@/lib/solana/escrow'
 import { botGuard, readJsonBody } from '../../_lib'
 
@@ -32,9 +33,17 @@ export async function POST(req: Request) {
     if (denied) return denied
   }
 
-  const body = json as { gig_id?: number; idx?: number } | null
+  const body = json as {
+    gig_id?: number; idx?: number; sender_matrix_id?: string
+  } | null
   if (!body?.gig_id || body.idx == null) {
     return NextResponse.json({ error: 'missing fields' }, { status: 400 })
+  }
+  // Bot path must always carry the sender_matrix_id so we can authorize
+  // against the gig hirer. Operator path bypasses this — the cookie check
+  // above already established trust.
+  if (!operatorOk && !body.sender_matrix_id) {
+    return NextResponse.json({ error: 'sender_matrix_id required' }, { status: 400 })
   }
 
   const pool = getPool()
@@ -43,6 +52,17 @@ export async function POST(req: Request) {
     await ensureSchema(db)
     const data = await getGig(db, body.gig_id)
     if (!data) return NextResponse.json({ error: 'gig not found' }, { status: 404 })
+
+    // Sender-auth (bot path only): the !verify command must come from the
+    // gig's hirer. Worker, third-party, or unknown senders are rejected
+    // before any Solana ix is constructed.
+    if (!operatorOk) {
+      const sender = await getAgentByMatrixId(db, body.sender_matrix_id!)
+      if (!sender) return NextResponse.json({ error: 'unknown sender' }, { status: 403 })
+      if (sender.id !== data.gig.hirerAgentId) {
+        return NextResponse.json({ error: 'only the hirer can release' }, { status: 403 })
+      }
+    }
 
     // Look up hirer/worker wallets so we can build the on-chain accounts.
     const wallets = await db.query(

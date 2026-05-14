@@ -17,6 +17,8 @@ from nio import (
     InviteMemberEvent,
     LoginResponse,
     RoomMessageText,
+    RoomResolveAliasError,
+    RoomResolveAliasResponse,
     UnknownEvent,
 )
 
@@ -34,30 +36,51 @@ async def login(client: AsyncClient, password: str) -> None:
     log.info("login_ok", user_id=client.user_id, device_id=client.device_id)
 
 
-async def ensure_rooms(client: AsyncClient, cfg: BotConfig) -> None:
-    """First-boot: create the well-known rooms if they don't exist."""
-    for alias, name, topic in [
-        (cfg.skills_board_alias, "Skills Board", "Approved agents post structured skill offers here."),
-        (cfg.archive_alias, "Archive — Completed", "Append-only summaries of completed gigs."),
-    ]:
-        full = f"{alias}:{client.user_id.split(':', 1)[1]}"
+async def ensure_rooms(client: AsyncClient, cfg: BotConfig, bazaar) -> None:
+    """First-boot: create the well-known rooms if they don't exist, and
+    register their (matrix_room_id, kind) pair with the Next.js API so that
+    skill-post / archival flows can scope-check by room kind.
+    """
+    server = client.user_id.split(":", 1)[1]
+    targets = [
+        (cfg.skills_board_alias, "Skills Board",
+         "Approved agents post structured skill offers here.", "skills_board"),
+        (cfg.archive_alias, "Archive — Completed",
+         "Append-only summaries of completed gigs.", "archive"),
+    ]
+    for alias, name, topic, kind in targets:
+        full = f"{alias}:{server}"
         resolved = await client.room_resolve_alias(full)
-        if getattr(resolved, "room_id", None):
-            log.info("room_exists", alias=full, room_id=resolved.room_id)
+        if isinstance(resolved, RoomResolveAliasResponse):
+            room_id = resolved.room_id
+            log.info("room_exists", alias=full, room_id=room_id, kind=kind)
+        elif isinstance(resolved, RoomResolveAliasError):
+            created = await client.room_create(
+                alias=alias.lstrip("#"),
+                name=name,
+                topic=topic,
+                preset="private_chat",
+                initial_state=[
+                    {"type": "m.room.encryption", "state_key": "",
+                     "content": {"algorithm": "m.megolm.v1.aes-sha2"}},
+                    {"type": "m.room.history_visibility", "state_key": "",
+                     "content": {"history_visibility": "shared"}},
+                ],
+            )
+            room_id = getattr(created, "room_id", None)
+            log.info("room_created", alias=alias, room_id=room_id, kind=kind)
+            if not room_id:
+                log.warning("room_create_no_id", alias=alias, response=str(created))
+                continue
+        else:
+            log.warning("room_resolve_unexpected", alias=alias, response=str(resolved))
             continue
-        created = await client.room_create(
-            alias=alias.lstrip("#"),
-            name=name,
-            topic=topic,
-            preset="private_chat",
-            initial_state=[
-                {"type": "m.room.encryption", "state_key": "",
-                 "content": {"algorithm": "m.megolm.v1.aes-sha2"}},
-                {"type": "m.room.history_visibility", "state_key": "",
-                 "content": {"history_visibility": "shared"}},
-            ],
-        )
-        log.info("room_created", alias=alias, room_id=getattr(created, "room_id", None))
+        try:
+            await bazaar.register_well_known_room(room_id, kind)
+        except Exception as e:
+            # Non-fatal: bot continues running even if API is briefly down.
+            # The room exists and will get re-registered on next restart.
+            log.warning("room_register_failed", room_id=room_id, kind=kind, err=str(e))
 
 
 async def run() -> None:
@@ -89,7 +112,7 @@ async def run() -> None:
     client.add_event_callback(handlers.on_custom, UnknownEvent)
     client.add_event_callback(handlers.on_invite, InviteMemberEvent)
 
-    await ensure_rooms(client, cfg)
+    await ensure_rooms(client, cfg, bazaar)
     await bazaar.ledger("boot_ok", {"user_id": cfg.user_id, "device": cfg.device_id})
 
     stop = asyncio.Event()

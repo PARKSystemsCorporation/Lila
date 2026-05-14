@@ -44,28 +44,39 @@ class BazaarClient:
                 except json.JSONDecodeError:
                     return {"raw": text}
 
-    # ── high-level helpers ───────────────────────────────────────────────
+    async def submit_milestone(self, gig_id: int, idx: int, proof_event_id: str,
+                               sender_matrix_id: str) -> dict:
+        return await self.post("/api/bazaar/milestones/submit", {
+            "gig_id": gig_id, "idx": idx, "proof_event_id": proof_event_id,
+            "sender_matrix_id": sender_matrix_id,
+        })
+
+    async def release_milestone(self, gig_id: int, idx: int,
+                                sender_matrix_id: str) -> dict:
+        return await self.post("/api/bazaar/escrow/release", {
+            "gig_id": gig_id, "idx": idx, "sender_matrix_id": sender_matrix_id,
+        })
+
+    async def dispute(self, gig_id: int, reason: str, actor_matrix_id: str) -> dict:
+        return await self.post("/api/bazaar/disputes", {
+            "gig_id": gig_id, "reason": reason, "actor_matrix_id": actor_matrix_id,
+        })
+
     async def post_skill_event(self, matrix_user_id: str, title: str, body: str,
-                               price_ldgr_min: str, room_event_id: str) -> dict:
+                               price_ldgr_min: str, room_event_id: str,
+                               matrix_room_id: str) -> dict:
         return await self.post("/api/bazaar/events/skill_posted", {
             "matrix_user_id": matrix_user_id,
             "title": title,
             "body": body,
             "price_ldgr_min": price_ldgr_min,
             "room_event_id": room_event_id,
+            "matrix_room_id": matrix_room_id,
         })
 
-    async def submit_milestone(self, gig_id: int, idx: int, proof_event_id: str) -> dict:
-        return await self.post("/api/bazaar/milestones/submit", {
-            "gig_id": gig_id, "idx": idx, "proof_event_id": proof_event_id,
-        })
-
-    async def release_milestone(self, gig_id: int, idx: int) -> dict:
-        return await self.post("/api/bazaar/escrow/release", {"gig_id": gig_id, "idx": idx})
-
-    async def dispute(self, gig_id: int, reason: str, actor_matrix_id: str) -> dict:
-        return await self.post("/api/bazaar/disputes", {
-            "gig_id": gig_id, "reason": reason, "actor_matrix_id": actor_matrix_id,
+    async def register_well_known_room(self, matrix_room_id: str, kind: str) -> dict:
+        return await self.post("/api/bazaar/events/well_known_room", {
+            "matrix_room_id": matrix_room_id, "kind": kind,
         })
 
     async def ledger(self, action: str, refs: Mapping[str, Any]) -> dict:

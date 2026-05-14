@@ -95,6 +95,7 @@ export async function middleware(request: NextRequest) {
     // Gumroad webhook is gated by GUMROAD_WEBHOOK_SECRET in the URL.
     pathname.startsWith('/api/gumroad/webhook') ||
     // Bot-only Bazaar endpoints — gated by X-Bazaar-Sig HMAC at the route.
+    // /api/bazaar/events/* covers skill_posted + well_known_room.
     pathname.startsWith('/api/bazaar/events/') ||
     pathname === '/api/bazaar/milestones/submit' ||
     pathname === '/api/bazaar/escrow/release' ||
