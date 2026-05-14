@@ -9,7 +9,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import {
   LocalShell,
   IconBasketball, IconFootball, IconBaseball, IconHockey, IconGloves, IconSoccer,
@@ -62,7 +62,7 @@ const TABS: Tab[] = ['OVERVIEW', 'NFL', 'NBA', 'MLB', 'NHL', 'UFC', 'SOCCER']
 const LIVE_TABS: Tab[] = ['OVERVIEW', 'NFL', 'NBA', 'MLB']
 const SOON_TABS: Tab[] = ['NHL', 'UFC', 'SOCCER']
 
-const SPORT_ICON: Record<Tab, JSX.Element> = {
+const SPORT_ICON: Record<Tab, ReactElement> = {
   OVERVIEW: <IconBroadcast />,
   NFL:    <IconFootball />,
   NBA:    <IconBasketball />,

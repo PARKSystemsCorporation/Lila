@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { rankedSeasons, type SeasonState, type SportKey } from '@/lib/season'
 
 const LandingSculpture = dynamic(() => import('./landing-sculpture'), {
@@ -23,7 +23,7 @@ const SPORT_HREF: Record<SportKey, string> = {
 
 // Custom-drawn ball glyphs — league logos are trademarked and not
 // commercially safe, so we render neutral sport icons inline.
-const BALL: Record<SportKey, JSX.Element> = {
+const BALL: Record<SportKey, ReactElement> = {
   NFL: (
     <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <ellipse cx="16" cy="16" rx="13" ry="7" />

@@ -9,9 +9,10 @@ export const dynamic = 'force-dynamic'
 //   reset   → return to 'pending' (operator hit the wrong button).
 //   delete  → drop the row.
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'no db' }, { status: 503 })
-  const id = Number(params.id)
+  const { id: idParam } = await params
+  const id = Number(idParam)
   if (!id) return NextResponse.json({ error: 'bad id' }, { status: 400 })
 
   const body = await req.json().catch(() => ({}))

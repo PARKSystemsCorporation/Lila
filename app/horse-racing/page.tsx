@@ -8,7 +8,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { LocalShell, IconBolt, IconTarget, IconTrophy } from '@/app/_components/local/chrome'
 import { RaceCard } from './_components/race-card'
 
@@ -140,7 +140,7 @@ export default function HorseRacingPage() {
 
 // ─── Subcomponents ────────────────────────────────────────────────────────
 
-function Stat({ icon, label, value }: { icon: JSX.Element; label: string; value: string }) {
+function Stat({ icon, label, value }: { icon: ReactElement; label: string; value: string }) {
   return (
     <div className="flex items-center gap-3 border border-amber-500/15 bg-slate-950/60 px-3 py-2">
       <span className="text-amber-400 shrink-0">{icon}</span>

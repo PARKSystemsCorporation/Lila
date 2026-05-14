@@ -9,7 +9,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
 import {
   LocalShell,
   IconBasketball, IconFootball, IconBaseball, IconHockey,
@@ -55,7 +55,7 @@ interface ScoreboardResponse {
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
-const LEAGUES: { key: Sport | 'NHL'; label: string; icon: JSX.Element; soon?: boolean }[] = [
+const LEAGUES: { key: Sport | 'NHL'; label: string; icon: ReactElement; soon?: boolean }[] = [
   { key: 'NBA', label: 'NBA', icon: <IconBasketball /> },
   { key: 'NFL', label: 'NFL', icon: <IconFootball /> },
   { key: 'MLB', label: 'MLB', icon: <IconBaseball /> },

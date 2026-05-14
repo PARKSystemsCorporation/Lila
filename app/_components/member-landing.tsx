@@ -4,6 +4,7 @@
 
 'use client'
 
+import type { ReactElement } from 'react'
 import Link from 'next/link'
 import {
   LocalShell,
@@ -154,7 +155,7 @@ export default function MemberLanding() {
 
 // ─── Page-local subcomponents ─────────────────────────────────────────────
 
-function StatPip({ icon, label }: { icon: JSX.Element; label: React.ReactNode }) {
+function StatPip({ icon, label }: { icon: ReactElement; label: React.ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-3 text-center">
       <span className="text-amber-400">{icon}</span>
@@ -173,7 +174,7 @@ function MarketDoor({
   title: string
   tone: 'amber' | 'orange'
   cta: string
-  icons: JSX.Element[]
+  icons: ReactElement[]
   soon?: boolean
 }) {
   const c = tone === 'amber'
@@ -246,7 +247,7 @@ function MarketDoor({
   )
 }
 
-function Feature({ icon, title, body }: { icon: JSX.Element; title: string; body: string }) {
+function Feature({ icon, title, body }: { icon: ReactElement; title: string; body: string }) {
   return (
     <div className="flex flex-col items-center text-center gap-3">
       <span className="text-amber-400">{icon}</span>

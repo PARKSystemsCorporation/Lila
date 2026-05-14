@@ -12,7 +12,7 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 async function isMember(): Promise<boolean> {
-  const c = cookies()
+  const c = await cookies()
   const password = process.env.AUTH_PASSWORD ?? ''
   const op = c.get('lila_auth')?.value
   if (password && op && op === (await sha256Hex(password))) return true

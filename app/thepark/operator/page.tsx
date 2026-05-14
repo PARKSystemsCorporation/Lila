@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, type ReactElement } from 'react'
 import Link from 'next/link'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -337,8 +337,8 @@ const IconMember = () => (
 // ─── Primary Nav ──────────────────────────────────────────────────────────────
 
 type NavEntry =
-  | { kind: 'tab';  key: Tab;     label: string; Icon: () => JSX.Element }
-  | { kind: 'link'; href: string; label: string; Icon: () => JSX.Element }
+  | { kind: 'tab';  key: Tab;     label: string; Icon: () => ReactElement }
+  | { kind: 'link'; href: string; label: string; Icon: () => ReactElement }
 
 const TABS: NavEntry[] = [
   { kind: 'tab',  key: 'chat',     label: 'Chat',    Icon: IconChat     },

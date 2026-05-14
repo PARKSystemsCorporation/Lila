@@ -29,8 +29,9 @@ export function generateStaticParams() {
   return Object.keys(LEAGUES).map((league) => ({ league }))
 }
 
-export default function LeaguePage({ params }: { params: { league: string } }) {
-  const cfg = LEAGUES[params.league]
+export default async function LeaguePage({ params }: { params: Promise<{ league: string }> }) {
+  const { league } = await params
+  const cfg = LEAGUES[league]
   if (!cfg) notFound()
 
   const hero = HERO_TONE[cfg.tone]

@@ -62,7 +62,7 @@ export async function verifyViewerCookie(
   const k = await importHmacKey(secret)
   let ok = false
   try {
-    ok = await crypto.subtle.verify('HMAC', k, sigBytes, enc.encode(data))
+    ok = await crypto.subtle.verify('HMAC', k, sigBytes as BufferSource, enc.encode(data))
   } catch { return null }
   if (!ok) return null
 

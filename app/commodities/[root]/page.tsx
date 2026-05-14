@@ -32,8 +32,9 @@ export function generateStaticParams() {
   return Object.keys(ROOTS).map((root) => ({ root }))
 }
 
-export default function CommodityPage({ params }: { params: { root: string } }) {
-  const cfg = ROOTS[params.root]
+export default async function CommodityPage({ params }: { params: Promise<{ root: string }> }) {
+  const { root } = await params
+  const cfg = ROOTS[root]
   if (!cfg) notFound()
 
   const hero = HERO_TONE[cfg.tone]

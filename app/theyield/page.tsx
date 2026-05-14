@@ -3,6 +3,7 @@
 
 'use client'
 
+import type { ReactElement } from 'react'
 import Link from 'next/link'
 import {
   LocalShell,
@@ -71,7 +72,7 @@ function YieldDoor({
   title: string
   tone: 'amber' | 'orange'
   cta: string
-  icons: JSX.Element[]
+  icons: ReactElement[]
 }) {
   const c = tone === 'amber'
     ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', glow: '', titleGlow: '' }

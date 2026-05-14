@@ -7,11 +7,12 @@ export const dynamic = 'force-dynamic'
 // aggressively (immutable) since each id maps 1:1 to bytes that never
 // change.
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!process.env.DATABASE_URL) {
     return new Response('no db', { status: 503 })
   }
-  const id = Number(params.id)
+  const { id: idParam } = await params
+  const id = Number(idParam)
   if (!id || !Number.isFinite(id)) {
     return new Response('bad id', { status: 400 })
   }

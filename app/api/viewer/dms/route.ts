@@ -15,7 +15,7 @@ export async function GET() {
   if (!secret) {
     return NextResponse.json({ error: 'viewer auth not configured' }, { status: 503 })
   }
-  const viewerCookie = cookies().get('lila_viewer')?.value
+  const viewerCookie = (await cookies()).get('lila_viewer')?.value
   const payload = await verifyViewerCookie(viewerCookie, secret)
   if (!payload) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
