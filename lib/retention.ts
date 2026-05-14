@@ -6,7 +6,10 @@ import { runDecay } from './memory/correlations'
 
 // Daily retention pass. Trims log/usage/chat/broadcast rows older than their
 // per-table TTL. Financial tables (security_reports, lila_positions,
-// analyst_picks, watch_targets, research_targets) are NEVER touched.
+// watch_targets, research_targets) are NEVER touched. The yard's daily
+// wipe is the one exception — analyst_picks rows with asset_class='etf/macro'
+// from before today UTC get hard-deleted here, since the yard board renders
+// today's picks only.
 // Memory tables (memory_*) are also NEVER touched here — they self-decay
 // via correlations.runDecay + summarize rollups, with rolled-up episodes
 // pruned by the dedicated sweep below.
@@ -65,6 +68,24 @@ export async function runRetention(db: PoolClient, force = false): Promise<Reten
       // If any single table fails (missing column, etc.), keep going.
       deleted[rule.table] = -1
     }
+  }
+
+  // The yard's daily wipe. Hard-delete commodity/macro picks from before
+  // today UTC. Other asset_classes (stock from /api/analyst, anything else)
+  // are never touched. Idempotent — re-running on the same day is a no-op.
+  try {
+    const res = await db.query(
+      `DELETE FROM analyst_picks
+        WHERE asset_class = 'etf/macro'
+          AND created_at < date_trunc('day', NOW() AT TIME ZONE 'UTC')`
+    )
+    const n = res.rowCount ?? 0
+    if (n > 0) {
+      deleted['analyst_picks(yard)'] = n
+      totalDeleted += n
+    }
+  } catch {
+    deleted['analyst_picks(yard)'] = -1
   }
 
   // Memory backstop — daily ceiling on summarization latency + correlation

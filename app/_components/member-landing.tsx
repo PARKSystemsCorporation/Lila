@@ -42,7 +42,7 @@ export default function MemberLanding() {
       <section className="relative px-5 sm:px-8 pb-12 max-w-7xl mx-auto">
         <div className="text-center mb-8">
           <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-500/80 uppercase">
-            ▌▌▌ choose your market
+            ▌▌▌ choose your room
           </p>
           <h2 className="mt-3 text-[clamp(1.8rem,5vw,3rem)] font-black tracking-tight uppercase text-white">
             where will you find<br />your <span className="text-amber-400">edge</span>?
@@ -60,11 +60,11 @@ export default function MemberLanding() {
           />
           <MarketDoor
             href="/theyard"
-            kicker="the locals · the room"
+            kicker="vega · commodity board · daily wipe"
             title="THE YARD"
             tone="amber"
             cta="enter the yard →"
-            icons={[<IconBolt key="bt" />, <IconTarget key="tg" />, <IconTrophy key="tr" />]}
+            icons={[<IconBolt key="bt" />, <IconTarget key="tg" />]}
           />
         </div>
       </section>
