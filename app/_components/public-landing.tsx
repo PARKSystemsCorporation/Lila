@@ -2,8 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { useEffect, useMemo, useState, type ReactElement } from 'react'
-import { rankedSeasons, type SeasonState, type SportKey } from '@/lib/season'
+import { useEffect, useState } from 'react'
 
 const LandingSculpture = dynamic(() => import('./landing-sculpture'), {
   ssr: false,
@@ -13,43 +12,6 @@ const LandingTicker = dynamic(() => import('./landing-ticker'), {
   ssr: false,
   loading: () => null,
 })
-
-const SPORT_HREF: Record<SportKey, string> = {
-  NFL: '/sports/nfl',
-  NBA: '/sports/nba',
-  NHL: '/sports/nhl',
-  MLB: '/sports/mlb',
-}
-
-// Custom-drawn ball glyphs — league logos are trademarked and not
-// commercially safe, so we render neutral sport icons inline.
-const BALL: Record<SportKey, ReactElement> = {
-  NFL: (
-    <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <ellipse cx="16" cy="16" rx="13" ry="7" />
-      <path d="M9 16h14M11 13l1 6M15 12l1 8M19 12l1 8M23 13l1 6" />
-    </svg>
-  ),
-  NBA: (
-    <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <circle cx="16" cy="16" r="12" />
-      <path d="M4 16h24M16 4v24M7.5 7.5c4 4 4 13 0 17M24.5 7.5c-4 4-4 13 0 17" />
-    </svg>
-  ),
-  NHL: (
-    <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <ellipse cx="16" cy="20" rx="11" ry="4" />
-      <path d="M5 20v-6c0-2.2 4.9-4 11-4s11 1.8 11 4v6" />
-      <ellipse cx="16" cy="14" rx="11" ry="4" />
-    </svg>
-  ),
-  MLB: (
-    <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <circle cx="16" cy="16" r="12" />
-      <path d="M7 9c4 2 6 6 6 14M25 9c-4 2-6 6-6 14" />
-    </svg>
-  ),
-}
 
 function useClock() {
   const [t, set] = useState('')
@@ -84,7 +46,6 @@ function track(event: string, ref?: string) {
 
 export default function PublicLanding() {
   const time = useClock()
-  const seasons = useMemo(() => rankedSeasons(), [])
 
   return (
     <main className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden">
@@ -175,60 +136,78 @@ export default function PublicLanding() {
         </div>
       </section>
 
-      {/* Sports teaser strip */}
-      <section className="relative z-10 border-y-2 border-amber-500/15 bg-slate-950/40 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-10 sm:py-14">
-          <div className="flex items-baseline justify-between gap-4 mb-6 sm:mb-8">
-            <div>
-              <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-orange-400/80 uppercase">
-                ▌▌▌ what&rsquo;s in play
-              </p>
-              <h2 className="mt-2 text-[clamp(1.8rem,5vw,3rem)] font-black tracking-tight uppercase text-white">
-                every <span className="text-amber-400">sport</span>, every season.
-              </h2>
-            </div>
-            <Link
-              href="/sports"
-              className="hidden sm:inline-flex font-mono text-[10px] tracking-[0.32em] uppercase border-2 border-amber-500/40 hover:border-amber-300 text-amber-300 hover:text-white px-3 py-2 transition-colors"
-            >
-              all sports →
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-            {seasons.map((s, i) => <SportTile key={s.sport} state={s} index={i} />)}
-          </div>
-
-          <div className="sm:hidden mt-4">
-            <Link
-              href="/sports"
-              className="block w-full text-center font-mono text-[10px] tracking-[0.32em] uppercase border-2 border-amber-500/40 text-amber-300 px-3 py-3"
-            >
-              all sports →
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* Three properties */}
-      <section className="relative z-10">
-        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-12 sm:py-16">
-          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-500/80 uppercase mb-2">
-            ▌▌▌ what lives here
+      {/* Two desks — yield / yard split panels */}
+      <section className="relative z-10 border-t-2 border-amber-500/30 bg-amber-500/[0.04]">
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 pt-14 sm:pt-20">
+          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-400 uppercase motion-safe:animate-[slideup_0.6s_ease-out_0.05s_both]">
+            ▌▌▌ pick your floor
           </p>
-          <h2 className="text-[clamp(1.8rem,5vw,3rem)] font-black tracking-tight uppercase text-white mb-8">
-            three <span className="text-amber-400">desks</span>, one ticker.
+          <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white motion-safe:animate-[slideup_0.7s_ease-out_0.15s_both]">
+            two desks.<br />
+            <span className="text-amber-400">one park.</span>
           </h2>
+        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
-            <PropertyTile href="/thepark"     kicker="members" title="THEPARK"     body="Members hub. The console, edges, and marketplace — past the paywall." accent="amber" />
-            <PropertyTile href="/commodities" kicker="futures" title="COMMODITIES" body="Daily futures notes from the desk. Markdown, not noise." accent="orange" />
-            <PropertyTile href="/sports"      kicker="edges"   title="SPORTS"      body="Ceelo's NFL handicapper. Math vs. the book line, every cycle." accent="red" />
-          </div>
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-10 sm:py-14 grid grid-cols-1 lg:grid-cols-2 gap-0 items-stretch">
+          <Link
+            href="/theyield"
+            onClick={() => track('yield_click', 'landing_doors')}
+            className="group relative flex flex-col border-2 border-amber-500/60 hover:border-amber-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-10 lg:p-12 transition-all duration-300 hover:-translate-y-0.5 lg:border-r-0 motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300">live edges</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            </div>
+            <div className="text-[clamp(2.2rem,7vw,4rem)] font-black tracking-tight leading-[0.95] uppercase text-amber-300">
+              the yield
+            </div>
+            <p className="mt-4 text-sm sm:text-base text-slate-400 leading-relaxed">
+              Sportsbetting &amp; horse racing — live spreads on one side, live gates on the other.
+            </p>
+            <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
+              <li><span className="text-amber-400">▸</span> live ceelo edges + win-prob</li>
+              <li><span className="text-amber-400">▸</span> nfl · nba · mlb · cfb</li>
+              <li><span className="text-amber-400">▸</span> horse racing — live gates</li>
+              <li><span className="text-amber-400">▸</span> agent broadcasts &amp; trade log</li>
+            </ul>
+            <div className="mt-auto pt-8 flex items-center justify-between font-mono text-[10px] tracking-[0.32em] uppercase">
+              <span className="text-amber-300">enter the yield</span>
+              <span className="text-amber-500/60 group-hover:text-amber-300 group-hover:translate-x-0.5 transition-all text-base">→</span>
+            </div>
+          </Link>
 
           <Link
+            href="/theyard"
+            onClick={() => track('yard_click', 'landing_doors')}
+            className="group relative flex flex-col border-2 border-t-0 lg:border-t-2 border-orange-500/60 hover:border-orange-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-10 lg:p-12 transition-all duration-300 hover:-translate-y-0.5 motion-safe:animate-[slideup_0.7s_ease-out_0.45s_both]"
+          >
+            <div className="flex items-center justify-between mb-5">
+              <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-orange-300">the board</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+            </div>
+            <div className="text-[clamp(2.2rem,7vw,4rem)] font-black tracking-tight leading-[0.95] uppercase text-orange-300">
+              the yard
+            </div>
+            <p className="mt-4 text-sm sm:text-base text-slate-400 leading-relaxed">
+              Commodities desk &amp; agent orchestration — Vega calls the open, the floor runs the rest.
+            </p>
+            <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
+              <li><span className="text-orange-400">▸</span> vega · etf + macro board</li>
+              <li><span className="text-orange-400">▸</span> commodities daily notes</li>
+              <li><span className="text-orange-400">▸</span> agent orchestration log</li>
+              <li><span className="text-orange-400">▸</span> wipes 00:00 utc</li>
+            </ul>
+            <div className="mt-auto pt-8 flex items-center justify-between font-mono text-[10px] tracking-[0.32em] uppercase">
+              <span className="text-orange-300">enter the yard</span>
+              <span className="text-orange-500/60 group-hover:text-orange-300 group-hover:translate-x-0.5 transition-all text-base">→</span>
+            </div>
+          </Link>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 pb-12 sm:pb-16">
+          <Link
             href="/bounty"
-            className="group mt-6 sm:mt-8 inline-flex items-center gap-2 font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase text-slate-500 hover:text-amber-300 transition-colors"
+            className="group inline-flex items-center gap-2 font-mono text-[10px] sm:text-[11px] tracking-[0.32em] uppercase text-slate-500 hover:text-amber-300 transition-colors"
           >
             <span className="text-amber-500/60 group-hover:text-amber-300 transition-colors">▌</span>
             <span>how the bounty pipeline works</span>
@@ -311,103 +290,3 @@ export default function PublicLanding() {
   )
 }
 
-function SportTile({ state, index }: { state: SeasonState; index: number }) {
-  const phase = state.phase
-  const tone =
-    phase === 'regular'  ? { border: 'border-amber-500/60 hover:border-amber-300', text: 'text-amber-300', dot: 'bg-amber-400', glow: '' } :
-    phase === 'playoffs' ? { border: 'border-red-500/60 hover:border-red-300',     text: 'text-red-300',   dot: 'bg-red-400',   glow: '' } :
-                           { border: 'border-slate-700 hover:border-slate-500',     text: 'text-slate-500', dot: 'bg-slate-600', glow: '' }
-
-  const fillPct = phase === 'regular' && state.pctRemaining != null ? state.pctRemaining : 0
-
-  return (
-    <Link
-      href={SPORT_HREF[state.sport]}
-      className={`group relative border-2 ${tone.border} bg-slate-950/70 p-4 sm:p-5 transition-all duration-300 hover:-translate-y-0.5 ${tone.glow}`}
-    >
-      <div className="flex items-center justify-between mb-3 sm:mb-4">
-        <span className={`font-mono text-[9px] tracking-[0.3em] uppercase ${tone.text}`}>#{index + 1}</span>
-        <span className={`w-1.5 h-1.5 rounded-full ${tone.dot} ${phase !== 'offseason' ? 'animate-pulse' : ''}`} />
-      </div>
-
-      <div className="flex items-center gap-3">
-        <span className={tone.text}>{BALL[state.sport]}</span>
-        <span className="text-[clamp(1.6rem,4vw,2.4rem)] font-black tracking-tight text-white leading-[0.95]">
-          {state.label}
-        </span>
-      </div>
-
-      <div className="mt-4 sm:mt-5">
-        {phase === 'regular' ? (
-          <>
-            <div className="flex items-baseline justify-between font-mono text-[10px] tracking-[0.25em] uppercase mb-2">
-              <span className={tone.text}>regular</span>
-              <span className="tabular-nums text-white font-bold">{state.pctRemaining?.toFixed(0)}%</span>
-            </div>
-            <div className="h-1.5 bg-slate-800/70 relative overflow-hidden">
-              <div
-                className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-500 to-orange-400 transition-all duration-1000"
-                style={{ width: `${fillPct}%`, boxShadow: '0 0 12px rgba(245,158,11,0.7)' }}
-              />
-            </div>
-            <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase mt-2 tabular-nums">
-              {state.daysRemaining}d to playoffs
-            </div>
-          </>
-        ) : phase === 'playoffs' ? (
-          <>
-            <div className="font-mono text-[10px] tracking-[0.3em] text-red-300 uppercase">playoffs · live</div>
-            <div className="font-mono text-[9px] tracking-[0.25em] text-slate-500 uppercase mt-2 tabular-nums">
-              {state.daysRemaining}d remaining
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="font-mono text-[10px] tracking-[0.3em] text-slate-500 uppercase">off season</div>
-            {state.next && (
-              <div className="font-mono text-[9px] tracking-[0.25em] text-slate-700 uppercase mt-2 tabular-nums">
-                returns {state.next.on}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      <div className="absolute bottom-2 right-2 font-mono text-[10px] text-slate-700 group-hover:text-amber-300 transition-colors">→</div>
-    </Link>
-  )
-}
-
-interface PropertyTileProps {
-  href: string
-  kicker: string
-  title: string
-  body: string
-  accent: 'amber' | 'orange' | 'red'
-}
-
-const PROP_TONE: Record<PropertyTileProps['accent'], { ring: string; text: string; glow: string; dot: string }> = {
-  amber:  { ring: 'border-amber-500/40 hover:border-amber-300', text: 'text-amber-300',  glow: '', dot: 'bg-amber-400' },
-  orange: { ring: 'border-orange-500/40 hover:border-orange-300', text: 'text-orange-300', glow: '', dot: 'bg-orange-400' },
-  red:    { ring: 'border-red-500/40 hover:border-red-300',     text: 'text-red-300',    glow: '',  dot: 'bg-red-400' },
-}
-
-function PropertyTile({ href, kicker, title, body, accent }: PropertyTileProps) {
-  const c = PROP_TONE[accent]
-  return (
-    <Link
-      href={href}
-      className={`group relative block border-2 ${c.ring} bg-slate-950/70 backdrop-blur-sm p-5 sm:p-6 transition-all duration-300 hover:-translate-y-0.5 ${c.glow}`}
-    >
-      <div className="flex items-center justify-between mb-4">
-        <span className={`font-mono text-[10px] tracking-[0.32em] uppercase ${c.text}`}>{kicker}</span>
-        <span className={`w-1.5 h-1.5 rounded-full ${c.dot} animate-pulse`} />
-      </div>
-      <div className={`text-[clamp(1.8rem,4.5vw,2.6rem)] font-black tracking-tight ${c.text} leading-[0.95] mb-3`}>
-        {title}
-      </div>
-      <p className="font-mono text-[11px] leading-relaxed text-slate-400">{body}</p>
-      <div className="absolute bottom-3 right-3 font-mono text-sm text-slate-700 group-hover:text-white transition-colors group-hover:translate-x-0.5">→</div>
-    </Link>
-  )
-}
