@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\" //FI \"IMAGENAME eq python.exe\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(taskkill //PID 3316 //F)",
+      "Bash(\"/c/psc/IPE/llm-server/.venv/Scripts/python.exe\" -u /c/psc/IPE/llm-server/server.py)",
+      "Bash(echo \"Spawned LLM PID=$!\")",
+      "Bash(taskkill //PID 580 //T //F)",
+      "Bash(wmic path *)",
+      "Bash(curl -sS http://127.0.0.1:11434/api/tags)",
+      "Bash(taskkill //PID 17828 //F)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(curl -s --max-time 60 -X POST http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word: working\"}],\"stream\":false}')",
+      "Bash(taskkill //PID 608 //F)",
+      "Bash(/c/psc/IPE/llm-server/.venv/Scripts/python.exe -u /c/psc/IPE/llm-server/server.py)",
+      "Bash(curl -s --max-time 90 -X POST http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word: working\"}],\"stream\":false}')",
+      "Bash(curl -s --max-time 120 -X POST http://127.0.0.1:8000/api/chat -H 'Content-Type: application/json' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"reply with the single word: working\"}],\"stream\":false}')",
+      "Bash(taskkill //IM python.exe //F)",
+      "Bash(node -e \"console.log\\(require\\('C:/psc/IPE/node_modules/@theia/terminal/package.json'\\).version, require\\('C:/psc/IPE/node_modules/@theia/workspace/package.json'\\).version, require\\('C:/psc/IPE/node_modules/@theia/filesystem/package.json'\\).version\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('C:/psc/IPE/llm-server/server.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Read(//c/lila/**)",
+      "Bash(yarn build *)"
+    ]
+  }
+}

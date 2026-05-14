@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -f IPE/.local-ide.log IPE/.llm-server.log IPE/.telegram.log)",
+      "Bash(nohup node *)",
+      "Bash(echo \"started PID $!\")",
+      "Read(//tmp/**)",
+      "Bash(curl -sf http://127.0.0.1:3001/)",
+      "Bash(curl -sf http://127.0.0.1:8000/health)",
+      "Bash(tasklist //FI \"IMAGENAME eq powershell.exe\")",
+      "Bash(curl -sI http://127.0.0.1:3000/)",
+      "Bash(curl -sI http://127.0.0.1:3001/)",
+      "Bash(tasklist //FI \"PID eq 11436\")",
+      "Bash(tasklist //FI \"PID eq 19080\")",
+      "Bash(curl -sS http://127.0.0.1:3000/)",
+      "Bash(curl -sS http://127.0.0.1:3001/)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\")",
+      "Bash(timeout 15 powershell -NoProfile -ExecutionPolicy Bypass -File /c/psc/scripts/start-llm.ps1)",
+      "Bash(taskkill //PID 11436 //T //F)",
+      "Bash(tasklist //FI \"IMAGENAME eq neutralino-win_x64.exe\")",
+      "Bash(taskkill //PID 20108 //T //F)",
+      "Bash(timeout 5 ./bin/neutralino-win_x64.exe --help)",
+      "Read(//c/Users/parks/AppData/Local/Temp/claude/c--lila/c1dc6660-2a0f-4fe0-a9b1-2ccb47ff123b/tasks/**)",
+      "Bash(timeout 10 ./bin/neutralino-win_x64.exe)",
+      "Bash(taskkill //IM neutralino-win_x64.exe //F)",
+      "Bash(reg query *)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft/Edge/Application/**)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft/EdgeWebView/Application//**)",
+      "Bash(timeout 5 ./bin/neutralino-win_x64.exe --debug-mode)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(timeout 6 ./bin/neutralino-win_x64.exe --mode=window)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --app=http://localhost:3000/ --user-data-dir=/c/psc/IPE/.window-profile --no-first-run --no-default-browser-check --window-size=1400,900)",
+      "Bash(tasklist //FI \"IMAGENAME eq msedge.exe\")",
+      "Bash(taskkill //IM msedge.exe //F)",
+      "Bash(tasklist //FI \"PID eq 10060\")",
+      "Bash(curl -sI http://127.0.0.1:3000/api/chat)",
+      "Bash(curl -sI http://127.0.0.1:3000/health)",
+      "Bash(curl -sI http://127.0.0.1:3000/api/setup/status)"
+    ]
+  }
+}
