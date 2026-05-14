@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-ldgr_escrow = "LdgrEscRoW11111111111111111111111111111111"
+ldgr_escrow = "5U87rQ3wvccQ7yN5bsKQAYdnrYGXJMhS7uCBy7JKsXT6"
 
 [programs.localnet]
-ldgr_escrow = "LdgrEscRoW11111111111111111111111111111111"
+ldgr_escrow = "5U87rQ3wvccQ7yN5bsKQAYdnrYGXJMhS7uCBy7JKsXT6"
 
 [registry]
 url = "https://api.apr.dev"

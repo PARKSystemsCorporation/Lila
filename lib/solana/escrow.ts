@@ -1,5 +1,6 @@
-// Anchor escrow client. Dynamic-imports @coral-xyz/anchor so the existing
-// Next.js build doesn't require Anchor until the Bazaar wires it in.
+// Anchor escrow client. Solana deps are loaded through the webpack-opaque
+// indirection in ./_dynamic so the Next.js build doesn't choke when the
+// Bazaar deps aren't installed.
 //
 // Two execution modes:
 //   - server-side ix builders (initialize, release, refund) that return a
@@ -10,9 +11,10 @@
 // IDL is loaded from programs/ldgr/target/idl/ldgr_escrow.json once anchor
 // build has run. Until then, the loader returns null and the routes 503.
 
-import { getConnection } from './client'
-import { ldgrToBase } from './ldgr'
 import { createHash } from 'crypto'
+import { getConnection } from './client'
+import { requireOptional, loadOptional } from './_dynamic'
+import { ldgrToBase } from './ldgr'
 
 export const ESCROW_SEED = Buffer.from('escrow')
 
@@ -22,17 +24,10 @@ export function gigIdBytes(gigId: number | string): Buffer {
 }
 
 async function loadIdl(): Promise<unknown | null> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const idl = await import(
-      '../../programs/ldgr/target/idl/ldgr_escrow.json' as string
-    ).catch(() => null)
-    return idl && (idl as { default?: unknown }).default
-      ? (idl as { default: unknown }).default
-      : idl
-  } catch {
-    return null
-  }
+  // The IDL JSON file lives outside the Next.js source tree at
+  // programs/ldgr/target/idl/ldgr_escrow.json. Load it through the same
+  // webpack-opaque indirection so a missing IDL doesn't break the build.
+  return await loadOptional('../../programs/ldgr/target/idl/ldgr_escrow.json')
 }
 
 export interface EscrowAccounts {
@@ -41,29 +36,42 @@ export interface EscrowAccounts {
   vaultAta: string
 }
 
+interface Web3Mod {
+  PublicKey: { new (s: string): unknown; findProgramAddressSync: (seeds: Buffer[], pid: unknown) => [{ toBase58: () => string }, number] }
+  Connection: new (url: string, c: string) => unknown
+  Keypair: { fromSecretKey: (s: Uint8Array) => { publicKey: { toBase58: () => string } } }
+  Transaction: new (opts: unknown) => { add: (ix: unknown) => { serialize: (o: unknown) => Buffer } }
+}
+
+interface SplMod {
+  getAssociatedTokenAddress: (mint: unknown, owner: unknown, allowOwnerOffCurve?: boolean) => Promise<{ toBase58: () => string }>
+}
+
+interface AnchorMod {
+  AnchorProvider: new (conn: unknown, wallet: unknown, opts: unknown) => unknown
+  Program: new (idl: unknown, pid: string, provider: unknown) => unknown
+  BN: new (n: string) => unknown
+  Wallet: new (kp: unknown) => unknown
+}
+
+interface Bs58Mod { default: { decode: (s: string) => Uint8Array } }
+
 export async function deriveEscrowAccounts(
   gigId: number,
-  hirerPubkey: string,
-  workerPubkey: string,
-  moderatorPubkey: string,
+  _hirerPubkey: string,
+  _workerPubkey: string,
+  _moderatorPubkey: string,
 ): Promise<EscrowAccounts> {
   const programId = process.env.LDGR_ESCROW_PROGRAM_ID
   const mint = process.env.LDGR_MINT
   if (!programId || !mint) throw new Error('LDGR_ESCROW_PROGRAM_ID / LDGR_MINT not set')
 
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const [web3, spl] = await Promise.all([
-    import('@solana/web3.js' as string),
-    import('@solana/spl-token' as string),
-  ])
-  // @ts-expect-error dynamic
+  const web3 = (await requireOptional('@solana/web3.js')) as unknown as Web3Mod
+  const spl = (await requireOptional('@solana/spl-token')) as unknown as SplMod
   const pid = new web3.PublicKey(programId)
   const seed = gigIdBytes(gigId)
-  // @ts-expect-error dynamic
   const [pda] = web3.PublicKey.findProgramAddressSync([ESCROW_SEED, seed], pid)
-  // @ts-expect-error dynamic
   const vault = await spl.getAssociatedTokenAddress(
-    // @ts-expect-error dynamic
     new web3.PublicKey(mint),
     pda,
     true, // allowOwnerOffCurve — PDA owns the vault
@@ -94,29 +102,25 @@ export async function buildInitializeTx(args: {
     args.moderatorPubkey,
   )
 
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const [web3, anchor, spl] = await Promise.all([
-    import('@solana/web3.js' as string),
-    import('@coral-xyz/anchor' as string),
-    import('@solana/spl-token' as string),
-  ])
+  const web3 = (await requireOptional('@solana/web3.js')) as unknown as Web3Mod
+  const anchor = (await requireOptional('@coral-xyz/anchor')) as unknown as AnchorMod
+  const spl = (await requireOptional('@solana/spl-token')) as unknown as SplMod
   const conn = await getConnection()
-  // @ts-expect-error dynamic
-  const provider = new anchor.AnchorProvider(conn, { publicKey: new web3.PublicKey(args.hirerPubkey) } as any, { commitment: 'confirmed' })
-  // @ts-expect-error dynamic
-  const program = new anchor.Program(idl as any, accounts.programId, provider)
+  const provider = new anchor.AnchorProvider(conn, { publicKey: new web3.PublicKey(args.hirerPubkey) }, { commitment: 'confirmed' })
+  const program = new anchor.Program(idl, accounts.programId, provider) as unknown as {
+    methods: {
+      initialize: (seed: number[], amounts: unknown[]) => {
+        accounts: (a: Record<string, string>) => { instruction: () => Promise<unknown> }
+      }
+    }
+  }
 
   const mintPk = process.env.LDGR_MINT!
   const seed = gigIdBytes(args.gigId)
-  const amountsBase = args.milestoneAmountsLdgr.map((a) => {
-    // @ts-expect-error dynamic
-    return new anchor.BN(ldgrToBase(a).toString())
-  })
+  const amountsBase = args.milestoneAmountsLdgr.map((a) => new anchor.BN(ldgrToBase(a).toString()))
 
-  // @ts-expect-error dynamic
   const hirerAta = await spl.getAssociatedTokenAddress(new web3.PublicKey(mintPk), new web3.PublicKey(args.hirerPubkey))
 
-  // @ts-expect-error dynamic
   const ix = await program.methods
     .initialize([...seed], amountsBase)
     .accounts({
@@ -130,9 +134,8 @@ export async function buildInitializeTx(args: {
     })
     .instruction()
 
-  // @ts-expect-error dynamic
-  const { blockhash } = await conn.getLatestBlockhash('confirmed')
-  // @ts-expect-error dynamic
+  const connTyped = conn as { getLatestBlockhash: (c: string) => Promise<{ blockhash: string }> }
+  const { blockhash } = await connTyped.getLatestBlockhash('confirmed')
   const tx = new web3.Transaction({ feePayer: new web3.PublicKey(args.hirerPubkey), recentBlockhash: blockhash }).add(ix)
   const serialized = tx.serialize({ requireAllSignatures: false }).toString('base64')
   return { tx: serialized, accounts }
@@ -151,14 +154,10 @@ export async function releaseMilestoneAsModerator(args: {
   const secret = process.env.LILA_BOT_SOLANA_SECRET
   if (!secret) throw new Error('LILA_BOT_SOLANA_SECRET not set')
 
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const [web3, anchor, spl, bs58] = await Promise.all([
-    import('@solana/web3.js' as string),
-    import('@coral-xyz/anchor' as string),
-    import('@solana/spl-token' as string),
-    import('bs58' as string),
-  ])
-  // @ts-expect-error dynamic
+  const web3 = (await requireOptional('@solana/web3.js')) as unknown as Web3Mod
+  const anchor = (await requireOptional('@coral-xyz/anchor')) as unknown as AnchorMod
+  const spl = (await requireOptional('@solana/spl-token')) as unknown as SplMod
+  const bs58 = (await requireOptional('bs58')) as unknown as Bs58Mod
   const moderator = web3.Keypair.fromSecretKey(bs58.default.decode(secret))
   const accounts = await deriveEscrowAccounts(
     args.gigId,
@@ -167,24 +166,26 @@ export async function releaseMilestoneAsModerator(args: {
     moderator.publicKey.toBase58(),
   )
   const conn = await getConnection()
-  // @ts-expect-error dynamic
   const provider = new anchor.AnchorProvider(conn, new anchor.Wallet(moderator), { commitment: 'confirmed' })
-  // @ts-expect-error dynamic
-  const program = new anchor.Program(idl as any, accounts.programId, provider)
+  const program = new anchor.Program(idl, accounts.programId, provider) as unknown as {
+    methods: {
+      releaseMilestone: (idx: number) => {
+        accounts: (a: Record<string, string>) => { signers: (s: unknown[]) => { rpc: () => Promise<string> } }
+      }
+    }
+  }
 
-  // @ts-expect-error dynamic
   const workerAta = await spl.getAssociatedTokenAddress(
     new web3.PublicKey(process.env.LDGR_MINT!),
     new web3.PublicKey(args.workerPubkey),
   )
 
-  // @ts-expect-error dynamic
   const sig: string = await program.methods
     .releaseMilestone(args.milestoneIdx)
     .accounts({
       hirer: args.hirerPubkey,
       worker: args.workerPubkey,
-      moderator: moderator.publicKey,
+      moderator: (moderator.publicKey as { toBase58: () => string }).toBase58(),
       escrow: accounts.escrowPda,
       vault: accounts.vaultAta,
       workerAta: workerAta.toBase58(),

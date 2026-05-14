@@ -5,3 +5,9 @@ node_modules
 .env.production
 out
 tsconfig.tsbuildinfo
+
+# Bazaar build artifacts
+programs/ldgr/target/
+programs/ldgr/Cargo.lock
+services/lila-bot/**/__pycache__/
+services/lila-bot/.pytest_cache/

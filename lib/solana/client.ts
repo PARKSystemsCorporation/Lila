@@ -28,16 +28,14 @@ export function getRpcUrl(): string {
   return base
 }
 
-// Returns an `@solana/web3.js` Connection. Dynamic import avoids a hard
-// build-time dependency.
+import { requireOptional } from './_dynamic'
+
+// Returns an `@solana/web3.js` Connection. The dynamic import is hidden
+// behind a webpack-opaque indirection (see lib/solana/_dynamic.ts) so the
+// Next.js build doesn't try to bundle Solana deps when they aren't
+// installed.
 export async function getConnection(): Promise<unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const web3 = await import('@solana/web3.js' as string).catch(() => null)
-  if (!web3) {
-    throw new Error(
-      "@solana/web3.js not installed. Run: npm install @solana/web3.js @solana/spl-token @coral-xyz/anchor",
-    )
-  }
-  // @ts-expect-error dynamic
-  return new web3.Connection(getRpcUrl(), 'confirmed')
+  const web3 = await requireOptional('@solana/web3.js')
+  const Connection = (web3 as { Connection: new (url: string, c: string) => unknown }).Connection
+  return new Connection(getRpcUrl(), 'confirmed')
 }

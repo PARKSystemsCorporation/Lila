@@ -8,6 +8,7 @@
 //      Ed25519 signature against the Solana pubkey and the challenge HMAC.
 
 import { createHmac, timingSafeEqual } from 'crypto'
+import { requireOptional } from './_dynamic'
 
 const CHALLENGE_TTL_MS = 5 * 60_000
 
@@ -53,27 +54,23 @@ export function parseChallenge(
   return { viewerId, tsMs: json.ts, nonce: json.nonce }
 }
 
+interface NaclMod {
+  default: { sign: { detached: { verify: (msg: Uint8Array, sig: Uint8Array, pub: Uint8Array) => boolean } } }
+}
+interface Bs58Mod { default: { decode: (s: string) => Uint8Array } }
+
 // Verifies an Ed25519 signature produced by Phantom's signMessage over the
-// challenge bytes. Dynamic import keeps tweetnacl optional.
+// challenge bytes. The deps are dynamic-imported through the webpack-opaque
+// indirection so the Next.js build doesn't require them.
 export async function verifyEd25519(
   challenge: string,
   signatureBase58: string,
   pubkeyBase58: string,
 ): Promise<boolean> {
-  const [nacl, bs58] = await Promise.all([
-    import('tweetnacl' as string).catch(() => null),
-    import('bs58' as string).catch(() => null),
-  ])
-  if (!nacl || !bs58) {
-    throw new Error(
-      'tweetnacl + bs58 required for wallet signature verification. npm install tweetnacl bs58',
-    )
-  }
-  // @ts-expect-error dynamic
+  const nacl = (await requireOptional('tweetnacl')) as unknown as NaclMod
+  const bs58 = (await requireOptional('bs58')) as unknown as Bs58Mod
   const sig = bs58.default.decode(signatureBase58)
-  // @ts-expect-error dynamic
   const pub = bs58.default.decode(pubkeyBase58)
   const msg = new TextEncoder().encode(challenge)
-  // @ts-expect-error dynamic
   return nacl.default.sign.detached.verify(msg, sig, pub)
 }
