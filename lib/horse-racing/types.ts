@@ -6,7 +6,10 @@
 export interface Runner {
   horse_id: string
   horse: string
-  number: number | null
+  // Program number as the upstream prints it: "1", "1A", "1B", "2". Stored
+  // verbatim so coupled NA entries ("1" vs "1A") stay distinguishable on
+  // display. The yield engine never math-coerces this; it's purely a label.
+  number: string | null
   draw: number | null
   jockey: string | null
   trainer: string | null
@@ -20,12 +23,15 @@ export interface Runner {
 export interface Race {
   race_id: string
   course: string
+  // ISO country code for NA meets ('USA' | 'CAN'). Null on UK racecards
+  // (which the region router still reaches in fallback mode).
+  country?: string | null
   off_time: string         // 'HH:MM' local to course
   off_dt: string           // ISO timestamp (UTC) of scheduled off
   race_name: string
   distance: string | null
   going: string | null
-  type: string | null      // Flat / Hurdle / Chase / NH Flat
+  type: string | null      // NA: MSW/MCL/ALW/STK/CLM/OPT · UK: Flat/Hurdle/Chase
   field_size: number
   runners: Runner[]
 }
@@ -60,7 +66,7 @@ export interface RaceSignal {
   top_runner: {
     horse_id: string
     horse: string
-    number: number | null
+    number: string | null
     odds_decimal: number | null
     fair_decimal: number | null
     edge_pct: number | null

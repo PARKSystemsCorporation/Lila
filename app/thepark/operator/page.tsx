@@ -3651,7 +3651,7 @@ function EdgeBoard({ visible }: { visible: boolean }) {
             subtitle={
               greenOnly
                 ? `Try toggling green-only off to see all ${sport} matchups + Ceelo's reads on each.`
-                : `Schedule + lines populate as the loop fetches them. Live book lines need ODDS_API_KEY.`
+                : `Schedule + lines populate as the loop fetches them. Live racing odds need RACING_API_USERNAME / RACING_API_PASSWORD.`
             }
           />
         ) : (
@@ -4244,8 +4244,9 @@ function SportBreakdown({ rollups }: { rollups: SportRollup[] }) {
   )
 }
 
-// Snapshot of Ceelo's autonomy loop: ratings depth, schedule depth, model
-// freshness, and whether the live-line gate is armed (needs ODDS_API_KEY).
+// Snapshot of Ceelo's autonomy loop: race-card depth, schedule depth, model
+// freshness, and whether the live-odds gate is armed (needs RACING_API_USERNAME
+// / RACING_API_PASSWORD).
 function CeeloStatusCard({ status }: { status: CeeloStatus }) {
   const oddsLabel  = status.odds_key ? 'ARMED' : 'WAITING'
   const oddsClass  = status.odds_key
@@ -4294,7 +4295,7 @@ function CeeloStatusCard({ status }: { status: CeeloStatus }) {
       )}
       {!status.odds_key && (
         <p className="text-[9px] font-mono text-amber-400/80 leading-snug pt-1 border-t border-slate-800">
-          Add ODDS_API_KEY (free at theoddsapi.com) to engage the edge gate. Until then, model lines are computed but no picks fire.
+          Add RACING_API_USERNAME / RACING_API_PASSWORD (theracingapi.com) to engage the edge gate. Until then, Ceelo is idle — no race cards, no picks.
         </p>
       )}
     </div>

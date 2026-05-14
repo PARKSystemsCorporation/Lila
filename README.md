@@ -236,7 +236,7 @@ See [`.env.example`](.env.example) for the full commented reference.
 - Forge auto-submit → `GITHUB_TOKEN` + `LILA_AUTO_SUBMIT=true`
 - Scout tutorial publisher → `DEVTO_API_KEY` (+ optional `SCOUT_TUTORIAL_TOPICS`)
 - Bluesky broadcasts → `BSKY_HANDLE` + `BSKY_APP_PASSWORD`
-- Ceelo Edge Gate → `ODDS_API_KEY`
+- Ceelo Edge Gate → `RACING_API_USERNAME` + `RACING_API_PASSWORD`
 
 **Tuning knobs** (all optional, defaults sensible):
 `TASKER_STEP_SEC`, `RESEARCH_CYCLE_SEC`, `FORGE_RUN_SEC`, `SCOUT_RUN_SEC`,
