@@ -26,7 +26,7 @@ Live context:
 {CONTEXT}
 
 Routing principles:
-- if there is an unanswered operator message → LILA/OPERATOR/MESSAGE.
+- if there is an unanswered operator message → LILA/OPERATOR/MESSAGE. "Operator message" means a chat row whose sender is literally "user"; teammate chatter (analyst/cipher/scout/forge/lila) is NEVER an operator message.
 - if the inbound desk has a pending request matching a category, prefer the matching DESK leaf (CODE-REQUESTS / HELP-REQUESTS / WEB-POSTS).
 - if there are approved-but-unreported desk items → AUTONOMY/AUTONOMY-DESK.
 - if a teammate hasn't moved in a long time and you have a clear hint → LILA/TEAM/UPDATE.
