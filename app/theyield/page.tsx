@@ -1,5 +1,5 @@
 // /theyield — the yield hub. Two doors: SPORTS (the scoreboard) and
-// COMMODITIES (the futures dashboard).
+// HORSE RACING (the gates).
 
 'use client'
 
@@ -7,14 +7,14 @@ import Link from 'next/link'
 import {
   LocalShell,
   IconBasketball, IconFootball, IconBaseball, IconHockey,
-  IconDroplet, IconGold, IconWheat, IconFlame, IconBull,
+  IconBolt, IconTarget, IconTrophy,
 } from '@/app/_components/local/chrome'
 
 export default function TheYieldHub() {
   return (
     <LocalShell
       title="THE YIELD"
-      subtitle="Sports and commodities. The full board."
+      subtitle="Sports and the gates. The full board."
       accent="amber"
       back={{ href: '/', label: 'back to home' }}
     >
@@ -26,7 +26,7 @@ export default function TheYieldHub() {
           where will you<br />work the <span className="text-amber-400">yield</span>?
         </h1>
         <p className="mt-4 max-w-xl mx-auto text-sm sm:text-base text-slate-400 leading-relaxed">
-          Two floors, one room. Live spreads on one side, live curves on the other.
+          Two floors, one room. Live spreads on one side, live gates on the other.
         </p>
       </section>
 
@@ -46,17 +46,15 @@ export default function TheYieldHub() {
             ]}
           />
           <YieldDoor
-            href="/theyield/commodities"
-            kicker="track the markets · spot the moves"
-            title="COMMODITIES"
+            href="/horse-racing"
+            kicker="thoroughbreds · live yields"
+            title="HORSE RACING"
             tone="orange"
-            cta="open the board →"
+            cta="enter the gates →"
             icons={[
-              <IconDroplet key="oil" />,
-              <IconGold key="gd" />,
-              <IconWheat key="wt" />,
-              <IconFlame key="ng" />,
-              <IconBull key="bl" />,
+              <IconBolt key="bt" />,
+              <IconTarget key="tg" />,
+              <IconTrophy key="tr" />,
             ]}
           />
         </div>

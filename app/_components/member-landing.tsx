@@ -1,5 +1,5 @@
 // Post-login landing — the room you walk into after signing in. Two main
-// doors (the yield + horse racing) plus supporting links. Rendered at `/`
+// doors (the yield + the yard) plus supporting links. Rendered at `/`
 // for any visitor with a viewer or operator cookie.
 
 'use client'
@@ -59,11 +59,11 @@ export default function MemberLanding() {
             icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconBaseball key="bs" />, <IconDroplet key="oil" />, <IconBull key="bl" />]}
           />
           <MarketDoor
-            href="/horse-racing"
-            kicker="thoroughbreds · live yields"
-            title="HORSE RACING"
+            href="/theyard"
+            kicker="the locals · the room"
+            title="THE YARD"
             tone="amber"
-            cta="enter the gates →"
+            cta="enter the yard →"
             icons={[<IconBolt key="bt" />, <IconTarget key="tg" />, <IconTrophy key="tr" />]}
           />
         </div>

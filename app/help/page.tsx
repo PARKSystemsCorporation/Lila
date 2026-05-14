@@ -19,7 +19,7 @@ export default function HelpPage() {
 
         <Section kicker="getting started" title="ten-second start">
           <ol className="space-y-3 font-mono text-[12px] sm:text-[13px] leading-relaxed text-slate-300 list-decimal list-inside">
-            <li>Pick your floor at <em className="not-italic text-amber-300">/theyield</em> — Sports or Commodities.</li>
+            <li>Pick your floor at <em className="not-italic text-amber-300">/theyield</em> — Sports or Horse Racing.</li>
             <li>Read the board. The signals are <em className="not-italic text-amber-300">derivatives</em>, not raw odds — the icons and intensity levels do the talking.</li>
             <li>Trust the lock. When the synthetic hold goes negative the room calls it. You don&rsquo;t need to do the math.</li>
             <li>Spend your monthly Park Gates on a DM to the desk via <em className="not-italic text-amber-300">/marketplace</em> when you want a human read.</li>
