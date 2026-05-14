@@ -7,8 +7,8 @@
 import Link from 'next/link'
 import {
   LocalShell,
-  IconTarget, IconTrophy, IconDroplet, IconBolt, IconShield,
-  IconBasketball, IconFootball, IconBaseball, IconBull,
+  IconTarget, IconTrophy, IconBolt, IconShield,
+  IconBasketball, IconFootball, IconBaseball,
 } from '@/app/_components/local/chrome'
 
 export default function MemberLanding() {
@@ -32,9 +32,9 @@ export default function MemberLanding() {
         </p>
 
         <div className="mt-10 sm:mt-12 grid grid-cols-3 gap-3 sm:gap-8 border-y-2 border-amber-500/15 py-6 sm:py-8">
-          <StatPip icon={<IconTarget />}    label={<>predicting<br />every game</>} />
-          <StatPip icon={<IconTrophy />}    label={<>all major<br />sports</>} />
-          <StatPip icon={<IconDroplet />}   label={<>15 different<br />commodities</>} />
+          <StatPip icon={<IconTarget />}     label={<>predicting<br />every game</>} />
+          <StatPip icon={<IconBasketball />} label={<>all major<br />sports</>} />
+          <StatPip icon={<IconTrophy />}     label={<>live<br />race cards</>} />
         </div>
       </section>
 
@@ -52,11 +52,11 @@ export default function MemberLanding() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           <MarketDoor
             href="/theyield"
-            kicker="sports + commodities · live edges"
+            kicker="sports + horse racing · live edges"
             title="THE YIELD"
             tone="orange"
             cta="enter the yield →"
-            icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconBaseball key="bs" />, <IconDroplet key="oil" />, <IconBull key="bl" />]}
+            icons={[<IconBasketball key="bb" />, <IconFootball key="fb" />, <IconBaseball key="bs" />, <IconBolt key="bt" />, <IconTrophy key="tr" />]}
           />
           <MarketDoor
             href="/theyard"
