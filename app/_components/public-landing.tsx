@@ -216,6 +216,35 @@ export default function PublicLanding() {
         </div>
       </section>
 
+      {/* $LDGR · Ledger Coin */}
+      <section className="relative z-10 border-t-2 border-amber-500/30">
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-14 sm:py-20">
+          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-400 uppercase">
+            ▌▌▌ $ldgr · ledger coin
+          </p>
+          <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white">
+            the future of finance,<br />
+            <span className="text-amber-400">recorded in stone.</span>
+          </h2>
+          <p className="mt-6 max-w-3xl text-base sm:text-lg text-slate-400 leading-relaxed">
+            In an era of fleeting digital trends and volatile markets,
+            <span className="text-amber-300"> Ledger Coin</span> stands as the definitive benchmark
+            for transparency and security. Built on a foundation of immutable ledger technology,
+            it bridges the gap between traditional accounting integrity and the limitless potential
+            of decentralized finance. Whether you are looking to safeguard your assets with
+            institutional-grade precision or streamline global transactions with a click,
+            Ledger Coin provides the permanent, verifiable, and scalable infrastructure your
+            capital deserves. Don&rsquo;t just trade the future&mdash;document it.
+          </p>
+          <ul className="mt-6 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
+            <li><span className="text-amber-400">▸</span> immutable ledger technology</li>
+            <li><span className="text-amber-400">▸</span> institutional-grade precision</li>
+            <li><span className="text-amber-400">▸</span> permanent · verifiable · scalable</li>
+            <li><span className="text-amber-400">▸</span> bridges tradfi &amp; decentralized finance</li>
+          </ul>
+        </div>
+      </section>
+
       {/* Pricing slab */}
       <section className="relative z-10 border-y-2 border-amber-500/30 bg-amber-500/[0.04]">
         <div className="max-w-7xl mx-auto px-5 sm:px-8 py-14 sm:py-20">
