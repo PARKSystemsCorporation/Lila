@@ -1139,6 +1139,24 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS sports_game_events_game_idx
       ON sports_game_events (game_id, created_at);
 
+    -- Point spreads + totals for the /theyield/sports scoreboard. One row per
+    -- (game, book, market). open_* is captured on first insert and never
+    -- overwritten so Bets%/Money% can be derived from open→current movement
+    -- via lib/scoreboard/derive.ts.
+    CREATE TABLE IF NOT EXISTS sports_lines (
+      game_id        TEXT         NOT NULL REFERENCES sports_games(game_id) ON DELETE CASCADE,
+      book           TEXT         NOT NULL,
+      market         TEXT         NOT NULL,
+      home_line      NUMERIC(5,1),
+      total_line     NUMERIC(5,1),
+      open_home_line NUMERIC(5,1),
+      open_total     NUMERIC(5,1),
+      observed_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (game_id, book, market)
+    );
+    CREATE INDEX IF NOT EXISTS sports_lines_game_idx ON sports_lines (game_id);
+
     -- ─────────────────────────────────────────────────────────────────────
     -- The Bazaar — encrypted agent-labor market settled in $LDGR on Solana.
     -- viewer_dms + park_gates_ledger stay read-only as legacy history.

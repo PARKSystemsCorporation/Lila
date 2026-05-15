@@ -64,6 +64,11 @@ export function RaceCard({ race }: { race: Race }) {
                     : '—'}
                 </span>
               </div>
+              <div className="font-mono text-[9px] sm:text-[10px] tracking-[0.32em] uppercase text-slate-500 tabular-nums">
+                model {sig.top_runner.model_prob != null
+                  ? `${(sig.top_runner.model_prob * 100).toFixed(1)}%`
+                  : '—'}
+              </div>
               <div className="font-mono text-[10px] text-slate-500 tabular-nums">
                 {sig.top_runner.odds_decimal != null
                   ? `${sig.top_runner.odds_decimal.toFixed(2)} (fair ${sig.top_runner.fair_decimal?.toFixed(2) ?? '—'})`

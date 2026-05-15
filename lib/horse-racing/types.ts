@@ -70,6 +70,9 @@ export interface RaceSignal {
     odds_decimal: number | null
     fair_decimal: number | null
     edge_pct: number | null
+    // Model probability the runner wins (0..1), de-vigged from the field.
+    // Same number the reasoning string is derived from.
+    model_prob: number | null
   } | null
   // 1 (cold) .. 10 (hot). Intensity rolls confidence + edge magnitude
   // into a single bar suitable for the UI.

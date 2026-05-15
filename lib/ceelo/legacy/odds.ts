@@ -105,7 +105,7 @@ const MLB_NAME_TO_ABBR: Record<string, string> = {
   'Washington Nationals': 'WSH',
 }
 
-const NAME_TO_ABBR_BY_SPORT: Record<Sport, Record<string, string>> = {
+export const NAME_TO_ABBR_BY_SPORT: Record<Sport, Record<string, string>> = {
   NFL: NFL_NAME_TO_ABBR,
   NBA: NBA_NAME_TO_ABBR,
   MLB: MLB_NAME_TO_ABBR,
