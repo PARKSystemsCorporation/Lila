@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
+import { excerptOf } from '@/lib/text/excerpt'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -26,17 +27,6 @@ interface Article {
   author: string
   kind: string
   created_ts: number
-}
-
-function excerptOf(content: string, max = 220): string {
-  const stripped = content
-    .replace(/^#.+$/gm, '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/[*_`>#-]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (stripped.length <= max) return stripped
-  return stripped.slice(0, max).replace(/\s+\S*$/, '') + '…'
 }
 
 export async function GET() {
@@ -88,7 +78,7 @@ export async function GET() {
     const articles: Article[] = articlesRes.rows.map(r => ({
       id: Number(r.id),
       title: r.title,
-      excerpt: excerptOf(r.content),
+      excerpt: excerptOf(r.content, 220),
       author: r.author ?? 'ceelo',
       kind: r.kind ?? 'noon-report',
       created_ts: Number(r.created_ts),

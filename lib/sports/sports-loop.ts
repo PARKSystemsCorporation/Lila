@@ -1,8 +1,14 @@
 import type { PoolClient } from 'pg'
 import { cfg } from '../config'
 import { fetchNbaSharpSnapshots, type ApiSportsSnapshot } from './sources/api-sports'
+import { fetchNflSharpSnapshots } from './sources/api-sports-nfl'
+import { fetchMlbSharpSnapshots } from './sources/api-sports-mlb'
 import { fetchNbaRetailSnapshots, type ParlaySnapshot } from './sources/parlay'
+import { fetchNflRetailSnapshots } from './sources/parlay-nfl'
+import { fetchMlbRetailSnapshots } from './sources/parlay-mlb'
 import { fetchNbaPredictionSnapshots, type ProphetXSnapshot } from './sources/prophet-x'
+import { fetchNflPredictionSnapshots } from './sources/prophet-x-nfl'
+import { fetchMlbPredictionSnapshots } from './sources/prophet-x-mlb'
 import { getOrCreateTeamId } from './teams'
 import { toColorTier } from './scale'
 import { overroundScore } from './metrics/overround'
@@ -20,6 +26,12 @@ import { compositeScore } from './metrics/composite'
 // ParlayAPI, ProphetX) in parallel, derives the 1–10 signals per game
 // side, and persists ONLY the scores + small numeric inputs. No raw
 // upstream payload is ever written to Postgres.
+//
+// Parameterized per league: invoke run('nba'|'nfl'|'mlb') for each
+// league you want to tick. The metric math (overround / consensus /
+// steam / delta / lead_pct / sma10 / composite) is league-agnostic.
+
+export type League = 'nba' | 'nfl' | 'mlb'
 
 type SourceFan = {
   sharp: ApiSportsSnapshot[]
@@ -30,36 +42,52 @@ type SourceFan = {
 type Side = 'home' | 'away'
 type GameKey = string
 
+const SHARP_FETCHERS: Record<League, () => Promise<ApiSportsSnapshot[] | null>> = {
+  nba: fetchNbaSharpSnapshots,
+  nfl: fetchNflSharpSnapshots,
+  mlb: fetchMlbSharpSnapshots,
+}
+const RETAIL_FETCHERS: Record<League, () => Promise<ParlaySnapshot[] | null>> = {
+  nba: fetchNbaRetailSnapshots,
+  nfl: fetchNflRetailSnapshots,
+  mlb: fetchMlbRetailSnapshots,
+}
+const PREDICTION_FETCHERS: Record<League, () => Promise<ProphetXSnapshot[] | null>> = {
+  nba: fetchNbaPredictionSnapshots,
+  nfl: fetchNflPredictionSnapshots,
+  mlb: fetchMlbPredictionSnapshots,
+}
+
 export class SportsLoop {
   constructor(private readonly db: PoolClient) {}
 
-  async run(): Promise<{ logMessage: string; logType: 'info' | 'success' | 'warn' } | null> {
+  async run(league: League = 'nba'): Promise<{ logMessage: string; logType: 'info' | 'success' | 'warn' } | null> {
     if (process.env.ENABLE_SPORTS_LOOP !== 'true') return null
     if (!await this.shouldRunCycle()) return null
 
-    const fan = await this.fanOut()
+    const fan = await this.fanOut(league)
     if (!fan.sharp.length && !fan.retail.length && !fan.prediction.length) {
       await this.markRan()
-      return { logMessage: 'Sports: no feeds available (set API keys).', logType: 'info' }
+      return { logMessage: `Sports[${league}]: no feeds available (set API keys).`, logType: 'info' }
     }
 
     const games = this.alignSnapshots(fan)
     let written = 0
     for (const game of games.values()) {
       try {
-        await this.persistGame(game)
+        await this.persistGame(game, league)
         written++
       } catch (e) {
         // One bad game must not abort the loop.
         await this.db.query(
           `INSERT INTO lila_log (message, type) VALUES ($1, 'warn')`,
-          [`Sports: ${game.home.city} vs ${game.away.city}: ${String(e).slice(0, 200)}`],
+          [`Sports[${league}]: ${game.home.city} vs ${game.away.city}: ${String(e).slice(0, 200)}`],
         )
       }
     }
     await this.markRan()
     return {
-      logMessage: `Sports: scored ${written} game-sides across ${games.size} games.`,
+      logMessage: `Sports[${league}]: scored ${written} game-sides across ${games.size} games.`,
       logType: written ? 'success' : 'info',
     }
   }
@@ -78,11 +106,11 @@ export class SportsLoop {
     return
   }
 
-  private async fanOut(): Promise<SourceFan> {
+  private async fanOut(league: League): Promise<SourceFan> {
     const [sharpRes, retailRes, predictionRes] = await Promise.allSettled([
-      fetchNbaSharpSnapshots(),
-      fetchNbaRetailSnapshots(),
-      fetchNbaPredictionSnapshots(),
+      SHARP_FETCHERS[league](),
+      RETAIL_FETCHERS[league](),
+      PREDICTION_FETCHERS[league](),
     ])
     return {
       sharp:      sharpRes.status      === 'fulfilled' && sharpRes.value      ? sharpRes.value      : [],
@@ -118,8 +146,7 @@ export class SportsLoop {
     return games
   }
 
-  private async persistGame(game: AlignedGame): Promise<void> {
-    const league = 'nba'
+  private async persistGame(game: AlignedGame, league: League): Promise<void> {
     const homeTeamId = await getOrCreateTeamId(this.db, { ...game.home, league })
     const awayTeamId = await getOrCreateTeamId(this.db, { ...game.away, league })
     const gameId = buildGameId(league, game.tipoff_at, game.away, game.home)
@@ -142,7 +169,7 @@ export class SportsLoop {
 
     for (const { side, teamId } of sides) {
       const isLead = side === leadSide
-      const inputs = await this.scoreSide(side, teamId, game, isLead)
+      const inputs = await this.scoreSide(side, teamId, game, isLead, league)
       await this.recordSignal(gameId, teamId, 'composite', inputs.composite, inputs)
       await this.upsertView(gameId, teamId, isLead, inputs, game.pct_game_left ?? null)
     }
@@ -153,6 +180,7 @@ export class SportsLoop {
     teamId: string,
     game: AlignedGame,
     isLead: boolean,
+    league: League,
   ): Promise<ScoredSide> {
     const sharp = game.sharp
     const retail = game.retail
@@ -196,7 +224,7 @@ export class SportsLoop {
       : null
 
     const lead_pct = isLead && game.pct_game_left != null
-      ? await this.computeLeadPct(game.sharp ? buildGameId('nba', game.tipoff_at, game.away, game.home) : null, teamId)
+      ? await this.computeLeadPct(game.sharp ? buildGameId(league, game.tipoff_at, game.away, game.home) : null, teamId)
       : null
 
     const sma10 = await sma10Score(this.db, teamId)
