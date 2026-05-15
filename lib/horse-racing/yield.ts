@@ -77,6 +77,7 @@ export function calculateYield(race: Race): RaceSignal {
       odds_decimal: top.runner.odds_decimal,
       fair_decimal: round2(top.fairDecimal),
       edge_pct: +top.edgePct.toFixed(1),
+      model_prob: +top.fairProb.toFixed(4),
     },
     intensity,
     velocity,

@@ -20,6 +20,7 @@ interface RaceSignal {
     odds_decimal: number | null
     fair_decimal: number | null
     edge_pct: number | null
+    model_prob: number | null
   } | null
   intensity: number
   velocity: 'up' | 'down' | 'flat'

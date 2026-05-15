@@ -59,6 +59,7 @@ export function RunnerTable({ runners, oddsHistory, topRunnerId }: Props) {
               <Th label="runner" k="horse" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} className="text-left" />
               <th className="px-2 py-2 text-left font-normal hidden sm:table-cell">jockey · trainer</th>
               <Th label="odds" k="odds" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} className="text-right" />
+              <th className="px-2 py-2 text-right font-normal">move</th>
               <th className="px-2 py-2 text-right font-normal hidden md:table-cell">fair</th>
               <Th label="edge" k="edge" sortKey={sortKey} sortDir={sortDir} onClick={onHeaderClick} className="text-right" />
               <th className="px-2 py-2 text-right font-normal hidden sm:table-cell">history</th>
@@ -73,6 +74,7 @@ export function RunnerTable({ runners, oddsHistory, topRunnerId }: Props) {
                 : edge >  3 ? 'text-amber-300'
                 : edge < -3 ? 'text-rose-300'
                 : 'text-slate-400'
+              const move = oddsMove(oddsHistory[r.horse_id] ?? [], r.odds_decimal)
               return (
                 <tr
                   key={r.horse_id}
@@ -91,6 +93,9 @@ export function RunnerTable({ runners, oddsHistory, topRunnerId }: Props) {
                   <td className="px-2 py-2 text-right text-slate-200">
                     {r.odds_decimal != null ? r.odds_decimal.toFixed(2) : '—'}
                   </td>
+                  <td className={`px-2 py-2 text-right whitespace-nowrap ${move.color}`}>
+                    {move.label}
+                  </td>
                   <td className="px-2 py-2 text-right text-slate-500 hidden md:table-cell">
                     {r.fair_decimal != null ? r.fair_decimal.toFixed(2) : '—'}
                   </td>
@@ -107,7 +112,7 @@ export function RunnerTable({ runners, oddsHistory, topRunnerId }: Props) {
             })}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-2 py-6 text-center text-slate-500 text-[10px] tracking-[0.32em] uppercase">
+                <td colSpan={8} className="px-2 py-6 text-center text-slate-500 text-[10px] tracking-[0.32em] uppercase">
                   no runners on the card
                 </td>
               </tr>
@@ -138,6 +143,28 @@ function Th({
       </span>
     </th>
   )
+}
+
+// Compute a single-glyph indicator for how a runner's decimal odds have
+// moved from the first snapshot we have to the current price. Same
+// threshold as the yield engine's velocity rule (3% of prior price), so
+// the per-runner column reads in step with the top-yield velocity arrow.
+function oddsMove(series: OddsHistoryPoint[], current: number | null): { label: string; color: string } {
+  if (current == null || series.length === 0) return { label: '—', color: 'text-slate-600' }
+  const first = series.find(p => p.decimal != null)
+  if (!first || first.decimal == null) return { label: '—', color: 'text-slate-600' }
+  const delta = current - first.decimal
+  if (Math.abs(delta) / first.decimal < 0.03) return { label: '→', color: 'text-slate-500' }
+  // Odds shortening (current < first) = money coming in.
+  return delta < 0
+    ? { label: `↓ ${pctMove(first.decimal, current)}`, color: 'text-emerald-300' }
+    : { label: `↑ ${pctMove(first.decimal, current)}`, color: 'text-rose-300' }
+}
+
+function pctMove(from: number, to: number): string {
+  const pct = ((to - from) / from) * 100
+  const sign = pct >= 0 ? '+' : ''
+  return `${sign}${pct.toFixed(1)}%`
 }
 
 function cmp(a: RunnerWithEdge, b: RunnerWithEdge, key: SortKey, dir: SortDir): number {

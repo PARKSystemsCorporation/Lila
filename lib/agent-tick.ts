@@ -11,6 +11,7 @@ import { BroadcastLoop } from './broadcast-loop'
 import { DiscoveryLoop } from './discovery-loop'
 import { CeeloLoop } from './ceelo-loop'
 import { SportsLoop } from './sports/sports-loop'
+import { LinesLoop } from './sports/lines-ingest'
 import { DmLoop } from './dm-loop'
 import { runGumroadReverify } from './gumroad-reverify'
 import { runNoonArticles } from './article-engine'
@@ -214,6 +215,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     if (sportsResult) {
       await logEvent(db, sportsResult.logMessage, sportsResult.logType)
       logs.push(sportsResult.logMessage)
+    }
+
+    // 5b. Lines ingestion — The Odds API → point spreads + totals per
+    //     (game, book, market), feeding the /theyield/sports scoreboard.
+    //     Self-gates on ODDS_API_KEY.
+    const lines = new LinesLoop(db)
+    const linesResult = await lines.run().catch((e: unknown) => ({
+      logMessage: `Lines error: ${String(e)}`,
+      logType: 'warn' as const,
+    }))
+    if (linesResult) {
+      await logEvent(db, linesResult.logMessage, linesResult.logType)
+      logs.push(linesResult.logMessage)
     }
 
     // 6. Discovery — daily scan for new protocols / Solidity repos.
