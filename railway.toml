@@ -17,6 +17,8 @@ restartPolicyMaxRetries = 3
 #   service: bazaar-element   dockerfilePath: services/element/Dockerfile
 #   service: bazaar-lila-bot  dockerfilePath: services/lila-bot/Dockerfile
 #                             needs volume mounted at /data (E2EE store)
+#   service: ledger-bot       dockerfilePath: services/ledger-bot/Dockerfile
+#                             no volume needed (in-memory; spend file at /tmp)
 #   service: bazaar-mcp       custom (services/mcp); stdio servers
 #
 # The Postgres plugin attached to the main app is shared via DATABASE_URL —

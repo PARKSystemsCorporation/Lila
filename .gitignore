@@ -11,3 +11,6 @@ programs/ldgr/target/
 programs/ldgr/Cargo.lock
 services/lila-bot/**/__pycache__/
 services/lila-bot/.pytest_cache/
+services/ledger-bot/**/__pycache__/
+services/ledger-bot/**/*.egg-info/
+services/ledger-bot/.pytest_cache/

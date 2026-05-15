@@ -1,0 +1,20 @@
+[project]
+name = "ledger-bot"
+version = "0.1.0"
+description = "Ledger Telegram bot — public-facing voice for $LDGR"
+requires-python = ">=3.11"
+dependencies = [
+  "aiohttp>=3.9.5",
+  "python-dotenv>=1.0.1",
+  "structlog>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

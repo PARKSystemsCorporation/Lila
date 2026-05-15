@@ -40,6 +40,10 @@ A three-role autonomous team inside one Next.js app:
 - **Handicapper (Ceelo)** — autonomous NFL sports betting model. Maintains an internal 
   Elo ratings graph from nflverse historical data, fetches live spreads from 
   The Odds API, and flags +EV edges.
+- **Ledger** — public-facing voice for the $LDGR token, lives on Telegram.
+  Long-polls the Bot API, replies with DeepSeek, ships in
+  `services/ledger-bot/` as its own Railway service. Gated by a per-chat
+  rate limit and a daily USD cap.
 
 All of it runs on a single server-side ticker so Lila keeps working whether
 you have the PWA open or not.
