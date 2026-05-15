@@ -44,8 +44,31 @@ function track(event: string, ref?: string) {
   }).catch(() => {})
 }
 
+const LDGR_CONTRACT = '7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump'
+const LDGR_PUMP_URL = 'https://join.pump.fun/HSag/krnfizbx'
+
 export default function PublicLanding() {
   const time = useClock()
+  const [copied, setCopied] = useState(false)
+
+  const copyContract = async () => {
+    try {
+      await navigator.clipboard.writeText(LDGR_CONTRACT)
+    } catch {
+      // Older browsers / blocked clipboard — fall through to selection.
+      const ta = document.createElement('textarea')
+      ta.value = LDGR_CONTRACT
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      try { document.execCommand('copy') } catch { /* noop */ }
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    track('ldgr_copy', 'landing')
+    setTimeout(() => setCopied(false), 1600)
+  }
 
   return (
     <main className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden">
@@ -242,6 +265,52 @@ export default function PublicLanding() {
             <li><span className="text-amber-400">▸</span> permanent · verifiable · scalable</li>
             <li><span className="text-amber-400">▸</span> bridges tradfi &amp; decentralized finance</li>
           </ul>
+
+          <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 sm:gap-5 items-stretch">
+            <button
+              type="button"
+              onClick={copyContract}
+              aria-label="copy ldgr contract address"
+              className="group flex flex-col items-start border-2 border-amber-500/40 hover:border-amber-300 bg-[#0a0c14]/60 hover:bg-[#0a0c14]/80 p-5 text-left transition-colors min-w-0"
+            >
+              <div className="flex w-full items-center justify-between gap-3">
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-400/90">
+                  $ldgr · contract
+                </span>
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300 group-hover:text-white transition-colors">
+                  {copied ? '✓ copied' : '⎘ click to copy'}
+                </span>
+              </div>
+              <div className="mt-3 w-full font-mono text-xs sm:text-sm text-white break-all select-all">
+                {LDGR_CONTRACT}
+              </div>
+              <div className="mt-3 font-mono text-[10px] tracking-[0.32em] uppercase text-slate-500">
+                solana · spl token
+              </div>
+            </button>
+
+            <a
+              href={LDGR_PUMP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => track('ldgr_pump_click', 'landing')}
+              className="group flex flex-col justify-between border-2 border-amber-300 bg-amber-400 hover:bg-amber-300 text-black px-5 py-5 transition-colors lg:min-w-[260px]"
+            >
+              <div className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">
+                trade $ldgr on
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-3xl font-black tracking-tight uppercase">pump.fun</span>
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/60">↗</span>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70 truncate">
+                  → join.pump.fun/hsag/krnfizbx
+                </span>
+                <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+              </div>
+            </a>
+          </div>
         </div>
       </section>
 
