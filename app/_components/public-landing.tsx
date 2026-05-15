@@ -44,8 +44,31 @@ function track(event: string, ref?: string) {
   }).catch(() => {})
 }
 
+const LDGR_CONTRACT = '7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump'
+const LDGR_PUMP_URL = 'https://join.pump.fun/HSag/krnfizbx'
+
 export default function PublicLanding() {
   const time = useClock()
+  const [copied, setCopied] = useState(false)
+
+  const copyContract = async () => {
+    try {
+      await navigator.clipboard.writeText(LDGR_CONTRACT)
+    } catch {
+      // Older browsers / blocked clipboard — fall through to selection.
+      const ta = document.createElement('textarea')
+      ta.value = LDGR_CONTRACT
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      try { document.execCommand('copy') } catch { /* noop */ }
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    track('ldgr_copy', 'landing')
+    setTimeout(() => setCopied(false), 1600)
+  }
 
   return (
     <main className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden">
@@ -213,6 +236,81 @@ export default function PublicLanding() {
             <span>how the bounty pipeline works</span>
             <span className="group-hover:translate-x-0.5 transition-transform">→</span>
           </Link>
+        </div>
+      </section>
+
+      {/* $LDGR · Ledger Coin */}
+      <section className="relative z-10 border-t-2 border-amber-500/30">
+        <div className="max-w-7xl mx-auto px-5 sm:px-8 py-14 sm:py-20">
+          <p className="font-mono text-[10px] sm:text-[11px] tracking-[0.45em] text-amber-400 uppercase">
+            ▌▌▌ $ldgr · ledger coin
+          </p>
+          <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white">
+            the future of finance,<br />
+            <span className="text-amber-400">recorded in stone.</span>
+          </h2>
+          <p className="mt-6 max-w-3xl text-base sm:text-lg text-slate-400 leading-relaxed">
+            In an era of fleeting digital trends and volatile markets,
+            <span className="text-amber-300"> Ledger Coin</span> stands as the definitive benchmark
+            for transparency and security. Built on a foundation of immutable ledger technology,
+            it bridges the gap between traditional accounting integrity and the limitless potential
+            of decentralized finance. Whether you are looking to safeguard your assets with
+            institutional-grade precision or streamline global transactions with a click,
+            Ledger Coin provides the permanent, verifiable, and scalable infrastructure your
+            capital deserves. Don&rsquo;t just trade the future&mdash;document it.
+          </p>
+          <ul className="mt-6 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
+            <li><span className="text-amber-400">▸</span> immutable ledger technology</li>
+            <li><span className="text-amber-400">▸</span> institutional-grade precision</li>
+            <li><span className="text-amber-400">▸</span> permanent · verifiable · scalable</li>
+            <li><span className="text-amber-400">▸</span> bridges tradfi &amp; decentralized finance</li>
+          </ul>
+
+          <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 sm:gap-5 items-stretch">
+            <button
+              type="button"
+              onClick={copyContract}
+              aria-label="copy ldgr contract address"
+              className="group flex flex-col items-start border-2 border-amber-500/40 hover:border-amber-300 bg-[#0a0c14]/60 hover:bg-[#0a0c14]/80 p-5 text-left transition-colors min-w-0"
+            >
+              <div className="flex w-full items-center justify-between gap-3">
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-400/90">
+                  $ldgr · contract
+                </span>
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300 group-hover:text-white transition-colors">
+                  {copied ? '✓ copied' : '⎘ click to copy'}
+                </span>
+              </div>
+              <div className="mt-3 w-full font-mono text-xs sm:text-sm text-white break-all select-all">
+                {LDGR_CONTRACT}
+              </div>
+              <div className="mt-3 font-mono text-[10px] tracking-[0.32em] uppercase text-slate-500">
+                solana · spl token
+              </div>
+            </button>
+
+            <a
+              href={LDGR_PUMP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => track('ldgr_pump_click', 'landing')}
+              className="group flex flex-col justify-between border-2 border-amber-300 bg-amber-400 hover:bg-amber-300 text-black px-5 py-5 transition-colors lg:min-w-[260px]"
+            >
+              <div className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70">
+                trade $ldgr on
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-3xl font-black tracking-tight uppercase">pump.fun</span>
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/60">↗</span>
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-black/70 truncate">
+                  → join.pump.fun/hsag/krnfizbx
+                </span>
+                <span className="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+              </div>
+            </a>
+          </div>
         </div>
       </section>
 
