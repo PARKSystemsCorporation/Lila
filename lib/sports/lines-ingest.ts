@@ -33,7 +33,10 @@ export class LinesLoop {
 
   async run(): Promise<{ logMessage: string; logType: 'info' | 'success' | 'warn' } | null> {
     if (!process.env.ODDS_API_KEY) {
-      return { logMessage: 'Lines: ODDS_API_KEY unset — skipping.', logType: 'info' }
+      const msg = 'Lines: ODDS_API_KEY missing — /theyield/sports scoreboard will render empty until the env var is set on Railway.'
+      // stderr so Railway's log scraper flags it; lila_log keeps the audit row.
+      console.error(`[lines-ingest] ${msg}`)
+      return { logMessage: msg, logType: 'warn' }
     }
 
     let inserted = 0
