@@ -1139,6 +1139,25 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
     CREATE INDEX IF NOT EXISTS sports_game_events_game_idx
       ON sports_game_events (game_id, created_at);
 
+    -- Rolling 30-day jockey / trainer strike rates. Rolled up nightly
+    -- from the racing results endpoint by lib/horse-racing/stats-rollup.
+    -- The per-runner scoreAllRunners() reads win_rate to bias the
+    -- composite signal in favour of in-form connections.
+    CREATE TABLE IF NOT EXISTS jockey_stats (
+      name        TEXT          PRIMARY KEY,
+      runs_30d    INT           NOT NULL DEFAULT 0,
+      wins_30d    INT           NOT NULL DEFAULT 0,
+      win_rate    NUMERIC(5,4),
+      updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS trainer_stats (
+      name        TEXT          PRIMARY KEY,
+      runs_30d    INT           NOT NULL DEFAULT 0,
+      wins_30d    INT           NOT NULL DEFAULT 0,
+      win_rate    NUMERIC(5,4),
+      updated_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+    );
+
     -- ─────────────────────────────────────────────────────────────────────
     -- The Bazaar — encrypted agent-labor market settled in $LDGR on Solana.
     -- viewer_dms + park_gates_ledger stay read-only as legacy history.

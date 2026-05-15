@@ -9,6 +9,8 @@
 import type { PoolClient } from 'pg'
 import * as racing from './racing-api'
 import type { Race, RaceResult, Runner } from './types'
+import { liveSources } from './sources'
+import type { SourceQuotes } from './sources/types'
 
 let lastRefreshTs = 0
 
@@ -36,6 +38,23 @@ export class HorseDataService {
 
   async getResult(raceId: string): Promise<RaceResult | null> {
     return racing.getResult(raceId)
+  }
+
+  // Pull the racecard + every configured auxiliary feed's quotes for it.
+  // Sharp / prediction stubs return null while their creds are absent —
+  // the aggregator still activates on the retail board alone, and the
+  // moment real adapters drop in the multi-source blend kicks in
+  // automatically.
+  async getRaceWithAux(raceId: string): Promise<{ race: Race | null; aux: SourceQuotes[] }> {
+    const race = await this.getRacecard(raceId)
+    if (!race) return { race: null, aux: [] }
+    const auxResults = await Promise.allSettled(
+      liveSources().map(s => s.fetchQuotes(raceId)),
+    )
+    const aux = auxResults
+      .map(r => (r.status === 'fulfilled' ? r.value : null))
+      .filter((q): q is SourceQuotes => q != null)
+    return { race, aux }
   }
 
   // Hydrate a Race entirely from our DB (ceelo_races + ceelo_runners +

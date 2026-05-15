@@ -8,12 +8,22 @@
 // picks must be reproducible from inputs alone.
 
 import * as cache from './cache'
-import type { Race, RaceSignal, OddsSnapshot, RaceWithSignal } from './types'
+import type { Race, Runner, RaceSignal, OddsSnapshot, RaceWithSignal } from './types'
+import type { SourceQuotes } from './sources/types'
 
 const HISTORY_KEY = (raceId: string) => `odds-history:${raceId}`
 const HISTORY_TTL_MS = 60 * 60 * 1_000 // keep 1h of snapshots per race
 
-export function calculateYield(race: Race): RaceSignal {
+// Source-kind blend weights when fusing the auxiliary feeds with the
+// retail board. Sharp dominates because Pinnacle / Betfair Exchange
+// last-traded prices are the closest the public market gets to true.
+const KIND_WEIGHT: Record<'sharp' | 'retail' | 'prediction', number> = {
+  sharp: 0.50,
+  retail: 0.30,
+  prediction: 0.20,
+}
+
+export function calculateYield(race: Race, aux: SourceQuotes[] = []): RaceSignal {
   const runners = race.runners.filter(r => r.odds_decimal != null && r.odds_decimal > 1)
   if (runners.length < 2) {
     return {
@@ -24,11 +34,11 @@ export function calculateYield(race: Race): RaceSignal {
     }
   }
 
-  // Implied probs from decimal odds. Sum exceeds 1 because of the book's
-  // overround — normalise to get fair probabilities the book *would* be
-  // quoting at zero margin.
-  const impliedSum = runners.reduce((s, r) => s + 1 / (r.odds_decimal as number), 0)
-  if (impliedSum <= 0) {
+  // Blended fair probabilities across retail + aux sources. When `aux`
+  // is empty this falls back to the legacy retail-overround-normalised
+  // probability (mathematically identical to the previous behaviour).
+  const blended = blendImpliedProbs(runners, aux)
+  if (!blended || blended.size === 0) {
     return {
       top_runner: null,
       intensity: 1,
@@ -43,10 +53,10 @@ export function calculateYield(race: Race): RaceSignal {
   // the value side.
   const scored = runners.map(r => {
     const book = r.odds_decimal as number
-    const fairProb = (1 / book) / impliedSum
-    const fairDecimal = 1 / fairProb
-    const edgePct = ((fairDecimal - book) / book) * 100
-    return { runner: r, fairDecimal, edgePct, fairProb }
+    const fairProb = blended.get(r.horse_id) ?? null
+    const fairDecimal = fairProb && fairProb > 0 ? 1 / fairProb : Number.POSITIVE_INFINITY
+    const edgePct = Number.isFinite(fairDecimal) ? ((fairDecimal - book) / book) * 100 : 0
+    return { runner: r, fairDecimal, edgePct, fairProb: fairProb ?? 0 }
   })
 
   // "Top yield" runner = largest positive edge. If all edges are
@@ -145,7 +155,240 @@ function round2(n: number): number {
 }
 
 // Convenience wrapper used by the API route + loop. Decorates a list of
-// races with signals in one call.
-export function attachSignals(races: Race[]): RaceWithSignal[] {
-  return races.map(r => ({ ...r, signal: calculateYield(r) }))
+// races with signals in one call. Optional per-race aux quotes are
+// keyed by race_id.
+export function attachSignals(
+  races: Race[],
+  aux: Record<string, SourceQuotes[]> = {},
+): RaceWithSignal[] {
+  return races.map(r => ({ ...r, signal: calculateYield(r, aux[r.race_id] ?? []) }))
+}
+
+// ─── Multi-source fair-probability blend ──────────────────────────────────
+
+// Blend implied probabilities across the retail board and any auxiliary
+// source quotes by weighted average. Weights are per-source-kind (sharp
+// > retail > prediction), renormalised over the sources that actually
+// have a quote for a given runner. The output is a probability map
+// (horse_id → fair_prob) that sums to ~1 over priced runners.
+//
+// Pure function with no side effects — fully unit-testable.
+export function blendImpliedProbs(
+  runners: Runner[],
+  aux: SourceQuotes[],
+): Map<string, number> | null {
+  // Start with retail-derived implied probs from the board.
+  const retailSum = runners.reduce((s, r) => s + 1 / (r.odds_decimal as number), 0)
+  if (retailSum <= 0) return null
+
+  // Per-horse aggregator: weighted sum of probs and total weight applied.
+  const acc = new Map<string, { sum: number; weight: number }>()
+  for (const r of runners) {
+    const book = r.odds_decimal as number
+    const retailProb = (1 / book) / retailSum
+    const w = KIND_WEIGHT.retail
+    acc.set(r.horse_id, { sum: retailProb * w, weight: w })
+  }
+
+  // Layer each aux source on top. Source probabilities are normalised
+  // within the source first so an overround inside the aux feed doesn't
+  // leak through.
+  for (const src of aux) {
+    if (!src || !src.quotes) continue
+    const kind = src.source.includes('sharp') ? 'sharp'
+              : src.source.includes('pred')  ? 'prediction'
+              : src.source.includes('retail') || src.source.includes('racingapi') ? 'retail'
+              : 'retail'
+    const weight = KIND_WEIGHT[kind]
+
+    let srcSum = 0
+    const srcProbs = new Map<string, number>()
+    for (const r of runners) {
+      const q = src.quotes[r.horse_id]
+      if (!q) continue
+      let p: number | null = null
+      if (q.implied_prob != null && q.implied_prob > 0) {
+        p = q.implied_prob
+      } else if (q.odds_decimal != null && q.odds_decimal > 1) {
+        p = 1 / q.odds_decimal
+      }
+      if (p == null || !Number.isFinite(p) || p <= 0) continue
+      srcProbs.set(r.horse_id, p)
+      srcSum += p
+    }
+    if (srcSum <= 0) continue
+
+    for (const [horseId, p] of srcProbs) {
+      const norm = p / srcSum
+      const entry = acc.get(horseId) ?? { sum: 0, weight: 0 }
+      entry.sum    += norm * weight
+      entry.weight += weight
+      acc.set(horseId, entry)
+    }
+  }
+
+  const out = new Map<string, number>()
+  for (const [horseId, { sum, weight }] of acc) {
+    if (weight <= 0) continue
+    out.set(horseId, sum / weight)
+  }
+  // Renormalise so the blended probabilities sum to 1 over priced
+  // runners — preserves the "fair prob" semantics callers depend on.
+  const total = [...out.values()].reduce((s, p) => s + p, 0)
+  if (total <= 0) return null
+  for (const [horseId, p] of out) out.set(horseId, p / total)
+  return out
+}
+
+// ─── Per-runner scoring exported for the public landing preview ───────────
+
+export interface RunnerScore {
+  horse_id: string
+  horse: string
+  number: string | null
+  jockey: string | null
+  trainer: string | null
+  odds_decimal: number | null
+  fair_decimal: number | null
+  edge_pct: number | null
+  fair_prob: number | null
+  edge_component:    number | null
+  form_component:    number | null
+  weight_component:  number | null
+  draw_component:    number | null
+  jockey_component:  number | null
+  trainer_component: number | null
+  composite_score: number
+  reasoning: string
+}
+
+// Weights used in the composite blend. Order: edge, form, weight, draw,
+// jockey, trainer. Components that are null contribute 0 weight so the
+// remaining factors renormalise correctly.
+const COMPONENT_WEIGHTS = {
+  edge:    0.55,
+  form:    0.15,
+  weight:  0.10,
+  draw:    0.05,
+  jockey:  0.10,
+  trainer: 0.05,
+} as const
+
+// Returns per-runner scores for every horse on the card. Priced runners
+// are sorted by composite_score desc; unpriced runners trail with
+// composite=1 and null edge components.
+//
+// `extras` carries the precomputed factor scores from the modifier
+// modules — keeping I/O (jockey/trainer DB lookups) at the call site
+// makes this function synchronous and easily testable.
+export function scoreAllRunners(
+  race: Race,
+  aux: SourceQuotes[] = [],
+  extras: Partial<Record<string, {
+    form?:    number | null
+    weight?:  number | null
+    draw?:    number | null
+    jockey?:  number | null
+    trainer?: number | null
+  }>> = {},
+): RunnerScore[] {
+  const priced = race.runners.filter(r => r.odds_decimal != null && r.odds_decimal > 1)
+  const unpriced = race.runners.filter(r => !priced.includes(r))
+
+  const blended = priced.length >= 2 ? blendImpliedProbs(priced, aux) : null
+
+  const scored: RunnerScore[] = priced.map(r => {
+    const book = r.odds_decimal as number
+    const fairProb = blended?.get(r.horse_id) ?? null
+    const fairDecimal = fairProb && fairProb > 0 ? +(1 / fairProb).toFixed(2) : null
+    const edgePct = fairDecimal != null ? +((fairDecimal - book) / book * 100).toFixed(1) : null
+
+    const edgeComponent = edgePct != null
+      ? clamp(Math.round(3 + edgePct / 3), 1, 10)
+      : null
+
+    const ex = extras[r.horse_id] ?? {}
+    const composite = blendComposite({
+      edge:    edgeComponent,
+      form:    ex.form ?? null,
+      weight:  ex.weight ?? null,
+      draw:    ex.draw ?? null,
+      jockey:  ex.jockey ?? null,
+      trainer: ex.trainer ?? null,
+    })
+
+    return {
+      horse_id: r.horse_id,
+      horse: r.horse,
+      number: r.number,
+      jockey: r.jockey,
+      trainer: r.trainer,
+      odds_decimal: book,
+      fair_decimal: fairDecimal,
+      edge_pct: edgePct,
+      fair_prob: fairProb != null ? +fairProb.toFixed(4) : null,
+      edge_component:    edgeComponent,
+      form_component:    ex.form ?? null,
+      weight_component:  ex.weight ?? null,
+      draw_component:    ex.draw ?? null,
+      jockey_component:  ex.jockey ?? null,
+      trainer_component: ex.trainer ?? null,
+      composite_score: composite,
+      reasoning: reasoningForRunner(r.horse, edgePct, composite),
+    }
+  })
+
+  scored.sort((a, b) => b.composite_score - a.composite_score)
+
+  const trailing: RunnerScore[] = unpriced.map(r => ({
+    horse_id: r.horse_id,
+    horse: r.horse,
+    number: r.number,
+    jockey: r.jockey,
+    trainer: r.trainer,
+    odds_decimal: null,
+    fair_decimal: null,
+    edge_pct: null,
+    fair_prob: null,
+    edge_component: null,
+    form_component: null,
+    weight_component: null,
+    draw_component: null,
+    jockey_component: null,
+    trainer_component: null,
+    composite_score: 1,
+    reasoning: 'No live price on the board yet.',
+  }))
+
+  return [...scored, ...trailing]
+}
+
+function blendComposite(c: {
+  edge: number | null
+  form: number | null
+  weight: number | null
+  draw: number | null
+  jockey: number | null
+  trainer: number | null
+}): number {
+  let total = 0
+  let weight = 0
+  if (c.edge    != null) { total += COMPONENT_WEIGHTS.edge    * c.edge;    weight += COMPONENT_WEIGHTS.edge }
+  if (c.form    != null) { total += COMPONENT_WEIGHTS.form    * c.form;    weight += COMPONENT_WEIGHTS.form }
+  if (c.weight  != null) { total += COMPONENT_WEIGHTS.weight  * c.weight;  weight += COMPONENT_WEIGHTS.weight }
+  if (c.draw    != null) { total += COMPONENT_WEIGHTS.draw    * c.draw;    weight += COMPONENT_WEIGHTS.draw }
+  if (c.jockey  != null) { total += COMPONENT_WEIGHTS.jockey  * c.jockey;  weight += COMPONENT_WEIGHTS.jockey }
+  if (c.trainer != null) { total += COMPONENT_WEIGHTS.trainer * c.trainer; weight += COMPONENT_WEIGHTS.trainer }
+  if (weight === 0) return 1
+  return clamp(Math.round(total / weight), 1, 10)
+}
+
+function reasoningForRunner(horse: string, edgePct: number | null, composite: number): string {
+  if (edgePct == null) return `${horse}: no live price.`
+  const direction =
+    edgePct >  3 ? 'value side'
+  : edgePct < -3 ? 'overlay risk'
+  : 'fair'
+  const sign = edgePct >= 0 ? '+' : ''
+  return `${horse}: composite ${composite}/10 (${sign}${edgePct.toFixed(1)}% edge, ${direction}).`
 }

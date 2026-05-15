@@ -12,6 +12,12 @@ const LandingTicker = dynamic(() => import('./landing-ticker'), {
   ssr: false,
   loading: () => null,
 })
+const PublicLandingFeed = dynamic(() => import('./public-landing-feed'), {
+  ssr: false,
+  loading: () => null,
+})
+
+import { StickyFooterNav } from './landing/sticky-footer-nav'
 
 function useClock() {
   const [t, set] = useState('')
@@ -71,7 +77,7 @@ export default function PublicLanding() {
   }
 
   return (
-    <main className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden">
+    <main id="top" className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden pb-20">
       {/* Brutalist grid wash */}
       <div
         className="pointer-events-none fixed inset-0 -z-20 opacity-30"
@@ -127,15 +133,16 @@ export default function PublicLanding() {
         </p>
         <h1 className="text-[clamp(3rem,12vw,9rem)] font-black tracking-tight leading-[0.88] uppercase">
           <span className="block text-white motion-safe:animate-[slideup_0.7s_ease-out_0.15s_both]">the</span>
-          <span className="block motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]">
-            <span className="text-amber-400">park</span>
-            <span className="text-slate-600">.world</span>
+          <span className="block text-amber-400 motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]">
+            yield
           </span>
         </h1>
-        <p className="mt-6 sm:mt-8 max-w-2xl text-base sm:text-lg text-slate-400 leading-relaxed motion-safe:animate-[slideup_0.7s_ease-out_0.45s_both]">
-          Markets never sleep. Neither does she.
+        <p className="mt-6 sm:mt-8 max-w-2xl text-base sm:text-lg text-slate-300 leading-relaxed motion-safe:animate-[slideup_0.7s_ease-out_0.45s_both]">
+          Live betting edges across NFL, NBA, MLB, and the ponies — plus daily notes
+          from the desk. <span className="text-slate-400">Three free samples below: three random games per sport,
+          one race with six runners scored, three article snippets.</span>
           <br className="hidden sm:block" />
-          <span className="text-slate-500">Live signals across stocks, commodities, and sports — running with or without you.</span>
+          <span className="text-amber-300">The pass unlocks everything.</span>
         </p>
 
         <div className="mt-10 sm:mt-12 flex flex-wrap items-center gap-3 motion-safe:animate-[slideup_0.7s_ease-out_0.6s_both]">
@@ -173,7 +180,7 @@ export default function PublicLanding() {
 
         <div className="max-w-7xl mx-auto px-5 sm:px-8 py-10 sm:py-14 grid grid-cols-1 lg:grid-cols-2 gap-0 items-stretch">
           <Link
-            href="/theyield"
+            href="/infoyard"
             onClick={() => track('yield_click', 'landing_doors')}
             className="group relative flex flex-col border-2 border-amber-500/60 hover:border-amber-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-10 lg:p-12 transition-all duration-300 hover:-translate-y-0.5 lg:border-r-0 motion-safe:animate-[slideup_0.7s_ease-out_0.30s_both]"
           >
@@ -200,7 +207,7 @@ export default function PublicLanding() {
           </Link>
 
           <Link
-            href="/theyard"
+            href="/"
             onClick={() => track('yard_click', 'landing_doors')}
             className="group relative flex flex-col border-2 border-t-0 lg:border-t-2 border-orange-500/60 hover:border-orange-300 bg-slate-950/70 hover:bg-slate-950 p-6 sm:p-10 lg:p-12 transition-all duration-300 hover:-translate-y-0.5 motion-safe:animate-[slideup_0.7s_ease-out_0.45s_both]"
           >
@@ -238,6 +245,9 @@ export default function PublicLanding() {
           </Link>
         </div>
       </section>
+
+      {/* Free preview — sports / racing / yard */}
+      <PublicLandingFeed />
 
       {/* $LDGR · Ledger Coin */}
       <section className="relative z-10 border-t-2 border-amber-500/30">
@@ -377,6 +387,8 @@ export default function PublicLanding() {
         <span className="hidden sm:inline">commodities &amp; sports refresh 00 · 12 pt — lila checks in 06 · 18 pt</span>
         <span>v1</span>
       </footer>
+
+      <StickyFooterNav />
 
       <style jsx global>{`
         @keyframes slideup {

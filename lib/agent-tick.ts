@@ -204,16 +204,19 @@ async function runAgentTickInner(): Promise<TickOutcome> {
     }
 
     // 5a. Sports ingestion — API-Sports + ParlayAPI + ProphetX → 1-10
-    //     scores per NBA game side, feeding the /theyield/sports/nba
-    //     portal. Self-gates on ENABLE_SPORTS_LOOP=true.
+    //     scores per game side, fanning across NBA / NFL / MLB. Feeds
+    //     the /theyield/sports/* portals + the public landing preview.
+    //     Self-gates on ENABLE_SPORTS_LOOP=true.
     const sports = new SportsLoop(db)
-    const sportsResult = await sports.run().catch((e: unknown) => ({
-      logMessage: `Sports error: ${String(e)}`,
-      logType: 'warn' as const,
-    }))
-    if (sportsResult) {
-      await logEvent(db, sportsResult.logMessage, sportsResult.logType)
-      logs.push(sportsResult.logMessage)
+    for (const league of ['nba', 'nfl', 'mlb'] as const) {
+      const sportsResult = await sports.run(league).catch((e: unknown) => ({
+        logMessage: `Sports[${league}] error: ${String(e)}`,
+        logType: 'warn' as const,
+      }))
+      if (sportsResult) {
+        await logEvent(db, sportsResult.logMessage, sportsResult.logType)
+        logs.push(sportsResult.logMessage)
+      }
     }
 
     // 6. Discovery — daily scan for new protocols / Solidity repos.
