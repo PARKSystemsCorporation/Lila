@@ -58,6 +58,12 @@ function trackTimezone(track_id: string): string {
 // ── HTTP plumbing ────────────────────────────────────────────────────────
 
 let warnedNoCreds = false
+// Date-keyed endpoints (meet list, results) legitimately return 404 when
+// there's nothing for that date. The upper layers already handle it as
+// empty — what we don't want is the log spamming every poll cycle. Dedup
+// 404-level warnings by full path so each unique (endpoint, date) logs at
+// most once per process lifetime.
+const loggedNotFound = new Set<string>()
 
 function getCreds(): { user: string; pass: string } | null {
   const user = process.env.RACING_API_USERNAME
@@ -92,7 +98,14 @@ async function fetchJson<T>(path: string): Promise<T | null> {
         cache: 'no-store',
       })
       if (!r.ok) {
-        console.warn(`[horse-racing/na] ${path} → HTTP ${r.status}`)
+        if (r.status === 404) {
+          if (!loggedNotFound.has(path)) {
+            loggedNotFound.add(path)
+            console.info(`[horse-racing/na] ${path} → HTTP 404 (no rows; silent thereafter)`)
+          }
+        } else {
+          console.warn(`[horse-racing/na] ${path} → HTTP ${r.status}`)
+        }
         return null
       }
       return (await r.json()) as T

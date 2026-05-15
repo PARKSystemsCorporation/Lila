@@ -125,8 +125,10 @@ export async function GET() {
     const ceeloRes = await db.query(
       `SELECT cycle,
               (EXTRACT(EPOCH FROM last_run_at) * 1000)::bigint AS last_ts,
-              (SELECT COUNT(*) FROM ceelo_team_ratings WHERE games_played > 0) AS rated,
-              (SELECT COUNT(*) FROM ceelo_games WHERE status='scheduled' AND kickoff_at > NOW()) AS upcoming
+              (SELECT COUNT(DISTINCT race_id) FROM ceelo_runner_odds
+                 WHERE edge_pct IS NOT NULL AND fetched_at > NOW() - INTERVAL '6 hours') AS rated,
+              (SELECT COUNT(*) FROM ceelo_races
+                 WHERE status='scheduled' AND off_dt > NOW()) AS upcoming
        FROM ceelo_state WHERE id=1`
     )
 

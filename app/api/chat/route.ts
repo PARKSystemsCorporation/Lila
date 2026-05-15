@@ -133,14 +133,36 @@ export async function POST(req: Request) {
 
   const systemPrompt = `${PERSONA}\n\nCurrent team state (as of now):\n${state}`
 
-  const stream = await ai.chat.completions.create({
-    model: 'deepseek-chat',
-    messages: [{ role: 'system', content: systemPrompt }, ...messages],
-    max_tokens: 440,
-    temperature: 0.7,
-    stream: true,
-    stream_options: { include_usage: true },
-  })
+  let stream
+  try {
+    stream = await ai.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      max_tokens: 440,
+      temperature: 0.7,
+      stream: true,
+      stream_options: { include_usage: true },
+    })
+  } catch (e) {
+    // OpenAI SDK throws APIError with .status on upstream 4xx/5xx. Degrade
+    // to a plain-text reply rather than 500-ing the operator chat — DeepSeek
+    // 402 (balance exhausted) is the main case we see in production.
+    const status = (e as { status?: number } | null)?.status
+    const fallback =
+      status === 402 ? 'deepseek balance exhausted — operator: top up at https://platform.deepseek.com/billing'
+    : status === 401 || status === 403 ? 'deepseek auth failed — check DEEPSEEK_API_KEY'
+    : status != null ? `chat upstream failed (${status})`
+    : null
+    if (!fallback) throw e   // unexpected error shape — surface it
+    console.warn('[api/chat] upstream', status, fallback)
+    if (lilaId) await fillLila(lilaId, fallback)
+    return new Response(fallback, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Lila-Message-Id': lilaId ? String(lilaId) : '',
+      },
+    })
+  }
 
   const encoder = new TextEncoder()
   let full = ''

@@ -29,9 +29,13 @@ interface RawProgram {
 }
 
 export async function listPrograms(): Promise<ImmunefiProgram[]> {
+  // The endpoint returns ~9MB — past Next.js's 2MB data-cache cap. Using
+  // `next: { revalidate }` would emit a warning every call and never
+  // actually cache. `no-store` is explicit and silent; downstream callers
+  // should add their own short-TTL memo if they want caching.
   const res = await fetch(ENDPOINT, {
     signal: AbortSignal.timeout(15_000),
-    next: { revalidate: 3600 }, // cache 1h — this list doesn't change often
+    cache: 'no-store',
   })
   if (!res.ok) throw new Error(`Immunefi fetch failed: ${res.status}`)
 
