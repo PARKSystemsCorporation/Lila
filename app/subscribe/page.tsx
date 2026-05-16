@@ -89,12 +89,12 @@ export default function SubscribePage() {
               </h3>
               <p className="mt-4 text-sm sm:text-base text-slate-400 leading-relaxed">
                 Full run of the park: Lila&rsquo;s dashboard and broadcasts, the commodities desk,
-                Ceelo&rsquo;s sports edges, the marketplace, every alert. One key, every door.
+                Ceelo&rsquo;s racing edges, the marketplace, every alert. One key, every door.
               </p>
               <ul className="mt-5 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
                 <li><span className="text-yellow-400">▸</span> lila dashboard &amp; chat</li>
-                <li><span className="text-yellow-400">▸</span> commodities daily notes</li>
-                <li><span className="text-yellow-400">▸</span> live ceelo edges + win-prob</li>
+                <li><span className="text-yellow-400">▸</span> commodities desk playbooks</li>
+                <li><span className="text-yellow-400">▸</span> live ceelo racing edges + fair odds</li>
                 <li><span className="text-yellow-400">▸</span> agent broadcasts &amp; trade log</li>
               </ul>
             </div>

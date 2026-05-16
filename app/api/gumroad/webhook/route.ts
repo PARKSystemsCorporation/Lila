@@ -13,13 +13,15 @@
 //   subscription_failed        — flip viewer inactive
 //   subscription_ended         — flip viewer inactive
 //   subscription_restarted     — flip viewer active again
-//
-// Lookup is by subscription_id when available, falling back to
-// license_key. We don't trust the body to grant Park Gates — that
-// stays login-driven (idempotent monthly grant in lib/viewers.ts).
+//   sale                       — recurring charge → grant 50 PG for the
+//                                billing period (idempotent per period;
+//                                login backfill covers any the webhook
+//                                misses). Lookup by subscription_id then
+//                                license_key.
 
 import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
+import { grantPeriod, monthRef } from '@/lib/viewers'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,9 +67,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, ignored: 'no resource_name' })
   }
 
-  let action: 'deactivate' | 'activate' | 'noop' = 'noop'
+  let action: 'deactivate' | 'activate' | 'renewal' | 'noop' = 'noop'
   if (DEACTIVATE_EVENTS.has(event)) action = 'deactivate'
   else if (ACTIVATE_EVENTS.has(event)) action = 'activate'
+  // A subscription `sale` is a recurring charge (the initial purchase too).
+  else if (event === 'sale' && subscriptionId) action = 'renewal'
 
   if (action === 'noop' || !process.env.DATABASE_URL) {
     return NextResponse.json({ ok: true, event, action })
@@ -77,6 +81,29 @@ export async function POST(req: Request) {
   const db = await pool.connect()
   try {
     await ensureSchema(db)
+
+    if (action === 'renewal') {
+      // Resolve the viewer (subscription_id is the stable key; license_key
+      // is the fallback for rows created before we captured the sub id).
+      const v = await db.query(
+        `SELECT id FROM viewers
+          WHERE gumroad_subscription_id = $1
+             OR ($2 <> '' AND license_key = $2)
+          LIMIT 1`,
+        [subscriptionId, licenseKey],
+      )
+      if (v.rowCount === 0) {
+        return NextResponse.json({ ok: true, event, action, granted: false, reason: 'viewer_not_found' })
+      }
+      const viewerId = Number(v.rows[0].id)
+      // Period from the sale timestamp when present, else now.
+      const ts = params.get('sale_timestamp') ?? ''
+      const when = ts ? new Date(ts) : new Date()
+      const ref = monthRef(isNaN(when.getTime()) ? new Date() : when)
+      const granted = await grantPeriod(db, viewerId, ref, 'renewal_grant')
+      return NextResponse.json({ ok: true, event, action, ref, granted })
+    }
+
     const flag = action === 'activate'
     let updated = 0
     if (subscriptionId) {

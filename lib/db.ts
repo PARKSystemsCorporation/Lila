@@ -661,12 +661,46 @@ export async function ensureSchema(client: PoolClient): Promise<void> {
       id          BIGSERIAL   PRIMARY KEY,
       viewer_id   INTEGER     NOT NULL REFERENCES viewers(id) ON DELETE CASCADE,
       delta       INTEGER     NOT NULL,
-      reason      TEXT        NOT NULL,    -- 'monthly_grant' | 'spend' | 'admin_adjust'
-      ref         TEXT,                    -- subscription_id, edge_id, etc.
+      -- 'monthly_grant' | 'renewal_grant' | 'backfill_grant' | spend reasons | 'admin_adjust'
+      reason      TEXT        NOT NULL,
+      ref         TEXT,                    -- 'period:YYYY-MM' for grants; slug/edge_id for spends
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_park_gates_ledger_viewer
       ON park_gates_ledger(viewer_id, created_at DESC);
+    -- One 50 PG grant per viewer per billing period, regardless of which
+    -- source fired (webhook renewal / login current-month / login backfill).
+    -- Scoped to 'period:%' refs so spend rows (ref = slug/edge_id) are free
+    -- to repeat.
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_park_gates_ledger_period
+      ON park_gates_ledger(viewer_id, ref)
+      WHERE ref LIKE 'period:%';
+
+    -- Operator-curated marketplace. The operator seeds rows (slug + a
+    -- private artifact path); a viewer spends park_gates to unlock the
+    -- download. marketplace_purchases is the entitlement record — its
+    -- UNIQUE(viewer_id,item_id) makes a re-purchase a no-op and gates the
+    -- download route.
+    CREATE TABLE IF NOT EXISTS marketplace_items (
+      id            SERIAL      PRIMARY KEY,
+      slug          TEXT        NOT NULL UNIQUE,
+      title         TEXT        NOT NULL,
+      blurb         TEXT        NOT NULL DEFAULT '',
+      gate_cost     INTEGER     NOT NULL CHECK (gate_cost > 0),
+      artifact_path TEXT        NOT NULL,
+      active        BOOLEAN     NOT NULL DEFAULT TRUE,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS marketplace_purchases (
+      id          BIGSERIAL   PRIMARY KEY,
+      viewer_id   INTEGER     NOT NULL REFERENCES viewers(id) ON DELETE CASCADE,
+      item_id     INTEGER     NOT NULL REFERENCES marketplace_items(id) ON DELETE CASCADE,
+      ledger_ref  TEXT        NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (viewer_id, item_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_marketplace_purchases_viewer
+      ON marketplace_purchases(viewer_id, created_at DESC);
 
     -- Anonymous landing-page event log. Used for buy-pass click counts
     -- and any other public-facing conversion telemetry. No PII; the

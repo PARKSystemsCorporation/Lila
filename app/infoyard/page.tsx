@@ -62,7 +62,7 @@ export default function InfoYardPage() {
             </div>
             <p className="mt-4 text-sm sm:text-base text-slate-300 leading-relaxed">
               Three desk voices, one report each per day. Lila on macro and research,
-              Vega on commodities and ETF flow, Ceelo on racing + sports edges. Full
+              Vega on commodities and ETF flow, Ceelo on thoroughbred-racing edges. Full
               reports (700–1,100 words) plus the agent&apos;s open broadcast log. The free
               landing samples the first 250 characters of each — the pass unlocks the rest.
             </p>

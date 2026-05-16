@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getPool, ensureSchema } from '@/lib/db'
 import * as Gumroad from '@/lib/gumroad'
 import { signViewerCookie, VIEWER_COOKIE_TTL_SECONDS } from '@/lib/viewer-auth'
-import { grantMonthlyIfDue } from '@/lib/viewers'
+import { grantMonthlyIfDue, backfillMissedGrants } from '@/lib/viewers'
 
 export const dynamic = 'force-dynamic'
 
@@ -71,9 +71,12 @@ export async function POST(req: Request) {
       const viewerId = Number(upsert.rows[0].id)
       try {
         await grantMonthlyIfDue(db, viewerId)
+        // Back-pay any prior months the renewal webhook missed (or that
+        // elapsed while the viewer was away). Idempotent + capped.
+        await backfillMissedGrants(db, viewerId)
       } catch {
-        // Wallet failure shouldn't block sign-in. Ledger row is the source of
-        // truth; a future visit will grant the missed month.
+        // Wallet failure shouldn't block sign-in. Ledger rows are the
+        // source of truth; a future visit will reconcile missed months.
       }
     } finally { db.release() }
   }

@@ -37,9 +37,10 @@ A three-role autonomous team inside one Next.js app:
   tutorials auto-publish to dev.to.
 - **Analyst (Vega)** — market intelligence. Reads news, scans watchlists, files
   picks with tight stops.
-- **Handicapper (Ceelo)** — autonomous NFL sports betting model. Maintains an internal 
-  Elo ratings graph from nflverse historical data, fetches live spreads from 
-  The Odds API, and flags +EV edges.
+- **Handicapper (Ceelo)** — autonomous thoroughbred-racing yield engine.
+  Pulls racecards and live odds from The Racing API, computes fair odds +
+  edge per runner via a deterministic yield engine (no LLM in the picks
+  path), and emits win-market picks when intensity clears threshold.
 
 All of it runs on a single server-side ticker so Lila keeps working whether
 you have the PWA open or not.
@@ -51,8 +52,7 @@ you have the PWA open or not.
 - **DeepSeek** for all LLM calls (budget-gated, per-module cost tracking)
 - **Alpaca** for trading (paper by default, live via `ALPACA_PAPER=false`)
 - **Bluesky** via AT Proto for hourly public broadcasts
-- **The Odds API** for live NFL spreads and totals
-- **nflverse** data for historical Elo ratings
+- **The Racing API** for thoroughbred racecards and live odds
 - **TradingView lightweight-charts** for the Trades and Picks edge graphs
 - **Railway** for hosting
 
@@ -113,9 +113,10 @@ reads news and market bars, files picks into `analyst_picks`.
 **TradingEngine** runs every tick, monitors open positions, closes on
 target/stop, and executes pending picks during market hours.
 
-A **Handicapper (Ceelo)** loop (C0/C1/C2/C3/C4/C5) maintains an internal Elo
-graph using nflverse data, diffs model spreads against live Odds API book
-lines, and emits mathematical picks into `ceelo_picks`.
+A **Handicapper (Ceelo)** loop (C0/C1/C2/C3/C4/C5) refreshes racecards from
+The Racing API, snapshots live per-runner odds, computes fair odds + edge
+via a deterministic yield engine, and emits win-market picks into
+`ceelo_picks`.
 
 ## Loops
 
@@ -168,15 +169,16 @@ publisher posts approved ones on the next tick.
 
 ### Ceelo handicapper (30-min gated)
 
-Autonomous loop for mathematical sports betting.
+Autonomous loop for mathematical thoroughbred-racing edges. No LLM in the
+picks path — reasoning text comes from the deterministic yield engine.
 
 ```
-C0  refresh NFL schedule & injuries
-C1  grade finals to update the Elo ratings graph
-C2  pull live book lines from The Odds API
-C3  compute model win-prob and spreads
-C4  diff model vs market; emit picks when |edge| ≥ 1.0 pt
-C5  reconcile kicked-off games
+C0  refresh today's racecards from The Racing API
+C1  grade races whose off-time has passed; stamp model_outcome
+C2  snapshot per-runner odds for races within the next 6h
+C3  compute fair odds + edge_pct per runner via the yield engine
+C4  emit a 'win'-market pick per race when intensity ≥ threshold
+C5  reconcile: cancel open picks whose race has gone off
 ```
 
 ### Lila management (priority-ordered, once per tick)
@@ -220,7 +222,7 @@ Plus closed-trade P&L on Alpaca positions. Everything else is marked as
 - **Board** — live bounty listings across platforms.
 - **Reports** — pipeline: Ready to submit → Submitted awaiting payout →
   Paid → Lila reviewing → Archive.
-- **Picks** — Ceelo's NFL handicapper dashboard. Displays a visual `lightweight-charts`
+- **Picks** — Ceelo's racing edge dashboard. Displays a visual `lightweight-charts`
   Edge Graph, tracks open/active/settled picks, and provides a direct
   chat interface with Ceelo.
 
