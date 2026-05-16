@@ -18,6 +18,7 @@ const PublicLandingFeed = dynamic(() => import('./public-landing-feed'), {
 })
 
 import { StickyFooterNav } from './landing/sticky-footer-nav'
+import { LdgrBanner } from './landing/ldgr-banner'
 
 function useClock() {
   const [t, set] = useState('')
@@ -78,6 +79,9 @@ export default function PublicLanding() {
 
   return (
     <main id="top" className="relative min-h-dvh w-full bg-[#0a0c14] text-slate-100 selection:bg-amber-500/30 selection:text-amber-100 overflow-x-hidden pb-20">
+      {/* $LDGR strip — first thing on the page, dismissible per session */}
+      <LdgrBanner />
+
       {/* Brutalist grid wash */}
       <div
         className="pointer-events-none fixed inset-0 -z-20 opacity-30"
@@ -256,25 +260,59 @@ export default function PublicLanding() {
             ▌▌▌ $ldgr · ledger coin
           </p>
           <h2 className="mt-3 text-[clamp(2.4rem,8vw,5.5rem)] font-black tracking-tight leading-[0.92] uppercase text-white">
-            the future of finance,<br />
-            <span className="text-amber-400">recorded in stone.</span>
+            $ldgr is the rebar.<br />
+            <span className="text-amber-400">the yard &amp; the yield are the structure.</span>
           </h2>
           <p className="mt-6 max-w-3xl text-base sm:text-lg text-slate-400 leading-relaxed">
-            In an era of fleeting digital trends and volatile markets,
-            <span className="text-amber-300"> Ledger Coin</span> stands as the definitive benchmark
-            for transparency and security. Built on a foundation of immutable ledger technology,
-            it bridges the gap between traditional accounting integrity and the limitless potential
-            of decentralized finance. Whether you are looking to safeguard your assets with
-            institutional-grade precision or streamline global transactions with a click,
-            Ledger Coin provides the permanent, verifiable, and scalable infrastructure your
-            capital deserves. Don&rsquo;t just trade the future&mdash;document it.
+            Every edge the desk calls, every agent action, every settled trade is poured around one
+            piece of steel — <span className="text-amber-300">$LDGR</span>, an immutable Solana
+            ledger with a fixed 1,000,000,000 supply and no mint authority. The yield runs live
+            sports &amp; racing edges. The yard runs the commodities desk and the agent floor.
+            $LDGR is what holds the two together — verifiable, on-chain, auditable to the wallet.
           </p>
           <ul className="mt-6 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
-            <li><span className="text-amber-400">▸</span> immutable ledger technology</li>
-            <li><span className="text-amber-400">▸</span> institutional-grade precision</li>
-            <li><span className="text-amber-400">▸</span> permanent · verifiable · scalable</li>
+            <li><span className="text-amber-400">▸</span> fixed 1b supply · non-mintable</li>
+            <li><span className="text-amber-400">▸</span> on-chain vesting · published locked wallets</li>
+            <li><span className="text-amber-400">▸</span> settles the desk · tracks agent labor</li>
             <li><span className="text-amber-400">▸</span> bridges tradfi &amp; decentralized finance</li>
           </ul>
+
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            <Link
+              href="/tokenomics"
+              onClick={() => track('ldgr_tokenomics_click', 'ldgr_section')}
+              className="group inline-flex items-center gap-3 bg-amber-400 hover:bg-amber-300 text-black px-5 py-3 border-2 border-amber-300 font-mono text-[10px] tracking-[0.32em] uppercase transition-colors"
+            >
+              ▌ view full tokenomics
+              <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+            </Link>
+            <span className="font-mono text-[10px] tracking-[0.28em] uppercase text-slate-500">
+              fixed 1b · solana spl · on-chain audited
+            </span>
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Link
+              href="/infoyard"
+              onClick={() => track('yield_click', 'ldgr_section')}
+              className="group flex flex-col border-2 border-amber-500/40 hover:border-amber-300 bg-slate-950/60 hover:bg-slate-950 p-5 transition-colors"
+            >
+              <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300">the yield</span>
+              <span className="mt-2 text-xl font-black uppercase text-white">live edges &amp; gates</span>
+              <span className="mt-1 text-sm text-slate-400">Sportsbetting &amp; horse racing — live spreads, live gates.</span>
+              <span className="mt-4 font-mono text-[10px] tracking-[0.32em] uppercase text-amber-500/70 group-hover:text-amber-300 transition-colors">enter the yield →</span>
+            </Link>
+            <Link
+              href="/"
+              onClick={() => track('yard_click', 'ldgr_section')}
+              className="group flex flex-col border-2 border-orange-500/40 hover:border-orange-300 bg-slate-950/60 hover:bg-slate-950 p-5 transition-colors"
+            >
+              <span className="font-mono text-[10px] tracking-[0.32em] uppercase text-orange-300">the yard</span>
+              <span className="mt-2 text-xl font-black uppercase text-white">desk &amp; agent floor</span>
+              <span className="mt-1 text-sm text-slate-400">Commodities desk &amp; agent orchestration — wipes 00:00 UTC.</span>
+              <span className="mt-4 font-mono text-[10px] tracking-[0.32em] uppercase text-orange-500/70 group-hover:text-orange-300 transition-colors">enter the yard →</span>
+            </Link>
+          </div>
 
           <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 sm:gap-5 items-stretch">
             <button

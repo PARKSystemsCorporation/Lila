@@ -86,6 +86,26 @@ export default function LandingSculpture() {
       return { mesh, edges, spin: new THREE.Vector3(s.spin[0], s.spin[1], s.spin[2]) }
     })
 
+    // Faint rebar cage — vertical bars + horizontal ties, the steel the
+    // slabs are poured around. Parented to root so it shares the slow
+    // drift; static geometry, no extra draw cost.
+    const rebar = (() => {
+      const pts: number[] = []
+      const halfH = 6.5
+      const z = -1.6
+      const cols = [-7, -4.4, -1.8, 1.8, 4.4, 7]
+      for (const x of cols) pts.push(x, -halfH, z, x, halfH, z)
+      const ties = [-halfH + 1.4, -1.8, 2.4, halfH - 1.4]
+      for (const y of ties) pts.push(cols[0], y, z, cols[cols.length - 1], y, z)
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3))
+      const m = new THREE.LineBasicMaterial({
+        color: 0xf59e0b, transparent: true, opacity: 0.12, depthWrite: false,
+      })
+      return new THREE.LineSegments(g, m)
+    })()
+    root.add(rebar)
+
     // Single hairline horizon — a brutalist cue, not an orbit.
     const horizon = (() => {
       const g = new THREE.BufferGeometry()
@@ -145,6 +165,8 @@ export default function LandingSculpture() {
       root.rotation.y = pointer.x + Math.sin(t * 0.04) * 0.10
       root.rotation.x = pointer.y + Math.sin(t * 0.03) * 0.04
 
+      rebar.position.y = Math.sin(t * 0.05) * 0.16
+
       for (const s of slabs) {
         s.mesh.rotation.x += s.spin.x * dt
         s.mesh.rotation.y += s.spin.y * dt
@@ -174,6 +196,8 @@ export default function LandingSculpture() {
         s.edges.geometry.dispose()
         ;(s.edges.material as THREE.Material).dispose()
       })
+      rebar.geometry.dispose()
+      ;(rebar.material as THREE.Material).dispose()
       horizon.geometry.dispose()
       ;(horizon.material as THREE.Material).dispose()
       renderer.dispose()

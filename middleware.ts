@@ -88,6 +88,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/commodities') ||
     pathname.startsWith('/sports') ||
     pathname.startsWith('/subscribe') ||
+    pathname.startsWith('/tokenomics') ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/login') ||
     pathname.startsWith('/api/health') ||
