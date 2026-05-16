@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b skills hiring",
+    "typecheck": "tsc -p skills/tsconfig.json --noEmit && tsc -p hiring/tsconfig.json --noEmit",
     "start:skills": "node skills/dist/index.js",
     "start:hiring": "node hiring/dist/index.js",
     "dev:skills": "tsx skills/src/index.ts",

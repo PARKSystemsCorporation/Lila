@@ -1,0 +1,24 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "ignorePatterns": [
+    "node_modules/**",
+    ".next/**",
+    "programs/**",
+    "services/**",
+    "scripts/**",
+    "next-env.d.ts",
+    "*.config.js",
+    "*.config.ts",
+    "postcss.config.js"
+  ],
+  "rules": {
+    "no-empty": ["error", { "allowEmptyCatch": false }],
+    "prefer-const": "error",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ]
+  }
+}

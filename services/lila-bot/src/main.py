@@ -5,6 +5,7 @@ the mounted volume, joins/creates the well-known rooms, registers
 callbacks, and runs the sync loop until shut down.
 """
 from __future__ import annotations
+
 import asyncio
 import os
 import signal

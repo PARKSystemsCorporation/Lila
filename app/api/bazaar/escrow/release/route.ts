@@ -6,7 +6,7 @@
 
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { createHash } from 'crypto'
+import { createHash, timingSafeEqual } from 'crypto'
 
 import { getPool, ensureSchema } from '@/lib/db'
 import { getGig, verifyAndReleaseMilestone } from '@/lib/bazaar/gigs'
@@ -16,13 +16,23 @@ import { botGuard, readJsonBody } from '../../_lib'
 
 export const dynamic = 'force-dynamic'
 
+// Constant-time string compare. timingSafeEqual throws on length mismatch,
+// so gate on length first — the expected value's length (64 hex chars) is
+// not secret; the password-derived bytes are.
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
+
 async function operatorCookieValid(): Promise<boolean> {
   const password = process.env.AUTH_PASSWORD
   if (!password) return false
   const c = (await cookies()).get('lila_auth')?.value
   if (!c) return false
   const expected = createHash('sha256').update(password).digest('hex')
-  return c === expected
+  return safeEqual(c, expected)
 }
 
 export async function POST(req: Request) {

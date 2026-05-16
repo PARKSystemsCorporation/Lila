@@ -17,6 +17,7 @@ Plain-text fallback (case-insensitive, one per line at start of message):
   !dispute GIG | reason
 """
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from typing import Optional

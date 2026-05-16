@@ -11,3 +11,9 @@ programs/ldgr/target/
 programs/ldgr/Cargo.lock
 services/lila-bot/**/__pycache__/
 services/lila-bot/.pytest_cache/
+services/lila-bot/.ruff_cache/
+.ruff_cache/
+services/mcp/**/dist/
+services/mcp/**/*.tsbuildinfo
+services/mcp/shared/*.js
+services/mcp/*/src/*.js

@@ -7,8 +7,9 @@ Next.js API with an HMAC header. The Next.js side is the single owner of
 the gig state machine and the Solana wallet that signs as moderator.
 """
 from __future__ import annotations
-import hmac
+
 import hashlib
+import hmac
 import json
 import time
 from typing import Any, Mapping

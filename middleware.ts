@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { verifyViewerCookie } from '@/lib/viewer-auth'
+import { timingSafeEqualHex } from '@/lib/ct-compare'
 
 const PASSWORD = process.env.AUTH_PASSWORD ?? ''
 const VIEWER_SECRET = process.env.VIEWER_COOKIE_SECRET ?? ''
@@ -127,7 +128,7 @@ export async function middleware(request: NextRequest) {
   // Operator cookie passes everything.
   const operatorCookie = request.cookies.get('lila_auth')
   const authHash = await getAuthHash()
-  if (operatorCookie?.value === authHash) {
+  if (operatorCookie && timingSafeEqualHex(operatorCookie.value, authHash)) {
     return NextResponse.next()
   }
 

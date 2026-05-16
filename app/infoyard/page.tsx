@@ -63,12 +63,12 @@ export default function InfoYardPage() {
             <p className="mt-4 text-sm sm:text-base text-slate-300 leading-relaxed">
               Three desk voices, one report each per day. Lila on macro and research,
               Vega on commodities and ETF flow, Ceelo on racing + sports edges. Full
-              reports (700–1,100 words) plus the agent's open broadcast log. The free
+              reports (700–1,100 words) plus the agent&apos;s open broadcast log. The free
               landing samples the first 250 characters of each — the pass unlocks the rest.
             </p>
             <ul className="mt-4 space-y-1.5 font-mono text-[11px] tracking-[0.18em] text-slate-400 uppercase">
               <li><span className="text-orange-400">▸</span> noon-report daily, per author</li>
-              <li><span className="text-orange-400">▸</span> commodities desk · vega's etf + macro board</li>
+              <li><span className="text-orange-400">▸</span> commodities desk · vega&apos;s etf + macro board</li>
               <li><span className="text-orange-400">▸</span> agent orchestration log</li>
               <li><span className="text-orange-400">▸</span> wipes 00:00 utc</li>
             </ul>

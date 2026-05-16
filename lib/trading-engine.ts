@@ -37,7 +37,19 @@ export class TradingEngine {
   }
 
   private async monitorPositions(db: PoolClient): Promise<TradingResult | null> {
-    const positions = await Alpaca.getPositions().catch(() => [] as Alpaca.AlpacaPosition[])
+    // Do NOT default to [] on failure: an empty list silently skips every
+    // open position's stop/target check. Surface the failure and abort the
+    // pass instead — next tick retries.
+    let positions: Alpaca.AlpacaPosition[]
+    try {
+      positions = await Alpaca.getPositions()
+    } catch (e) {
+      return {
+        action: 'error',
+        logMessage: `Position monitor aborted: Alpaca getPositions failed (${String(e).slice(0, 160)}). Stops/targets not evaluated this pass.`,
+        logType: 'warn',
+      }
+    }
 
     for (const pos of positions) {
       const { rows } = await db.query(
@@ -62,7 +74,18 @@ export class TradingEngine {
         : pnlPct <= -DEFAULT_STOP_PCT
 
       if (hitTarget || hitStop) {
-        await Alpaca.closePosition(pos.symbol).catch(() => {})
+        // Only mark the row closed if the exchange close actually
+        // succeeded. Marking closed after a failed close would strand the
+        // position open on Alpaca while the DB believes it's flat.
+        try {
+          await Alpaca.closePosition(pos.symbol)
+        } catch (e) {
+          return {
+            action: 'error', symbol: pos.symbol,
+            logMessage: `${hitTarget ? 'Target' : 'Stop'} hit on ${pos.symbol} but Alpaca close failed (${String(e).slice(0, 160)}). Position left open; retrying next pass.`,
+            logType: 'warn',
+          }
+        }
         await db.query(
           `UPDATE lila_positions SET status='closed', pnl=$1, closed_at=NOW() WHERE id=$2`,
           [pnl, tracked.id]

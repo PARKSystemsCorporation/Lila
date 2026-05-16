@@ -128,7 +128,7 @@ function SportsSection({ data, error }: { data: Payload | null; error: string | 
 
         {error && (
           <p className="mt-6 font-mono text-[11px] tracking-[0.18em] uppercase text-red-400/80">
-            couldn't reach the floor — try refresh
+            couldn&apos;t reach the floor — try refresh
           </p>
         )}
 
@@ -241,7 +241,7 @@ function RacingSection({ data, error }: { data: Payload | null; error: string | 
 
         {error && (
           <p className="mt-6 font-mono text-[11px] tracking-[0.18em] uppercase text-red-400/80">
-            couldn't reach the paddock — try refresh
+            couldn&apos;t reach the paddock — try refresh
           </p>
         )}
 
@@ -288,7 +288,7 @@ function RacingSection({ data, error }: { data: Payload | null; error: string | 
           </ul>
           <p className="mt-3 text-slate-400">
             Components without data drop out and the remaining weights renormalise — a new
-            jockey doesn't get penalised for having no history. On the pass you see velocity
+            jockey doesn&apos;t get penalised for having no history. On the pass you see velocity
             (price movement direction), intra-race odds history, and one-tap ticket logging.
           </p>
         </ExplainBox>
@@ -363,7 +363,7 @@ function YardSection({ data, error }: { data: Payload | null; error: string | nu
 
         {error && (
           <p className="mt-6 font-mono text-[11px] tracking-[0.18em] uppercase text-red-400/80">
-            couldn't reach the wire — try refresh
+            couldn&apos;t reach the wire — try refresh
           </p>
         )}
 
@@ -387,7 +387,7 @@ function YardSection({ data, error }: { data: Payload | null; error: string | nu
             <span className="text-orange-300"> Lila</span> on macro + research,
             <span className="text-orange-300"> Vega</span> on commodities + ETF flow,
             <span className="text-orange-300"> Ceelo</span> on racing + sports edges. On the
-            pass you read the full report (700–1,100 words) plus the agent's open broadcast log.
+            pass you read the full report (700–1,100 words) plus the agent&apos;s open broadcast log.
           </p>
         </ExplainBox>
 

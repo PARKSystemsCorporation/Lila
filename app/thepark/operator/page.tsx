@@ -2149,7 +2149,7 @@ function PitchCard() {
         <div>
           <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Retainer Pitch</p>
           <p className="text-[10px] font-mono text-slate-600 mt-0.5">
-            One-pager grounded in Lila's live numbers
+            One-pager grounded in Lila&apos;s live numbers
           </p>
         </div>
         <button
@@ -2190,7 +2190,7 @@ function PitchCard() {
         </>
       ) : (
         <p className="text-xs font-mono text-slate-600">
-          No pitch drafted yet. Hit Generate to produce one from Lila's current performance numbers.
+          No pitch drafted yet. Hit Generate to produce one from Lila&apos;s current performance numbers.
         </p>
       )}
     </div>
@@ -2661,7 +2661,7 @@ function DashTab({ data, flash, visible, financials, onNavigate }: {
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
           <div>
             <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">Systems operational</p>
-            <p className="text-[10px] text-slate-600 font-mono mt-0.5">Lila is running. You don't need to do anything.</p>
+            <p className="text-[10px] text-slate-600 font-mono mt-0.5">Lila is running. You don&apos;t need to do anything.</p>
           </div>
         </div>
 
@@ -6070,7 +6070,7 @@ function TerminalTab({ visible }: { visible: boolean }) {
       {/* Header */}
       <div className="shrink-0 px-4 pt-3 pb-2 border-b border-slate-800/60">
         <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest">▓ Terminal</p>
-        <p className="text-[9px] font-mono text-slate-600">type 'help' or tap a chip · clear with 'clear'</p>
+        <p className="text-[9px] font-mono text-slate-600">type &apos;help&apos; or tap a chip · clear with &apos;clear&apos;</p>
       </div>
 
       {/* Scrollback */}
@@ -6400,7 +6400,7 @@ function ReportCard({ report, onAction, onNavigate }: {
 
           {report.status === 'pending_review' && (
             <p className="text-[10px] font-mono text-slate-600 italic text-center py-1">
-              Waiting for Lila's review.
+              Waiting for Lila&apos;s review.
             </p>
           )}
         </div>

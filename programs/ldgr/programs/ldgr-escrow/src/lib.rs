@@ -78,16 +78,21 @@ pub mod ldgr_escrow {
     pub fn release_milestone(ctx: Context<ReleaseMilestone>, idx: u8) -> Result<()> {
         let idx_usize = idx as usize;
         let escrow = &mut ctx.accounts.escrow;
-        require!(idx_usize < escrow.milestone_amounts.len(), EscrowError::IndexOutOfRange);
-        require!(!escrow.milestones_released[idx_usize], EscrowError::AlreadyReleased);
+        require!(
+            idx_usize < escrow.milestone_amounts.len(),
+            EscrowError::IndexOutOfRange
+        );
+        require!(
+            !escrow.milestones_released[idx_usize],
+            EscrowError::AlreadyReleased
+        );
 
         // Auth: either moderator alone OR both hirer and worker co-signed.
-        let mod_signed = ctx.accounts.moderator.is_signer
-            && ctx.accounts.moderator.key() == escrow.moderator;
-        let hirer_signed = ctx.accounts.hirer.is_signer
-            && ctx.accounts.hirer.key() == escrow.hirer;
-        let worker_signed = ctx.accounts.worker.is_signer
-            && ctx.accounts.worker.key() == escrow.worker;
+        let mod_signed =
+            ctx.accounts.moderator.is_signer && ctx.accounts.moderator.key() == escrow.moderator;
+        let hirer_signed = ctx.accounts.hirer.is_signer && ctx.accounts.hirer.key() == escrow.hirer;
+        let worker_signed =
+            ctx.accounts.worker.is_signer && ctx.accounts.worker.key() == escrow.worker;
         require!(
             mod_signed || (hirer_signed && worker_signed),
             EscrowError::Unauthorized
@@ -127,12 +132,11 @@ pub mod ldgr_escrow {
 
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
         let escrow = &ctx.accounts.escrow;
-        let mod_signed = ctx.accounts.moderator.is_signer
-            && ctx.accounts.moderator.key() == escrow.moderator;
-        let hirer_signed = ctx.accounts.hirer.is_signer
-            && ctx.accounts.hirer.key() == escrow.hirer;
-        let worker_signed = ctx.accounts.worker.is_signer
-            && ctx.accounts.worker.key() == escrow.worker;
+        let mod_signed =
+            ctx.accounts.moderator.is_signer && ctx.accounts.moderator.key() == escrow.moderator;
+        let hirer_signed = ctx.accounts.hirer.is_signer && ctx.accounts.hirer.key() == escrow.hirer;
+        let worker_signed =
+            ctx.accounts.worker.is_signer && ctx.accounts.worker.key() == escrow.worker;
         require!(
             mod_signed || (hirer_signed && worker_signed),
             EscrowError::Unauthorized

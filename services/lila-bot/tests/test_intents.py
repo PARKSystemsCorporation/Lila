@@ -16,7 +16,6 @@ from src.intents import (
     parse_plain_text,
 )
 
-
 # ── plain-text fallback ─────────────────────────────────────────────────────
 
 class TestPlainText:
