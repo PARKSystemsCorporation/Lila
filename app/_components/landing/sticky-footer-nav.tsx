@@ -19,6 +19,12 @@ export function StickyFooterNav() {
           ▌ home
         </Link>
         <Link
+          href="/tokenomics"
+          className="hidden sm:inline-flex items-center gap-2 font-mono text-[10px] tracking-[0.32em] uppercase text-amber-300/80 hover:text-white transition-colors"
+        >
+          $ldgr tokenomics →
+        </Link>
+        <Link
           href="/login"
           className="inline-flex items-center gap-2 border-2 border-amber-500/60 hover:border-amber-300 text-amber-300 hover:text-white px-4 py-2 font-mono text-[10px] tracking-[0.32em] uppercase transition-colors"
         >
