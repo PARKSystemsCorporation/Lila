@@ -13,19 +13,30 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: Request) {
   if (!process.env.DATABASE_URL) return NextResponse.json({ messages: [] })
   const after = parseInt(new URL(req.url).searchParams.get('after') ?? '0')
+  // No real cursor → newest window, not the oldest rows. Mirrors the fix in
+  // /api/chat/messages; without it the Ceelo thread freezes on old history.
+  const incremental = Number.isFinite(after) && after > 0
 
   const pool = getPool()
   const db = await pool.connect()
   try {
     await ensureSchema(db)
     const { rows } = await db.query(
-      `SELECT id, sender, content,
-              (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS timestamp
-       FROM chat_messages
-       WHERE thread = 'ceelo'
-         AND id > $1
-       ORDER BY id ASC LIMIT 60`,
-      [after]
+      incremental
+        ? `SELECT id, sender, content,
+                  (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS timestamp
+           FROM chat_messages
+           WHERE thread = 'ceelo'
+             AND id > $1
+           ORDER BY id ASC LIMIT 60`
+        : `SELECT * FROM (
+             SELECT id, sender, content,
+                    (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS timestamp
+             FROM chat_messages
+             WHERE thread = 'ceelo'
+             ORDER BY id DESC LIMIT 60
+           ) s ORDER BY id ASC`,
+      incremental ? [after] : []
     )
     return NextResponse.json({
       messages: rows.map(r => ({
