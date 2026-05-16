@@ -19,3 +19,15 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
 anchor-spl = "0.30.1"
+
+# Anchor 0.30.1 + solana_program macros reference platform cfgs that newer
+# rustc's check-cfg flags as unexpected. Declaring the known Solana/Anchor
+# cfgs expected is the documented remedy — keeps `clippy -D warnings` clean
+# without suppressing real lints.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(feature, values("anchor-debug"))',
+  'cfg(feature, values("custom-heap"))',
+  'cfg(feature, values("custom-panic"))',
+  'cfg(target_os, values("solana"))',
+] }
