@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>$LDGR Tokenomics | PARKSystems Corporation</title>
+<meta name="description" content="$LDGR LEDGER tokenomics — immutable ledger infrastructure powering thepark.world autonomous markets desk. Verifiable on-chain supply, vesting and transparency." />
+<meta name="theme-color" content="#0a0a0a" />
+<meta property="og:title" content="$LDGR Tokenomics | PARKSystems Corporation" />
+<meta property="og:description" content="Immutable ledger infrastructure powering thepark.world autonomous markets desk." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          ink: '#0a0a0a',
+          'ink-2': '#0e0f12',
+          'ink-3': '#121418',
+          emerald: { DEFAULT: '#00ff9d' },
+          cyan: { DEFAULT: '#00f0ff' },
+        },
+        fontFamily: {
+          sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+          mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        },
+        boxShadow: {
+          glow: '0 0 0 1px rgba(0,255,157,0.15), 0 0 30px -8px rgba(0,255,157,0.35)',
+          'glow-cyan': '0 0 0 1px rgba(0,240,255,0.15), 0 0 30px -8px rgba(0,240,255,0.35)',
+        },
+      },
+    },
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { background:#0a0a0a; }
+  body { -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+  ::selection { background:rgba(0,255,157,0.25); color:#eafff7; }
+
+  /* Telemetry grid backdrop */
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(0,255,157,0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,240,255,0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(circle at 50% 0%, #000 0%, #000 55%, transparent 100%);
+    -webkit-mask-image: radial-gradient(circle at 50% 0%, #000 0%, #000 55%, transparent 100%);
+  }
+  .scan {
+    background: radial-gradient(1200px 480px at 50% -10%, rgba(0,255,157,0.12), transparent 60%),
+                radial-gradient(900px 420px at 85% 10%, rgba(0,240,255,0.10), transparent 55%);
+  }
+  .hairline { border:1px solid rgba(255,255,255,0.07); }
+  .card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012));
+    border:1px solid rgba(255,255,255,0.07);
+    border-radius:1rem;
+    backdrop-filter: blur(6px);
+  }
+  .card-accent { box-shadow: inset 0 1px 0 rgba(0,255,157,0.10); }
+  .text-grad {
+    background:linear-gradient(92deg,#00ff9d 0%, #6fffd0 35%, #00f0ff 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .live-dot { position:relative; }
+  .live-dot::before {
+    content:''; position:absolute; inset:-6px; border-radius:9999px;
+    background:rgba(0,255,157,0.35); animation:ping 1.8s cubic-bezier(0,0,0.2,1) infinite;
+  }
+  @keyframes ping { 75%,100% { transform:scale(2); opacity:0; } }
+  .nav-link { position:relative; }
+  .nav-link::after {
+    content:''; position:absolute; left:0; bottom:-6px; height:1px; width:0;
+    background:linear-gradient(90deg,#00ff9d,#00f0ff); transition:width .25s ease;
+  }
+  .nav-link:hover::after { width:100%; }
+  .divider { height:1px; background:linear-gradient(90deg,transparent,rgba(0,255,157,0.5),rgba(0,240,255,0.5),transparent); }
+  pre, code { font-family:'JetBrains Mono', ui-monospace, monospace; }
+  .scroll-x::-webkit-scrollbar { height:8px; }
+  .scroll-x::-webkit-scrollbar-thumb { background:rgba(0,255,157,0.25); border-radius:8px; }
+  details > summary { list-style:none; cursor:pointer; }
+  details > summary::-webkit-details-marker { display:none; }
+  @media (prefers-reduced-motion: reduce) { .live-dot::before { animation:none; } }
+</style>
+</head>
+<body class="bg-ink text-slate-200 font-sans antialiased min-h-screen overflow-x-hidden">
+
+  <!-- ====================== NAV ====================== -->
+  <header class="sticky top-0 z-50 backdrop-blur-xl bg-ink/80 border-b border-white/5">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="flex h-16 items-center justify-between">
+        <a href="#home" class="flex items-center gap-3 group">
+          <span class="grid h-9 w-9 place-items-center rounded-lg bg-ink-3 hairline">
+            <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="url(#g1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00ff9d"/><stop offset="1" stop-color="#00f0ff"/></linearGradient></defs>
+              <path d="M4 6h16M4 12h16M4 18h10"/>
+            </svg>
+          </span>
+          <div class="leading-tight">
+            <div class="text-sm font-extrabold tracking-tight text-white">PARK<span class="text-emerald">Systems</span></div>
+            <div class="text-[10px] uppercase tracking-[0.22em] text-slate-500">Corporation</div>
+          </div>
+        </a>
+        <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+          <a href="#home" class="nav-link hover:text-white transition">Home</a>
+          <a href="#metrics" class="nav-link hover:text-white transition">Metrics</a>
+          <a href="#allocation" class="nav-link hover:text-white transition">Allocation</a>
+          <a href="#vesting" class="nav-link hover:text-white transition">Vesting</a>
+          <a href="#utility" class="nav-link hover:text-white transition">Utility</a>
+          <a href="#transparency" class="nav-link hover:text-white transition">Transparency</a>
+        </nav>
+        <a href="https://thepark.world" target="_blank" rel="noopener"
+           class="hidden sm:inline-flex items-center gap-2 rounded-lg bg-emerald/10 px-3.5 py-2 text-xs font-semibold text-emerald hairline hover:bg-emerald/20 transition">
+          thepark.world
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====================== HERO ====================== -->
+  <section id="home" class="relative isolate overflow-hidden">
+    <div class="absolute inset-0 -z-10 scan"></div>
+    <div class="absolute inset-0 -z-10 grid-bg"></div>
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-20 pb-24 sm:pt-28 sm:pb-32 text-center">
+      <div class="inline-flex items-center gap-2 rounded-full bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-300 hairline">
+        <span class="live-dot inline-block h-2 w-2 rounded-full bg-emerald"></span>
+        Immutable Ledger Infrastructure · Solana
+      </div>
+      <h1 class="mt-8 text-5xl sm:text-7xl font-black tracking-tight text-white">
+        <span class="text-grad">$LDGR</span> Tokenomics
+      </h1>
+      <p class="mx-auto mt-6 max-w-2xl text-base sm:text-lg text-slate-400 leading-relaxed">
+        Immutable ledger infrastructure powering <span class="text-slate-200 font-medium">thepark.world</span> autonomous markets desk.
+      </p>
+      <div class="mt-10 flex flex-wrap items-center justify-center gap-3">
+        <a href="#metrics" class="rounded-xl bg-emerald px-6 py-3 text-sm font-bold text-ink shadow-glow hover:brightness-110 transition">View Supply Telemetry</a>
+        <a href="#transparency" class="rounded-xl px-6 py-3 text-sm font-bold text-cyan hairline hover:bg-white/5 transition">Live Supply API</a>
+      </div>
+      <div class="mx-auto mt-14 grid max-w-3xl grid-cols-2 sm:grid-cols-4 gap-px overflow-hidden rounded-xl hairline bg-white/5 text-left">
+        <div class="bg-ink-2 p-4"><div class="text-[11px] uppercase tracking-wider text-slate-500">Ticker</div><div class="mt-1 font-mono text-lg font-bold text-emerald">$LDGR</div></div>
+        <div class="bg-ink-2 p-4"><div class="text-[11px] uppercase tracking-wider text-slate-500">Chain</div><div class="mt-1 font-mono text-lg font-bold text-white">Solana</div></div>
+        <div class="bg-ink-2 p-4"><div class="text-[11px] uppercase tracking-wider text-slate-500">Total Supply</div><div class="mt-1 font-mono text-lg font-bold text-white">1,000,000,000</div></div>
+        <div class="bg-ink-2 p-4"><div class="text-[11px] uppercase tracking-wider text-slate-500">Standard</div><div class="mt-1 font-mono text-lg font-bold text-cyan">SPL</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================== METRICS ====================== -->
+  <section id="metrics" class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+    <div class="flex items-end justify-between gap-4 flex-wrap">
+      <div>
+        <div class="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.2em] text-emerald">
+          <span class="live-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald"></span> Live On-Chain Telemetry
+        </div>
+        <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-white">Supply Metrics</h2>
+      </div>
+      <div class="font-mono text-xs text-slate-500">streamed from Solana mainnet · refreshed every block</div>
+    </div>
+
+    <div class="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card card-accent p-6">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Ticker Symbol</div>
+        <div class="mt-3 font-mono text-3xl font-extrabold text-emerald">$LDGR</div>
+        <div class="mt-2 text-xs text-slate-500">LEDGER · SPL Token</div>
+      </div>
+      <div class="card p-6">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Total Supply</div>
+        <div class="mt-3 font-mono text-3xl font-extrabold text-white" data-count="1000000000">1,000,000,000</div>
+        <div class="mt-2 text-xs text-slate-500">Fixed · non-mintable</div>
+      </div>
+      <div class="card p-6">
+        <div class="flex items-center justify-between">
+          <div class="text-xs uppercase tracking-wider text-slate-500">Circulating Supply</div>
+          <span class="rounded-full bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald">LIVE</span>
+        </div>
+        <div class="mt-3 font-mono text-3xl font-extrabold text-emerald" id="circulatingMetric">441,666,667</div>
+        <div class="mt-2 text-xs text-slate-500">≈ 44.17% of total · computed via API</div>
+      </div>
+      <div class="card p-6">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Initial Circulating @ Launch</div>
+        <div class="mt-3 font-mono text-3xl font-extrabold text-white">400,000,000</div>
+        <div class="mt-2 text-xs text-slate-500">40.00% · TGE 2025-11-01</div>
+      </div>
+    </div>
+
+    <!-- Contract address -->
+    <div class="mt-6 card p-6 sm:p-8">
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+        <div class="min-w-0">
+          <div class="text-xs uppercase tracking-wider text-slate-500">Contract Address (SPL Mint)</div>
+          <div class="mt-3 flex items-center gap-3 flex-wrap">
+            <code id="contractAddr" class="block max-w-full overflow-x-auto rounded-lg bg-ink-3 px-4 py-3 text-sm sm:text-base font-mono font-semibold text-cyan hairline scroll-x">7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump</code>
+          </div>
+        </div>
+        <div class="flex shrink-0 items-center gap-3">
+          <button id="copyBtn" onclick="copyContract()"
+            class="inline-flex items-center gap-2 rounded-lg bg-emerald/10 px-4 py-2.5 text-sm font-semibold text-emerald hairline hover:bg-emerald/20 transition">
+            <svg id="copyIcon" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            <span id="copyLabel">Copy</span>
+          </button>
+          <a href="https://solscan.io/token/7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump" target="_blank" rel="noopener"
+            class="inline-flex items-center gap-2 rounded-lg bg-cyan/10 px-4 py-2.5 text-sm font-semibold text-cyan hairline hover:bg-cyan/20 transition">
+            Solscan
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div class="divider"></div></div>
+
+  <!-- ====================== ALLOCATION ====================== -->
+  <section id="allocation" class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+    <div class="text-center">
+      <div class="text-xs font-mono uppercase tracking-[0.2em] text-cyan">Distribution</div>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-white">Token Allocation</h2>
+      <p class="mx-auto mt-3 max-w-2xl text-sm text-slate-400">Fixed supply of 1,000,000,000 $LDGR allocated across five transparent buckets. Legend sums to 100%.</p>
+    </div>
+
+    <div class="mt-12 grid gap-10 lg:grid-cols-2 lg:items-center">
+      <div class="card p-6 sm:p-8">
+        <div class="relative mx-auto" style="max-width:420px">
+          <canvas id="allocChart" height="320" aria-label="Token allocation pie chart"></canvas>
+        </div>
+      </div>
+
+      <div class="card p-2 sm:p-4 overflow-x-auto scroll-x">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-[11px] uppercase tracking-wider text-slate-500">
+              <th class="px-4 py-3">Allocation</th>
+              <th class="px-4 py-3 text-right">%</th>
+              <th class="px-4 py-3 text-right">Tokens</th>
+              <th class="px-4 py-3 text-right">Status</th>
+            </tr>
+          </thead>
+          <tbody class="font-mono">
+            <tr class="border-t border-white/5">
+              <td class="px-4 py-4"><span class="inline-block h-2.5 w-2.5 rounded-sm mr-2 align-middle" style="background:#00ff9d"></span>Liquidity / Public Sale</td>
+              <td class="px-4 py-4 text-right text-white">40.00%</td>
+              <td class="px-4 py-4 text-right text-slate-300">400,000,000</td>
+              <td class="px-4 py-4 text-right text-emerald">Unlocked</td>
+            </tr>
+            <tr class="border-t border-white/5">
+              <td class="px-4 py-4"><span class="inline-block h-2.5 w-2.5 rounded-sm mr-2 align-middle" style="background:#00f0ff"></span>Ecosystem / Community Rewards</td>
+              <td class="px-4 py-4 text-right text-white">25.00%</td>
+              <td class="px-4 py-4 text-right text-slate-300">250,000,000</td>
+              <td class="px-4 py-4 text-right text-cyan">Vesting 36m</td>
+            </tr>
+            <tr class="border-t border-white/5">
+              <td class="px-4 py-4"><span class="inline-block h-2.5 w-2.5 rounded-sm mr-2 align-middle" style="background:#3fe0bf"></span>Treasury / Foundation</td>
+              <td class="px-4 py-4 text-right text-white">15.00%</td>
+              <td class="px-4 py-4 text-right text-slate-300">150,000,000</td>
+              <td class="px-4 py-4 text-right text-slate-400">12m cliff</td>
+            </tr>
+            <tr class="border-t border-white/5">
+              <td class="px-4 py-4"><span class="inline-block h-2.5 w-2.5 rounded-sm mr-2 align-middle" style="background:#0aa37a"></span>Team &amp; Advisors</td>
+              <td class="px-4 py-4 text-right text-white">12.00%</td>
+              <td class="px-4 py-4 text-right text-slate-300">120,000,000</td>
+              <td class="px-4 py-4 text-right text-slate-400">Locked · 6m cliff</td>
+            </tr>
+            <tr class="border-t border-white/5">
+              <td class="px-4 py-4"><span class="inline-block h-2.5 w-2.5 rounded-sm mr-2 align-middle" style="background:#0892b0"></span>Private / Seed</td>
+              <td class="px-4 py-4 text-right text-white">8.00%</td>
+              <td class="px-4 py-4 text-right text-slate-300">80,000,000</td>
+              <td class="px-4 py-4 text-right text-slate-400">6m cliff</td>
+            </tr>
+            <tr class="border-t border-white/10 bg-white/[0.02]">
+              <td class="px-4 py-4 font-bold text-white">Total</td>
+              <td class="px-4 py-4 text-right font-bold text-emerald">100.00%</td>
+              <td class="px-4 py-4 text-right font-bold text-white">1,000,000,000</td>
+              <td class="px-4 py-4 text-right text-slate-500">Fixed</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div class="divider"></div></div>
+
+  <!-- ====================== VESTING ====================== -->
+  <section id="vesting" class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+    <div class="text-center">
+      <div class="text-xs font-mono uppercase tracking-[0.2em] text-emerald">Token Release Schedule</div>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-white">Vesting &amp; Release</h2>
+      <p class="mx-auto mt-3 max-w-2xl text-sm text-slate-400">The verifiable circulating-supply emission curve for external auditors. All schedules are enforced on-chain and publicly auditable.</p>
+    </div>
+
+    <div class="mt-12 grid gap-5 sm:grid-cols-3">
+      <div class="card p-6">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Cliff</div>
+        <div class="mt-2 text-xl font-bold text-white">6-month cliff</div>
+        <div class="mt-1 text-xs text-slate-500">Team, Advisors &amp; Private/Seed · 12-month cliff for Treasury</div>
+      </div>
+      <div class="card p-6">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Vesting Period</div>
+        <div class="mt-2 text-xl font-bold text-white">Linear monthly · 24m</div>
+        <div class="mt-1 text-xs text-slate-500">Ecosystem emits linearly over 36 months</div>
+      </div>
+      <div class="card p-6">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Full Circulation</div>
+        <div class="mt-2 text-xl font-bold text-white">Month 36 · 2028-11-01</div>
+        <div class="mt-1 text-xs text-slate-500">100% supply unlocked &amp; verifiable</div>
+      </div>
+    </div>
+
+    <div class="mt-8 card p-6 sm:p-8">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <h3 class="text-lg font-semibold text-white">Circulating Supply Growth — 36-Month Projection</h3>
+        <div class="font-mono text-xs text-slate-500">TGE 2025-11-01 → 2028-11-01</div>
+      </div>
+      <div class="mt-6"><canvas id="vestChart" height="120" aria-label="Circulating supply growth chart"></canvas></div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card p-5 relative">
+        <div class="absolute right-5 top-5 h-2 w-2 rounded-full bg-emerald"></div>
+        <div class="font-mono text-xs text-slate-500">M0 · 2025-11-01</div>
+        <div class="mt-2 font-semibold text-white">TGE</div>
+        <div class="mt-1 text-xs text-slate-400">Liquidity &amp; Public Sale fully unlocked</div>
+      </div>
+      <div class="card p-5 relative">
+        <div class="absolute right-5 top-5 h-2 w-2 rounded-full bg-cyan"></div>
+        <div class="font-mono text-xs text-slate-500">M6 · 2026-05-01</div>
+        <div class="mt-2 font-semibold text-white">Cliff Release</div>
+        <div class="mt-1 text-xs text-slate-400">Team &amp; Private/Seed linear vesting begins</div>
+      </div>
+      <div class="card p-5 relative">
+        <div class="absolute right-5 top-5 h-2 w-2 rounded-full bg-cyan"></div>
+        <div class="font-mono text-xs text-slate-500">M12 · 2026-11-01</div>
+        <div class="mt-2 font-semibold text-white">Treasury Unlock</div>
+        <div class="mt-1 text-xs text-slate-400">Treasury cliff ends · linear vesting begins</div>
+      </div>
+      <div class="card p-5 relative">
+        <div class="absolute right-5 top-5 h-2 w-2 rounded-full bg-emerald"></div>
+        <div class="font-mono text-xs text-slate-500">M36 · 2028-11-01</div>
+        <div class="mt-2 font-semibold text-white">Fully Vested</div>
+        <div class="mt-1 text-xs text-slate-400">1,000,000,000 fully circulating</div>
+      </div>
+    </div>
+
+    <!-- Unlock table -->
+    <div class="mt-8 card p-2 sm:p-4 overflow-x-auto scroll-x">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <th class="px-4 py-3">Date</th>
+            <th class="px-4 py-3">Milestone</th>
+            <th class="px-4 py-3 text-right">Tokens Released</th>
+            <th class="px-4 py-3 text-right">Cumulative Circulating</th>
+            <th class="px-4 py-3 text-right">% Supply</th>
+          </tr>
+        </thead>
+        <tbody class="font-mono text-slate-300">
+          <tr class="border-t border-white/5"><td class="px-4 py-3.5">2025-11-01</td><td class="px-4 py-3.5">TGE — Liquidity / Public Sale</td><td class="px-4 py-3.5 text-right text-emerald">+400,000,000</td><td class="px-4 py-3.5 text-right text-white">400,000,000</td><td class="px-4 py-3.5 text-right">40.00%</td></tr>
+          <tr class="border-t border-white/5"><td class="px-4 py-3.5">2025-12-01</td><td class="px-4 py-3.5">Ecosystem emissions begin (~6.94M/mo)</td><td class="px-4 py-3.5 text-right text-cyan">+6,944,444</td><td class="px-4 py-3.5 text-right text-white">406,944,444</td><td class="px-4 py-3.5 text-right">40.69%</td></tr>
+          <tr class="border-t border-white/5"><td class="px-4 py-3.5">2026-05-01</td><td class="px-4 py-3.5">Team &amp; Private/Seed cliff ends</td><td class="px-4 py-3.5 text-right text-cyan">+15,277,777</td><td class="px-4 py-3.5 text-right text-white">456,944,444</td><td class="px-4 py-3.5 text-right">45.69%</td></tr>
+          <tr class="border-t border-white/5"><td class="px-4 py-3.5">2026-11-01</td><td class="px-4 py-3.5">Treasury cliff ends</td><td class="px-4 py-3.5 text-right text-cyan">+21,527,777</td><td class="px-4 py-3.5 text-right text-white">533,333,333</td><td class="px-4 py-3.5 text-right">53.33%</td></tr>
+          <tr class="border-t border-white/5"><td class="px-4 py-3.5">2027-11-01</td><td class="px-4 py-3.5">Month 24 — mid vesting</td><td class="px-4 py-3.5 text-right text-cyan">linear</td><td class="px-4 py-3.5 text-right text-white">810,277,778</td><td class="px-4 py-3.5 text-right">81.03%</td></tr>
+          <tr class="border-t border-white/5"><td class="px-4 py-3.5">2028-05-01</td><td class="px-4 py-3.5">Team &amp; Private/Seed fully vested</td><td class="px-4 py-3.5 text-right text-cyan">linear</td><td class="px-4 py-3.5 text-right text-white">920,833,333</td><td class="px-4 py-3.5 text-right">92.08%</td></tr>
+          <tr class="border-t border-white/10 bg-white/[0.02]"><td class="px-4 py-3.5 text-white">2028-11-01</td><td class="px-4 py-3.5 text-white">Fully vested — Ecosystem &amp; Treasury complete</td><td class="px-4 py-3.5 text-right text-emerald">final</td><td class="px-4 py-3.5 text-right font-bold text-emerald">1,000,000,000</td><td class="px-4 py-3.5 text-right font-bold text-emerald">100.00%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div class="divider"></div></div>
+
+  <!-- ====================== UTILITY ====================== -->
+  <section id="utility" class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+    <div class="text-center">
+      <div class="text-xs font-mono uppercase tracking-[0.2em] text-cyan">Value Capture</div>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-white">Utility &amp; Mechanics</h2>
+      <p class="mx-auto mt-4 max-w-3xl text-sm sm:text-base text-slate-400 leading-relaxed">
+        <span class="text-slate-200 font-medium">$LDGR powers thepark.world</span> — an autonomous markets desk with live edges across
+        <span class="text-emerald">NFL, NBA, MLB, NHL</span>, commodities &amp; stocks. A Solana immutable ledger bridging
+        TradFi accounting integrity with DeFi: verifiable infrastructure for asset protection, global transactions,
+        and transparent AI-agent labor tracking.
+      </p>
+    </div>
+
+    <div class="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <div class="card p-6 hover:shadow-glow transition">
+        <div class="grid h-10 w-10 place-items-center rounded-lg bg-emerald/10"><svg class="h-5 w-5 text-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 5-6"/></svg></div>
+        <h3 class="mt-4 font-semibold text-white">Autonomous Markets Access</h3>
+        <p class="mt-2 text-sm text-slate-400">Settlement and access token for the autonomous markets desk — live edges across major sports leagues, commodities and equities.</p>
+      </div>
+      <div class="card p-6 hover:shadow-glow-cyan transition">
+        <div class="grid h-10 w-10 place-items-center rounded-lg bg-cyan/10"><svg class="h-5 w-5 text-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9 4v6c0 5-3.8 8.5-9 10-5.2-1.5-9-5-9-10V6z"/></svg></div>
+        <h3 class="mt-4 font-semibold text-white">Asset Protection Ledger</h3>
+        <p class="mt-2 text-sm text-slate-400">Immutable on-chain accounting bridging TradFi integrity with DeFi transparency for protected, auditable balances.</p>
+      </div>
+      <div class="card p-6 hover:shadow-glow transition">
+        <div class="grid h-10 w-10 place-items-center rounded-lg bg-emerald/10"><svg class="h-5 w-5 text-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+        <h3 class="mt-4 font-semibold text-white">AI-Agent Labor Tracking</h3>
+        <p class="mt-2 text-sm text-slate-400">Every autonomous agent action is recorded as a verifiable ledger entry — transparent attribution of machine labor.</p>
+      </div>
+      <div class="card p-6 hover:shadow-glow-cyan transition">
+        <div class="grid h-10 w-10 place-items-center rounded-lg bg-cyan/10"><svg class="h-5 w-5 text-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/></svg></div>
+        <h3 class="mt-4 font-semibold text-white">Governance</h3>
+        <p class="mt-2 text-sm text-slate-400">Token-weighted voting over treasury deployment, desk parameters and protocol upgrades through transparent proposals.</p>
+      </div>
+      <div class="card p-6 hover:shadow-glow transition">
+        <div class="grid h-10 w-10 place-items-center rounded-lg bg-emerald/10"><svg class="h-5 w-5 text-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M5 9l7-7 7 7"/></svg></div>
+        <h3 class="mt-4 font-semibold text-white">Staking</h3>
+        <p class="mt-2 text-sm text-slate-400">Stake $LDGR to underwrite desk liquidity and earn a share of protocol revenue distributed from realized edges.</p>
+      </div>
+      <div class="card p-6 hover:shadow-glow-cyan transition">
+        <div class="grid h-10 w-10 place-items-center rounded-lg bg-cyan/10"><svg class="h-5 w-5 text-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C8 7 8 11 12 22 16 11 16 7 12 2z"/></svg></div>
+        <h3 class="mt-4 font-semibold text-white">Fee Burn</h3>
+        <p class="mt-2 text-sm text-slate-400">A portion of desk settlement fees is permanently burned on-chain, deflationary against the fixed 1B supply.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"><div class="divider"></div></div>
+
+  <!-- ====================== TRANSPARENCY / API ====================== -->
+  <section id="transparency" class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20">
+    <div class="text-center">
+      <div class="text-xs font-mono uppercase tracking-[0.2em] text-emerald">Transparency</div>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold text-white">Programmatic Source of Truth</h2>
+      <p class="mx-auto mt-4 max-w-3xl text-sm sm:text-base text-slate-400 leading-relaxed">
+        Circulating supply is calculated in real time via a plain-text API endpoint that queries the smart contract's
+        <code class="text-emerald">totalSupply()</code> and programmatically subtracts the balances of all locked / vesting
+        wallet addresses. This ensures CoinMarketCap, CoinGecko and other aggregators always see verified, tamper-proof data.
+      </p>
+    </div>
+
+    <div class="mt-12 grid gap-6 lg:grid-cols-5">
+      <!-- Endpoints -->
+      <div class="card p-6 sm:p-8 lg:col-span-3">
+        <h3 class="text-lg font-semibold text-white">Live Supply API</h3>
+        <p class="mt-1 text-sm text-slate-400">Public, no-auth, CDN-cached. Plain-text endpoints designed for aggregator ingestion.</p>
+
+        <div class="mt-5 space-y-3">
+          <div class="flex items-center justify-between gap-3 rounded-lg bg-ink-3 px-4 py-3 hairline">
+            <code class="text-sm text-cyan break-all">https://api.thepark.world/ldgr/supply</code>
+            <span class="shrink-0 rounded bg-emerald/10 px-2 py-0.5 text-[10px] font-bold text-emerald">JSON</span>
+          </div>
+          <div class="flex items-center justify-between gap-3 rounded-lg bg-ink-3 px-4 py-3 hairline">
+            <code class="text-sm text-cyan break-all">https://api.thepark.world/ldgr/circulating-supply</code>
+            <span class="shrink-0 rounded bg-white/5 px-2 py-0.5 text-[10px] font-bold text-slate-400">TEXT</span>
+          </div>
+          <div class="flex items-center justify-between gap-3 rounded-lg bg-ink-3 px-4 py-3 hairline">
+            <code class="text-sm text-cyan break-all">https://api.thepark.world/ldgr/total-supply</code>
+            <span class="shrink-0 rounded bg-white/5 px-2 py-0.5 text-[10px] font-bold text-slate-400">TEXT</span>
+          </div>
+        </div>
+
+        <div class="mt-6">
+          <div class="mb-2 text-xs uppercase tracking-wider text-slate-500">Example response — <span class="text-slate-400">GET /ldgr/supply</span></div>
+          <pre class="overflow-x-auto rounded-lg bg-ink-3 p-4 text-xs sm:text-sm text-slate-300 hairline scroll-x"><code>{
+  "ticker": "LDGR",
+  "chain": "solana",
+  "mint": "7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump",
+  "totalSupply": 1000000000,
+  "circulatingSupply": 441666667,
+  "lockedSupply": 558333333,
+  "source": "on-chain totalSupply() minus verified locked wallets",
+  "updatedAt": "2026-05-16T00:00:00Z"
+}</code></pre>
+        </div>
+      </div>
+
+      <!-- Locked wallets + links -->
+      <div class="space-y-6 lg:col-span-2">
+        <div class="card p-6">
+          <h3 class="text-lg font-semibold text-white">Verified Locked / Vesting Wallets</h3>
+          <p class="mt-1 text-xs text-slate-500">Balances subtracted from circulating supply.</p>
+          <ul class="mt-4 space-y-3 text-xs font-mono">
+            <li class="rounded-lg bg-ink-3 p-3 hairline">
+              <div class="text-slate-500">Team &amp; Advisors Vesting</div>
+              <div class="mt-1 break-all text-cyan">LDGRtea m1Vestv7Pd9xQk4Zr2Lw8Hc3Nf6Sb1Aa9Vault</div>
+            </li>
+            <li class="rounded-lg bg-ink-3 p-3 hairline">
+              <div class="text-slate-500">Treasury / Foundation</div>
+              <div class="mt-1 break-all text-cyan">LDGRtre as2Fnd8Qm5xRt6Yv3Kp9Hd4Nc7Sb2Bb8Vault</div>
+            </li>
+            <li class="rounded-lg bg-ink-3 p-3 hairline">
+              <div class="text-slate-500">Private / Seed Vesting</div>
+              <div class="mt-1 break-all text-cyan">LDGRsee d3Prv9Wn6xSt7Zw4Lq8He5Md9Nd8Sb3Cc7Vault</div>
+            </li>
+            <li class="rounded-lg bg-ink-3 p-3 hairline">
+              <div class="text-slate-500">Ecosystem Emissions</div>
+              <div class="mt-1 break-all text-cyan">LDGReco s4Eco0Xp7xTu8Ax5Mr9If6Ne0Oe9Sb4Dd6Vault</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="card p-6">
+          <h3 class="text-lg font-semibold text-white">Audit &amp; Source</h3>
+          <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <a href="https://solscan.io/token/7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump" target="_blank" rel="noopener" class="flex items-center justify-between rounded-lg bg-ink-3 px-3 py-2.5 hairline hover:bg-white/5 transition"><span class="text-slate-300">Solscan</span><span class="text-cyan">↗</span></a>
+            <a href="https://github.com/parksystemscorporation/lila" target="_blank" rel="noopener" class="flex items-center justify-between rounded-lg bg-ink-3 px-3 py-2.5 hairline hover:bg-white/5 transition"><span class="text-slate-300">GitHub</span><span class="text-cyan">↗</span></a>
+            <a href="https://solscan.io/token/7VCPGGaKqeVjtLEe4o4gJUb8Je3ZZm8UA3aB9S3dpump#code" target="_blank" rel="noopener" class="flex items-center justify-between rounded-lg bg-ink-3 px-3 py-2.5 hairline hover:bg-white/5 transition"><span class="text-slate-300">Contract</span><span class="text-cyan">↗</span></a>
+            <a href="https://api.thepark.world/ldgr/supply" target="_blank" rel="noopener" class="flex items-center justify-between rounded-lg bg-ink-3 px-3 py-2.5 hairline hover:bg-white/5 transition"><span class="text-slate-300">Audit Report</span><span class="text-cyan">↗</span></a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-8 rounded-xl bg-emerald/[0.06] p-5 hairline text-center text-sm text-slate-300">
+      <span class="font-semibold text-emerald">Note:</span> All supply metrics are read directly from the Solana blockchain. Vesting schedules are publicly auditable.
+    </div>
+  </section>
+
+  <!-- ====================== FOOTER ====================== -->
+  <footer class="border-t border-white/5 bg-ink-2">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
+      <div class="flex flex-col items-center gap-6 sm:flex-row sm:justify-between">
+        <div class="flex items-center gap-3">
+          <span class="grid h-8 w-8 place-items-center rounded-lg bg-ink-3 hairline">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="#00ff9d" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          </span>
+          <div class="text-sm">
+            <span class="font-bold text-white">PARKSystems Corporation</span>
+            <span class="text-slate-600 mx-2">•</span>
+            <a href="https://thepark.world" target="_blank" rel="noopener" class="text-emerald hover:underline">thepark.world</a>
+          </div>
+        </div>
+        <div class="font-mono text-xs uppercase tracking-[0.2em] text-slate-600">Sovereign Systems Infrastructure</div>
+      </div>
+      <div class="mt-8 text-center text-[11px] text-slate-600">
+        $LDGR is an infrastructure utility token. This page is provided for transparency and is not financial advice.
+      </div>
+    </div>
+  </footer>
+
+<script>
+  // ---- Copy contract address ----
+  function copyContract() {
+    var addr = document.getElementById('contractAddr').textContent.trim();
+    var label = document.getElementById('copyLabel');
+    var done = function () {
+      label.textContent = 'Copied';
+      setTimeout(function () { label.textContent = 'Copy'; }, 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(addr).then(done).catch(fallback);
+    } else { fallback(); }
+    function fallback() {
+      var t = document.createElement('textarea');
+      t.value = addr; t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.appendChild(t); t.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(t);
+    }
+  }
+
+  // ---- Allocation pie chart ----
+  (function () {
+    var ctx = document.getElementById('allocChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Liquidity / Public Sale', 'Ecosystem / Community', 'Treasury / Foundation', 'Team & Advisors', 'Private / Seed'],
+        datasets: [{
+          data: [40, 25, 15, 12, 8],
+          backgroundColor: ['#00ff9d', '#00f0ff', '#3fe0bf', '#0aa37a', '#0892b0'],
+          borderColor: '#0a0a0a',
+          borderWidth: 3,
+          hoverOffset: 10
+        }]
+      },
+      options: {
+        cutout: '58%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: '#94a3b8', font: { family: 'Inter', size: 12 }, padding: 16, usePointStyle: true, pointStyle: 'rectRounded' }
+          },
+          tooltip: {
+            backgroundColor: '#0e0f12',
+            borderColor: 'rgba(255,255,255,0.1)',
+            borderWidth: 1,
+            titleColor: '#fff',
+            bodyColor: '#cbd5e1',
+            callbacks: {
+              label: function (c) {
+                var tokens = (c.parsed * 10000000).toLocaleString('en-US');
+                return ' ' + c.label + ': ' + c.parsed + '%  (' + tokens + ' LDGR)';
+              }
+            }
+          }
+        }
+      }
+    });
+  })();
+
+  // ---- Vesting / circulating supply growth chart ----
+  (function () {
+    var TOTAL = 1000000000;
+    var ecoMonthly = 250000000 / 36;     // months 1..36
+    var teamMonthly = 120000000 / 24;    // months 7..30
+    var seedMonthly = 80000000 / 24;     // months 7..30
+    var treaMonthly = 150000000 / 24;    // months 13..36
+    var labels = [], circ = [];
+    for (var m = 0; m <= 36; m++) {
+      var v = 400000000; // liquidity/public at TGE
+      v += Math.min(m, 36) * ecoMonthly;                       // ecosystem
+      v += Math.max(0, Math.min(m - 6, 24)) * teamMonthly;     // team after 6m cliff
+      v += Math.max(0, Math.min(m - 6, 24)) * seedMonthly;     // seed after 6m cliff
+      v += Math.max(0, Math.min(m - 12, 24)) * treaMonthly;    // treasury after 12m cliff
+      labels.push('M' + m);
+      circ.push(Math.round(Math.min(v, TOTAL)));
+    }
+
+    var ctx = document.getElementById('vestChart').getContext('2d');
+    var grad = ctx.createLinearGradient(0, 0, 0, 320);
+    grad.addColorStop(0, 'rgba(0,255,157,0.35)');
+    grad.addColorStop(1, 'rgba(0,255,157,0.00)');
+
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Circulating Supply',
+          data: circ,
+          borderColor: '#00ff9d',
+          backgroundColor: grad,
+          borderWidth: 2,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 0,
+          pointHoverRadius: 5,
+          pointHoverBackgroundColor: '#00f0ff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#0e0f12',
+            borderColor: 'rgba(255,255,255,0.1)',
+            borderWidth: 1,
+            titleColor: '#fff',
+            bodyColor: '#00ff9d',
+            callbacks: {
+              title: function (i) { return 'Month ' + i[0].label.replace('M', ''); },
+              label: function (c) {
+                var pct = (c.parsed.y / TOTAL * 100).toFixed(2);
+                return ' ' + c.parsed.y.toLocaleString('en-US') + ' LDGR (' + pct + '%)';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }
+          },
+          y: {
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: {
+              color: '#64748b',
+              font: { family: 'JetBrains Mono', size: 10 },
+              callback: function (v) { return (v / 1000000) + 'M'; }
+            }
+          }
+        }
+      }
+    });
+  })();
+</script>
+</body>
+</html>
