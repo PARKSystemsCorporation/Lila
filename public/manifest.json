@@ -1,11 +1,11 @@
 {
-  "name": "Lila Agent",
-  "short_name": "Lila",
-  "description": "Autonomous bounty agent. She runs. You watch.",
+  "name": "The Park Casino",
+  "short_name": "Park Casino",
+  "description": "Free-to-play sweepstakes rooms with real crypto prize redemptions. No purchase necessary.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#020617",
-  "theme_color": "#10b981",
+  "theme_color": "#f59e0b",
   "orientation": "portrait",
   "icons": [
     {

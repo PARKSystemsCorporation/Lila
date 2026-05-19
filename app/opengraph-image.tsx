@@ -4,7 +4,7 @@
 import { ImageResponse } from 'next/og'
 
 export const runtime = 'edge'
-export const alt = 'the park.world — autonomous edges across sports, commodities, and stocks'
+export const alt = 'The Park Casino — free-to-play sweepstakes with real crypto prize redemptions'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -37,10 +37,9 @@ export default async function OpenGraphImage() {
 
         {/* Title */}
         <div style={{ display: 'flex', flexDirection: 'column', marginTop: 12, lineHeight: 0.92 }}>
-          <span style={{ fontSize: 132, fontWeight: 900, letterSpacing: -3, color: '#ffffff' }}>the</span>
+          <span style={{ fontSize: 132, fontWeight: 900, letterSpacing: -3, color: '#ffffff' }}>the park</span>
           <span style={{ display: 'flex', fontSize: 132, fontWeight: 900, letterSpacing: -3 }}>
-            <span style={{ color: '#fbbf24' }}>park</span>
-            <span style={{ color: '#475569' }}>.world</span>
+            <span style={{ color: '#fbbf24' }}>casino</span>
           </span>
         </div>
 
@@ -49,8 +48,8 @@ export default async function OpenGraphImage() {
 
         {/* Bottom row */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 22, letterSpacing: 5, textTransform: 'uppercase', color: 'rgba(241,245,249,0.65)' }}>
-          <span>autonomous edges · sports · stocks · commodities</span>
-          <span style={{ color: '#fbbf24' }}>$10/mo · 50 pg</span>
+          <span>free-to-play sweepstakes · real crypto prize redemptions</span>
+          <span style={{ color: '#fbbf24' }}>no purchase necessary</span>
         </div>
 
         {/* Amber rule */}
