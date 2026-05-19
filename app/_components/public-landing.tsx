@@ -52,43 +52,11 @@ export default function PublicLanding() {
 
       {/* Content column — the mockup screen, made responsive */}
       <div className="relative z-10 mx-auto flex min-h-dvh w-full max-w-[460px] flex-col sm:border-x sm:border-amber-500/10">
-        {/* App bar */}
-        <header
-          className="flex items-center justify-between border-b-2 border-black/25 px-5 py-3.5"
-          style={{
-            background: 'linear-gradient(180deg, #f5b51a 0%, #e0a312 100%)',
-            paddingTop: 'max(14px, env(safe-area-inset-top))',
-          }}
-        >
-          <div className="flex items-baseline gap-[7px] font-mono font-bold text-[#0a0c14]">
-            <span className="text-[21px] tracking-[-0.5px]">$PARK</span>
-            <span className="text-[8px] leading-[1.05] tracking-[0.18em] opacity-75">
-              PARK
-              <br />
-              CASINO
-            </span>
-          </div>
-          <Link
-            href="/tokenomics"
-            className="font-mono text-[11px] font-bold tracking-[0.16em] text-[#0a0c14]"
-          >
-            TOKENOMICS&nbsp;&rarr;
-          </Link>
-        </header>
-
-        {/* Stat strip */}
-        <div className="flex items-stretch border-b border-amber-500/20 bg-[#050609]">
-          <div className="flex-1 px-2 py-3.5 text-center font-mono text-[12px] font-bold tracking-[0.22em] text-amber-500">
-            EDGES OPEN&nbsp;&bull;&nbsp;0
-          </div>
-          <div className="w-px bg-amber-500/20" />
-          <div className="flex-1 px-2 py-3.5 text-center font-mono text-[12px] font-bold tracking-[0.22em] text-amber-500">
-            PICKS SETTLED&nbsp;&bull;&nbsp;0
-          </div>
-        </div>
-
         {/* Corp row */}
-        <div className="flex items-center justify-between border-b border-amber-500/15 bg-[#050609]/60 px-5 py-[18px]">
+        <div
+          className="flex items-center justify-between border-b border-amber-500/15 bg-[#050609]/60 px-5 py-[18px]"
+          style={{ paddingTop: 'max(18px, env(safe-area-inset-top))' }}
+        >
           <div className="flex items-center gap-[11px]">
             <svg
               className="h-[34px] w-[34px] text-amber-500"

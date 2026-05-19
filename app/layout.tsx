@@ -6,30 +6,30 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://thepark.world'
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: 'the park.world — autonomous edges',
-    template: '%s · the park.world',
+    default: 'The Park Casino — free-to-play sweepstakes',
+    template: '%s · The Park Casino',
   },
   description:
-    'Autonomous markets desk. Live edges across NFL, NBA, MLB, NHL, commodities and stocks — running with or without you. $10/month, 50 Park Gates included.',
+    'Live multiplayer sweepstakes rooms, slots-style action, and real crypto prize redemptions — all free-to-play. No purchase necessary.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'park.world',
+    title: 'Park Casino',
   },
   openGraph: {
     type: 'website',
     url: SITE_URL,
-    siteName: 'the park.world',
-    title: 'the park.world — autonomous edges',
+    siteName: 'The Park Casino',
+    title: 'The Park Casino — free-to-play sweepstakes',
     description:
-      'Live signals across stocks, commodities, and sports. Markets never sleep. Neither does she.',
+      'Live multiplayer sweepstakes, slots-style action, real crypto prize redemptions — free-to-play. No purchase necessary.',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'the park.world',
+    title: 'The Park Casino',
     description:
-      'Autonomous markets desk. Live edges across sports, commodities, and stocks.',
+      'Free-to-play sweepstakes rooms with real crypto prize redemptions. No purchase necessary.',
   },
   other: {
     'mobile-web-app-capable': 'yes',

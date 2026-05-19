@@ -113,6 +113,10 @@ export async function middleware(request: NextRequest) {
     // without auth so social crawlers can fetch the image.
     pathname.startsWith('/opengraph-image') ||
     pathname.startsWith('/twitter-image') ||
+    // Search-engine crawl files — must be reachable without auth or
+    // Googlebot/Bingbot never see them and the site can't be indexed.
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
     pathname === '/manifest.json' ||
     pathname === '/sw.js' ||
     pathname.startsWith('/icon-')
